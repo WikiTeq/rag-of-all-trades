@@ -1,0 +1,102 @@
+name: Docker build and push
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+env:
+  IMAGE_NAME: rag-of-all-trades
+
+# allow multiple concurrent runs for this workflow for different branches
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
+    outputs:
+      tags: ${{ steps.meta.outputs.tags }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          install: true
+
+      - name: Determine commit SHA
+        id: sha
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            SHA="${{ github.sha }}"
+          fi
+          SHORT_SHA=$(echo "$SHA" | cut -c1-7)
+          echo "sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/wikiteq/${{ env.IMAGE_NAME }}
+          # testing type=sha tag generation
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            # see the sha step
+            type=raw,value=${{ steps.sha.outputs.sha }}
+            # set latest tag for master branch
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.sha.outputs.sha }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          file: Dockerfile
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
+          push: true
+
+  # Send a message to the PR thread
+  notify:
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && needs.build.outputs.digest != ''
+    steps:
+      - name: Format tags
+        run: |
+          TAGS="${{ needs.build.outputs.tags }}"
+          TAGS=$(echo "$TAGS" | sed -E 's/.*/`&`/' | paste -sd, - | sed 's/,/, /g')
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+        id: format
+
+      - name: Notify about image tag
+        uses: hasura/comment-progress@v2.3.0
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          number: ${{ github.event.number }}
+          id: comment
+          message: >-
+            :whale: The image has been built and pushed with the following tags:
+            ${{ steps.format.outputs.tags }}
+          recreate: true
+          fail: false

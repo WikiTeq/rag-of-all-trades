@@ -1,0 +1,91 @@
+services:
+  postgres:
+    image: ankane/pgvector:v0.5.1
+    env_file:
+      - .env
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} || exit 1"]
+      interval: 5s
+      retries: 10
+      timeout: 5s
+      start_period: 5s
+
+  redis:
+    image: redis:7
+    env_file:
+      - .env
+    volumes:
+      - redis_data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+      timeout: 5s
+      start_period: 5s
+
+  api:
+    image: ghcr.io/wikiteq/rag-of-all-trades:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    command: >-
+      sh -c "alembic upgrade head && uvicorn main:app --host 0.0.0.0 --port 8000"
+
+  celery_worker:
+    image: ghcr.io/wikiteq/rag-of-all-trades:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    command: >-
+      bash -c "celery -A celery_app worker
+      --pool=prefork --concurrency=${CELERY_CONCURRENCY:-2}
+      --max-tasks-per-child=${MAX_TASK_CHILD:-50}
+      --max-memory-per-child=${MAX_MEMORY_PER_CHILD:-300000}
+      --loglevel=info
+      -Q celery
+      -O fair"
+    restart: unless-stopped
+
+  celery_beat:
+    image: ghcr.io/wikiteq/rag-of-all-trades:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - ./config.yaml:/app/config.yaml:ro
+    command: >-
+      bash -c "celery -A celery_app beat --loglevel=info"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:

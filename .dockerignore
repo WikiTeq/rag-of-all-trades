@@ -1,0 +1,40 @@
+# Ignore test and development files
+tests/
+*.md
+
+# Ignore python cache
+__pycache__
+*.pyo
+*.pyd
+*.pyc
+
+# Ignore virtual environments
+.venv/
+.virtualenv/
+
+# Ignore editor and IDE settings
+.vscode/
+.idea/
+*.swp
+
+# Ignore Docker-specific files
+Dockerfile*
+docker-compose.yml
+docker-compose.*.yml
+
+# Ignore other common files and directories
+.git/
+.gitignore
+*.log
+*.tmp
+
+#config file
+config.yaml
+
+# extra
+.github/
+env/
+.env.*
+*.pem
+*.key
+*.crt

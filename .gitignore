@@ -1,0 +1,36 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[codz]
+*$py.class
+*.pyc
+
+# Virtual env
+.venv/
+venv/
+.idea
+
+# Secrets
+.env
+.env.*
+
+# Configuration
+config.yaml
+
+# Celery
+celerybeat-schedule
+celerybeat-schedule-shm
+celerybeat-schedule-wal
+
+# etc
+test.http
+
+# Compose override
+compose.override.yml
+
+# extra
+*.pem
+*.key
+*.crt
+*.tmp
+.DS_Store
+Thumbs.db
