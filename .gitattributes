@@ -1,0 +1,17 @@
+# Text
+*.example text eol=lf
+*.ini text eol=lf
+*.mako text eol=lf
+*.md text eol=lf
+*.py text eol=lf
+*.txt text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+.aiignore text eol=lf
+.dockerignore text eol=lf
+.env* text eol=lf
+.gitattributes text eol=lf
+.gitignore text eol=lf
+.ignore text eol=lf
+Dockerfile text eol=lf
+README text eol=lf
