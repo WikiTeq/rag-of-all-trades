@@ -51,8 +51,8 @@ jobs:
             type=ref,event=pr
             # see the sha step
             type=raw,value=${{ steps.sha.outputs.sha }}
-            # set latest tag for master branch
-            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'master') }}
+            # set latest tag for main branch
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
           labels: |
             org.opencontainers.image.revision=${{ steps.sha.outputs.sha }}
 
