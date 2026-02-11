@@ -265,6 +265,9 @@ class IngestionJob(ABC):
 
         try:
             for item in self.list_items():
+                if self.request_delay > 0:
+                    time.sleep(self.request_delay)
+
                 count = self.process_item(item)
                 if count == 0:
                     skipped += 1
