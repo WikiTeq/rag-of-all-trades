@@ -21,17 +21,19 @@ sources:
   #    buckets: "${S3_ACCOUNT2_BUCKETS}"
   #    schedules: "${S3_ACCOUNT2_SCHEDULES}"
 
-  #- type: "mediawiki1"
+  #- type: "mediawiki"
   #  name: "wiki1"
   #  config:
-  #    api_url: "${MEDIAWIKI1_API_URL}"
+  #    api_url: "${MEDIAWIKI_WIKI1_API_URL}"
   #    request_delay: 0.1
+  #    schedules: "${MEDIAWIKI_WIKI1_SCHEDULES}"
 
-  #- type: "mediawiki2"
+  #- type: "mediawiki"
   #  name: "wiki2"
   #  config:
-  #    api_url: "${MEDIAWIKI2_API_URL}"
+  #    api_url: "${MEDIAWIKI_WIKI2_API_URL}"
   #    request_delay: 0.1
+  #    schedules: "${MEDIAWIKI_WIKI2_SCHEDULES}"
 
   #- type: "serpapi"
   #  name: "serp_ingestion"

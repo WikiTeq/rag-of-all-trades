@@ -4,6 +4,7 @@ from collections.abc import Iterable
 import gc
 import hashlib
 import logging
+import time
 from typing import Dict, Any
 from llama_index.core import Document
 from tasks.helper_classes.metadata_tracker import MetadataTracker
@@ -11,6 +12,13 @@ from tasks.helper_classes.vector_store import VectorStoreManager
 from tasks.helper_classes.ingestion_item import IngestionItem
 
 logger = logging.getLogger(__name__)
+
+# Keys that process_item sets; get_extra_metadata must not overwrite these.
+RESERVED_METADATA_KEYS = frozenset({
+    "source", "key", "checksum", "version", "format",
+    "source_name", "file_name", "last_modified",
+})
+
 
 class IngestionJob(ABC):
     """Abstract base class for all ingestion jobs that process content from various sources.
@@ -33,6 +41,10 @@ class IngestionJob(ABC):
         self.metadata_tracker = MetadataTracker()
         self.vector_manager = VectorStoreManager()
 
+        # Rate limiting
+        cfg = config.get("config", {})
+        self.request_delay = float(cfg.get("request_delay", 0.0))
+
         # Seen checksums - prevent reprocessing identical content
         self._seen_capacity = 10000
         self._seen = OrderedDict()
@@ -47,8 +59,8 @@ class IngestionJob(ABC):
     def list_items(self) -> Iterable[IngestionItem]:
         """Discover and yield all items that need to be processed from the data source.
 
-        This method should iterate through all available content in the source and yield
-        IngestionItem objects containing metadata about each piece of content. It should
+        This method should iterate through all available resources in the source and yield
+        IngestionItem objects containing metadata about each item. It should
         handle pagination, filtering, and any source-specific discovery logic.
 
         Yields:
@@ -80,32 +92,25 @@ class IngestionJob(ABC):
         """
         pass
 
-    def get_document_metadata(self, item: IngestionItem, item_name: str, checksum: str, version: int, last_modified) -> Dict[str, Any]:
-        """Generate metadata dictionary for the document to be stored in the vector database.
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Hook for subclasses to provide additional metadata.
 
-        This method can be overridden by subclasses to add source-specific metadata
-        (e.g., URLs, custom fields, etc.).
+        Default implementation returns an empty dictionary. Subclasses can override
+        this to add source-specific fields (e.g., URLs, tags, etc.) without
+        needing to construct the standard metadata dictionary. Keys that match
+        RESERVED_METADATA_KEYS (source, key, checksum, version, format,
+        source_name, file_name, last_modified) are ignored and will not overwrite
+        standard metadata.
 
         Args:
             item: The ingestion item being processed
-            item_name: The generated name for the item
-            checksum: MD5 hash of the content for duplicate detection
-            version: Version number of this content (increments on changes)
-            last_modified: Timestamp when the source content was last modified
+            content: The raw text content of the item
+            metadata: The standard metadata dictionary constructed by process_item
 
         Returns:
-            dict: Metadata dictionary with standard fields plus any custom fields
+            dict: Additional metadata to be merged into the final document metadata
         """
-        return {
-            "source": self.source_type,
-            "key": item_name,
-            "checksum": checksum,
-            "version": version,
-            "format": "markdown",
-            "source_name": self.source_name,
-            "file_name": item_name,
-            "last_modified": str(last_modified),
-        }
+        return {}
 
     def _seen_add(self, checksum: str) -> bool:
         """Track content checksums to prevent reprocessing of identical content.
@@ -178,9 +183,26 @@ class IngestionJob(ABC):
 
             version = (latest.version + 1) if latest else 1
 
+            # Standard metadata (reserved keys must not be overwritten by get_extra_metadata)
+            metadata = {
+                "source": self.source_type,
+                "key": item_name,
+                "checksum": new_checksum,
+                "version": version,
+                "format": "markdown",
+                "source_name": self.source_name,
+                "file_name": item_name,
+                "last_modified": str(last_modified),
+            }
+
+            extra = self.get_extra_metadata(item, raw_content, metadata)
+            for k, v in extra.items():
+                if k not in RESERVED_METADATA_KEYS:
+                    metadata[k] = v
+
             docs = Document(
                     text=raw_content,
-                    metadata=self.get_document_metadata(item, item_name, new_checksum, version, last_modified)
+                    metadata=metadata
                 )
 
             self.vector_manager.insert_documents([docs])
@@ -216,12 +238,14 @@ class IngestionJob(ABC):
         """
         total = 0
         skipped = 0
-        errors = 0
 
         logger.info(f"[{self.source_name}] Starting ingestion job")
 
         try:
             for item in self.list_items():
+                if self.request_delay > 0:
+                    time.sleep(self.request_delay)
+
                 count = self.process_item(item)
                 if count == 0:
                     skipped += 1
