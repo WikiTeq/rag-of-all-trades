@@ -103,7 +103,7 @@ async def lifespan(app: FastAPI):
 
 # Create app instance
 app = FastAPI(
-    title="RAG Service",
+    title="Rag Of All Trades",
     description="RAG Service",
     version="0.1.0",
     lifespan=lifespan,
