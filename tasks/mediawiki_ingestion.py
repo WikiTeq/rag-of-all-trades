@@ -58,6 +58,7 @@ class MediaWikiIngestionJob(IngestionJob):
             max_retries=cfg.get("max_retries", 3),
             timeout=cfg.get("timeout", 30),
             namespaces=cfg.get("namespaces"),
+            schedules=cfg.get("schedules", 3600),
         )
 
         logger.info(f"Initialized MediaWiki connector for {self._reader.api_url}")

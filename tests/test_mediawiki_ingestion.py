@@ -79,6 +79,7 @@ class TestInitialization(unittest.TestCase):
                 max_retries=5,
                 timeout=60,
                 namespaces=[0, 1],
+                schedules=3600,
             )
 
     def test_missing_api_url_raises(self):
