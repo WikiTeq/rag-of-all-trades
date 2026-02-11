@@ -2,8 +2,6 @@
 import hashlib
 import logging
 import re
-import time
-from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
 
@@ -171,33 +169,9 @@ class MediaWikiIngestionJob(IngestionJob):
 
         return safe_name
 
-    def process_item(self, item: IngestionItem):
-        """Process a single ingestion item with rate limiting.
-
-        Overrides base implementation to add rate limiting between page fetches.
-        The URL is automatically cached by get_raw_content() for use in get_document_metadata().
-
-        Args:
-            item: The ingestion item to process
-
-        Returns:
-            int: 1 if item was successfully ingested, 0 if skipped or failed
-        """
-        # Rate limiting between individual page fetches
-        time.sleep(self._reader.request_delay)
-
-        # Delegate to base class implementation
-        # get_raw_content() will cache the URL in item._metadata_cache
-        return super().process_item(item)
-
     def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: datetime,
-    ) -> dict[str, Any]:
+        self, item: IngestionItem, item_name: str, checksum: str, version: int, last_modified: datetime
+    ) -> Dict[str, Any]:
         """Generate document metadata with MediaWiki-specific page URL.
 
         Uses explicitly cached URL from process_item() to avoid coupling to base class internals.
