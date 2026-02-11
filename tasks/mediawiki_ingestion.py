@@ -140,7 +140,10 @@ class MediaWikiIngestionJob(IngestionJob):
         Returns:
             dict: Dictionary with 'url' field if available
         """
-        extra = {}
+        extra = {
+            "title": item.source_ref,
+            "source_type": self.source_type,
+        }
         if item.url:
             extra["url"] = item.url
         else:
