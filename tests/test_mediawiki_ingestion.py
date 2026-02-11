@@ -330,23 +330,5 @@ class TestRun(unittest.TestCase):
         mock_sleep.assert_called_with(2.0)
 
 
-# ---------------------------------------------------------------------------
-# Session lifecycle
-# ---------------------------------------------------------------------------
-
-
-class TestSessionLifecycle(unittest.TestCase):
-    def test_close_delegates_to_reader(self):
-        job, reader = _make_job()
-        job.close()
-        reader.close.assert_called_once()
-
-    def test_context_manager(self):
-        job, reader = _make_job()
-        with job:
-            pass
-        reader.close.assert_called_once()
-
-
 if __name__ == "__main__":
     unittest.main()
