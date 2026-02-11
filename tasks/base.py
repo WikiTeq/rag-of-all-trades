@@ -15,6 +15,20 @@ from tasks.helper_classes.vector_store import VectorStoreManager
 
 logger = logging.getLogger(__name__)
 
+# Keys that process_item sets; get_extra_metadata must not overwrite these.
+RESERVED_METADATA_KEYS = frozenset(
+    {
+        "source",
+        "key",
+        "checksum",
+        "version",
+        "format",
+        "source_name",
+        "file_name",
+        "last_modified",
+    }
+)
+
 
 class IngestionJob(ABC):
     """Abstract base class for all ingestion jobs that process content from various sources.
