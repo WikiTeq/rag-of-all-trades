@@ -114,7 +114,9 @@ class TestListItems(unittest.TestCase):
         self.assertEqual(items[0].id, "mediawiki:Page 1")
         self.assertEqual(items[0].source_ref, "Page 1")
         self.assertEqual(items[0].last_modified, datetime(2024, 1, 1))
+        self.assertEqual(items[0].url, "u1")
         self.assertEqual(items[1].id, "mediawiki:Page 2")
+        self.assertEqual(items[1].url, "u2")
 
         # reader._get_all_pages_generator called once
         reader._get_all_pages_generator.assert_called_once()
@@ -149,7 +151,6 @@ class TestGetRawContent(unittest.TestCase):
         content = job.get_raw_content(item)
 
         self.assertEqual(content, "Clean content")
-        self.assertEqual(item._metadata_cache["page_url"], "https://example.com/wiki/P")
         reader.load_resource.assert_called_once_with("P")
 
     def test_missing_page(self):
@@ -160,7 +161,6 @@ class TestGetRawContent(unittest.TestCase):
         content = job.get_raw_content(item)
 
         self.assertEqual(content, "")
-        self.assertNotIn("page_url", item._metadata_cache)
 
 
 # ---------------------------------------------------------------------------
@@ -214,10 +214,7 @@ class TestGetDocumentMetadata(unittest.TestCase):
             id="mediawiki:Test Page",
             source_ref="Test Page",
             last_modified=datetime(2024, 1, 1, 12, 0, 0),
-        )
-        object.__setattr__(
-            item, "_metadata_cache",
-            {"page_url": "https://example.com/wiki/Test_Page"},
+            url="https://example.com/wiki/Test_Page",
         )
 
         metadata = job.get_document_metadata(
@@ -279,6 +276,7 @@ class TestProcessItem(unittest.TestCase):
                         id="mediawiki:P",
                         source_ref="P",
                         last_modified=datetime(2024, 1, 1),
+                        url="https://example.com/wiki/P",
                     )
                     result = job.process_item(item)
 
@@ -306,6 +304,7 @@ class TestProcessItem(unittest.TestCase):
                         id="mediawiki:P",
                         source_ref="P",
                         last_modified=datetime(2024, 1, 1),
+                        url="https://example.com/wiki/P",
                     )
                     result = job.process_item(item)
 

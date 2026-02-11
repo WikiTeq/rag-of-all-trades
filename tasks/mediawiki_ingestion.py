@@ -91,6 +91,7 @@ class MediaWikiIngestionJob(IngestionJob):
                 id=f"mediawiki:{title}",
                 source_ref=title,
                 last_modified=page_record.get("last_modified"),
+                url=page_record.get("url"),
             )
 
     def get_raw_content(self, item: IngestionItem) -> str:
@@ -111,8 +112,6 @@ class MediaWikiIngestionJob(IngestionJob):
             logger.warning(f"Failed to fetch content for page: {page_title}")
             return ""
 
-        # Cache URL for use in get_document_metadata()
-        item._metadata_cache["page_url"] = docs[0].metadata.get("url")
         return docs[0].text
 
     def get_item_name(self, item: IngestionItem) -> str:
@@ -158,11 +157,9 @@ class MediaWikiIngestionJob(IngestionJob):
         # Get base metadata
         metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
 
-        # Get URL from explicitly cached data
-        page_url = item._metadata_cache.get('page_url')
-        if page_url:
-            metadata["url"] = page_url
+        if item.url:
+            metadata["url"] = item.url
         else:
-            logger.warning(f"URL not cached for page: {item.source_ref} - this should not happen")
+            logger.warning(f"URL not found for page: {item.source_ref}")
 
         return metadata
