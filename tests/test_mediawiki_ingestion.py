@@ -101,13 +101,12 @@ class TestListItems(unittest.TestCase):
 
     @patch("tasks.mediawiki_ingestion.time.sleep")
     def test_list_items_basic(self, mock_sleep):
-        """Two pages returned from reader → two IngestionItems."""
+        """Pages returned from the reader's generator → IngestionItems."""
         job, reader = _make_job()
-        reader.list_resources.return_value = ["Page 1", "Page 2"]
-        reader.get_resources_info.return_value = {
-            "Page 1": {"last_modified": datetime(2024, 1, 1), "url": "u1"},
-            "Page 2": {"last_modified": datetime(2024, 1, 2), "url": "u2"},
-        }
+        reader._get_all_pages_generator.return_value = [
+            {"title": "Page 1", "last_modified": datetime(2024, 1, 1), "url": "u1"},
+            {"title": "Page 2", "last_modified": datetime(2024, 1, 2), "url": "u2"},
+        ]
 
         items = list(job.list_items())
 
@@ -117,35 +116,20 @@ class TestListItems(unittest.TestCase):
         self.assertEqual(items[0].last_modified, datetime(2024, 1, 1))
         self.assertEqual(items[1].id, "mediawiki:Page 2")
 
-        # reader.list_resources called once, get_resources_info called once with all titles
-        reader.list_resources.assert_called_once()
-        reader.get_resources_info.assert_called_once_with(["Page 1", "Page 2"])
-
-    @patch("tasks.mediawiki_ingestion.time.sleep")
-    def test_list_items_batching(self, mock_sleep):
-        """Pages are batched by reader.batch_size for get_resources_info."""
-        job, reader = _make_job(batch_size=2)
-        reader.batch_size = 2
-        titles = [f"P{i}" for i in range(5)]
-        reader.list_resources.return_value = titles
-        reader.get_resources_info.return_value = {
-            t: {"last_modified": None, "url": None} for t in titles
-        }
-
-        items = list(job.list_items())
-        self.assertEqual(len(items), 5)
-        # 5 pages / batch_size 2 → 3 batches
-        self.assertEqual(reader.get_resources_info.call_count, 3)
+        # reader._get_all_pages_generator called once
+        reader._get_all_pages_generator.assert_called_once()
+        # get_resources_info and list_resources are NOT called anymore for listing
+        reader.list_resources.assert_not_called()
+        reader.get_resources_info.assert_not_called()
 
     @patch("tasks.mediawiki_ingestion.time.sleep")
     def test_list_items_empty_wiki(self, mock_sleep):
-        """No pages → no items, no batched calls."""
+        """No pages → no items."""
         job, reader = _make_job()
-        reader.list_resources.return_value = []
+        reader._get_all_pages_generator.return_value = []
 
         items = list(job.list_items())
         self.assertEqual(items, [])
-        reader.get_resources_info.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

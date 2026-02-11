@@ -14,7 +14,6 @@ from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
 # Configure logging
-# TODO: Logging should not be done here and in s3, but in the main module
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
@@ -78,34 +77,21 @@ class MediaWikiIngestionJob(IngestionJob):
     def list_items(self) -> Iterator[IngestionItem]:
         """Discover all pages in the MediaWiki instance and yield ingestion items.
 
-        Iterates through pages discovered via the reader, fetching last modified
-        timestamps in batches to avoid N+1 query problems. Applies rate limiting
-        between batch requests.
+        Iterates through pages discovered via the reader's optimized generator,
+        which fetches metadata (titles, URLs, timestamps) in single API requests.
 
         Yields:
             IngestionItem objects containing page metadata for processing
         """
         logger.info(f"Starting to list pages from {self._reader.api_url}")
 
-        page_titles = self._reader.list_resources()
-
-        # Process in batches
-        for i in range(0, len(page_titles), self._reader.batch_size):
-            batch = page_titles[i : i + self._reader.batch_size]
-
-            # Batched timestamp + URL fetch (avoids N+1)
-            batch_info = self._reader.get_resources_info(batch)
-
-            for title in batch:
-                info = batch_info.get(title, {})
-                yield IngestionItem(
-                    id=f"mediawiki:{title}",
-                    source_ref=title,
-                    last_modified=info.get("last_modified"),
-                )
-
-            # Rate limiting between batch requests
-            time.sleep(self._reader.request_delay)
+        for page_record in self._reader._get_all_pages_generator():
+            title = page_record["title"]
+            yield IngestionItem(
+                id=f"mediawiki:{title}",
+                source_ref=title,
+                last_modified=page_record.get("last_modified"),
+            )
 
     def get_raw_content(self, item: IngestionItem) -> str:
         """Fetch and return the raw text content of a MediaWiki page.
