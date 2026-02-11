@@ -39,6 +39,9 @@ llama-index-readers-web==0.6.0
 # Environment management
 python-dotenv==1.2.1
 
+# Testing
+pytest>=7.0
+
 # Optional utilities (logging, serialization)
 pydantic==2.12.3
 pydantic-settings==2.11.0
