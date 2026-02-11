@@ -100,8 +100,7 @@ class TestInitialization(unittest.TestCase):
 
 class TestListItems(unittest.TestCase):
 
-    @patch("tasks.mediawiki_ingestion.time.sleep")
-    def test_list_items_basic(self, mock_sleep):
+    def test_list_items_basic(self):
         """Pages returned from the reader's generator → IngestionItems."""
         job, reader = _make_job()
         reader._get_all_pages_generator.return_value = [
@@ -123,8 +122,7 @@ class TestListItems(unittest.TestCase):
         reader.list_resources.assert_not_called()
         reader.get_resources_info.assert_not_called()
 
-    @patch("tasks.mediawiki_ingestion.time.sleep")
-    def test_list_items_empty_wiki(self, mock_sleep):
+    def test_list_items_empty_wiki(self):
         """No pages → no items."""
         job, reader = _make_job()
         reader._get_all_pages_generator.return_value = []
@@ -262,8 +260,7 @@ class TestGetDocumentMetadata(unittest.TestCase):
 
 class TestProcessItem(unittest.TestCase):
 
-    @patch("tasks.mediawiki_ingestion.time.sleep")
-    def test_success(self, mock_sleep):
+    def test_success(self):
         job, reader = _make_job()
         reader.request_delay = 0.1
 
@@ -289,8 +286,7 @@ class TestProcessItem(unittest.TestCase):
                     job.metadata_tracker.record_metadata.assert_called_once()
                     job.vector_manager.insert_documents.assert_called_once()
 
-    @patch("tasks.mediawiki_ingestion.time.sleep")
-    def test_duplicate_content(self, mock_sleep):
+    def test_duplicate_content(self):
         job, reader = _make_job()
         reader.request_delay = 0.1
 
@@ -317,6 +313,29 @@ class TestProcessItem(unittest.TestCase):
                     job.metadata_tracker.record_metadata.assert_not_called()
                     job.vector_manager.insert_documents.assert_not_called()
 
+
+# ---------------------------------------------------------------------------
+# run
+# ---------------------------------------------------------------------------
+
+class TestRun(unittest.TestCase):
+
+    @patch("tasks.base.time.sleep")
+    def test_run_applies_delay(self, mock_sleep):
+        """run() should call time.sleep with request_delay for each item."""
+        cfg = _default_config(request_delay=2.0)
+        job, _ = _make_job(config=cfg)
+
+        with patch.object(job, "list_items") as mock_list:
+            mock_list.return_value = [
+                IngestionItem(id="1", source_ref="1"),
+                IngestionItem(id="2", source_ref="2"),
+            ]
+            with patch.object(job, "process_item", return_value=1):
+                job.run()
+
+        self.assertEqual(mock_sleep.call_count, 2)
+        mock_sleep.assert_called_with(2.0)
 
 # ---------------------------------------------------------------------------
 # Session lifecycle
