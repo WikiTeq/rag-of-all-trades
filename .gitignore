@@ -12,6 +12,7 @@ venv/
 # Secrets
 .env
 .env.*
+!.env.example
 
 # Configuration
 config.yaml
