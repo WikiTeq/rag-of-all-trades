@@ -47,13 +47,15 @@ def shutdown_worker(**kwargs):
     engine.dispose()
 
 def create_task_for_source(source_config):
-    account_name = source_config["name"]
-    bucket_name = source_config["config"].get("bucket_override")
+    """Register a Celery task and Beat schedule for one source (S3, MediaWiki, etc.)."""
+    source_name = source_config["name"]
+    # S3 uses bucket_override when one account has multiple buckets; other sources leave it None
+    config_override = source_config["config"].get("bucket_override")
 
-    if bucket_name:
-        task_name = f"{source_config['type']}_ingest_{account_name}_{bucket_name}"
+    if config_override:
+        task_name = f"{source_config['type']}_ingest_{source_name}_{config_override}"
     else:
-        task_name = f"{source_config['type']}_ingest_{account_name}"
+        task_name = f"{source_config['type']}_ingest_{source_name}"
 
     @celery_app.task(
         name=task_name,
@@ -63,8 +65,8 @@ def create_task_for_source(source_config):
     )
     def run_source(self, pipeline_config=source_config):
         from tasks.factory import IngestionJobFactory
-        bucket_override = pipeline_config["config"].get("bucket_override")
-        log_name = f"{pipeline_config['name']}_{bucket_override}" if bucket_override else pipeline_config['name']
+        override = pipeline_config["config"].get("bucket_override")
+        log_name = f"{pipeline_config['name']}_{override}" if override else pipeline_config["name"]
         logger.info(f"Starting ingestion for {log_name}")
         
         job = IngestionJobFactory.create(

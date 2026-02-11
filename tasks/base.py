@@ -13,6 +13,13 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 
 logger = logging.getLogger(__name__)
 
+# Keys that process_item sets; get_extra_metadata must not overwrite these.
+RESERVED_METADATA_KEYS = frozenset({
+    "source", "key", "checksum", "version", "format",
+    "source_name", "file_name", "last_modified",
+})
+
+
 class IngestionJob(ABC):
     """Abstract base class for all ingestion jobs that process content from various sources.
 
@@ -90,7 +97,10 @@ class IngestionJob(ABC):
 
         Default implementation returns an empty dictionary. Subclasses can override
         this to add source-specific fields (e.g., URLs, tags, etc.) without
-        needing to construct the standard metadata dictionary.
+        needing to construct the standard metadata dictionary. Keys that match
+        RESERVED_METADATA_KEYS (source, key, checksum, version, format,
+        source_name, file_name, last_modified) are ignored and will not overwrite
+        standard metadata.
 
         Args:
             item: The ingestion item being processed
@@ -173,7 +183,7 @@ class IngestionJob(ABC):
 
             version = (latest.version + 1) if latest else 1
 
-            # Standard metadata
+            # Standard metadata (reserved keys must not be overwritten by get_extra_metadata)
             metadata = {
                 "source": self.source_type,
                 "key": item_name,
@@ -185,9 +195,10 @@ class IngestionJob(ABC):
                 "last_modified": str(last_modified),
             }
 
-            # Merge extra metadata from subclass
             extra = self.get_extra_metadata(item, raw_content, metadata)
-            metadata.update(extra)
+            for k, v in extra.items():
+                if k not in RESERVED_METADATA_KEYS:
+                    metadata[k] = v
 
             docs = Document(
                     text=raw_content,
@@ -227,7 +238,6 @@ class IngestionJob(ABC):
         """
         total = 0
         skipped = 0
-        errors = 0
 
         logger.info(f"[{self.source_name}] Starting ingestion job")
 

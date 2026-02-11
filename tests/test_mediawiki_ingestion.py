@@ -76,15 +76,13 @@ class TestInitialization:
                 max_retries=5,
                 timeout=60,
                 namespaces=[0, 1],
-                schedules=3600,
             )
 
     def test_missing_api_url_raises(self):
-        """Reader should raise ValueError if api_url is empty/missing."""
-        with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
-            MockReader.side_effect = ValueError("api_url is required")
-            with pytest.raises(ValueError, match="api_url is required"):
-                MediaWikiIngestionJob(_default_config(api_url=""))
+        """Job raises ValueError when api_url is empty (validated in __init__ before reader build).
+        Boundary: real MediaWikiReader validation is in the reader's own test suite."""
+        with pytest.raises(ValueError, match="api_url is required"):
+            MediaWikiIngestionJob(_default_config(api_url=""))
 
     def test_source_type(self, base_wiki_job):
         job, _ = base_wiki_job
@@ -179,7 +177,8 @@ class TestGetItemName:
             id="mediawiki:Page/With:Special*Chars?",
             source_ref="Page/With:Special*Chars?",
         )
-        assert job.get_item_name(item) == "Page_With_Special_Chars"
+        # Colon -> __, slash -> _ so "Page/One" and "Page:One" do not collide
+        assert job.get_item_name(item) == "Page_With__Special_Chars"
 
     def test_long_title(self, base_wiki_job):
         job, _ = base_wiki_job

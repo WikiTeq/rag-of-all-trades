@@ -74,7 +74,32 @@ class TestIngestionJob:
         args, _ = job.vector_manager.insert_documents.call_args
         metadata = args[0][0].metadata
         assert metadata["custom"] == "val"
-        assert metadata["source"] == "dummy" # Standard still there
+        assert metadata["source"] == "dummy"  # Standard still there
+
+    def test_get_extra_metadata_reserved_keys_not_overwritten(self, base_config):
+        """Extra metadata must not overwrite reserved standard keys."""
+        from tasks.base import RESERVED_METADATA_KEYS
+
+        job = DummyIngestionJob(base_config)
+        job.get_extra_metadata = Mock(
+            return_value={k: "overwrite" for k in RESERVED_METADATA_KEYS}
+        )
+
+        item = IngestionItem(id="item-1", source_ref="src")
+        job.metadata_tracker = Mock()
+        job.vector_manager = Mock()
+        job.get_raw_content = Mock(return_value="content")
+        job.metadata_tracker.get_latest_record.return_value = None
+
+        job.process_item(item)
+
+        args, _ = job.vector_manager.insert_documents.call_args
+        metadata = args[0][0].metadata
+        for key in RESERVED_METADATA_KEYS:
+            assert metadata[key] != "overwrite", f"Reserved key {key} was overwritten"
+        assert metadata["source"] == "dummy"
+        assert metadata["key"] == "item-1"
+        assert metadata["version"] == 1
 
     def test_seen_add_lru_eviction(self, base_config):
         job = DummyIngestionJob(base_config)
