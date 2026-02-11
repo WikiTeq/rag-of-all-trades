@@ -62,18 +62,6 @@ class MediaWikiIngestionJob(IngestionJob):
 
         logger.info(f"Initialized MediaWiki connector for {self._reader.api_url}")
 
-    def close(self):
-        """Close the reader's HTTP session to free up resources."""
-        self._reader.close()
-
-    def __enter__(self):
-        """Context manager entry."""
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit - ensures session is closed."""
-        self.close()
-
     def list_items(self) -> Iterator[IngestionItem]:
         """Discover all pages in the MediaWiki instance and yield ingestion items.
 
