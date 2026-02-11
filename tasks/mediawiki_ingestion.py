@@ -94,7 +94,9 @@ class MediaWikiIngestionJob(IngestionJob):
         page_title = item.source_ref
 
         logger.debug(f"Fetching content for page: {page_title}")
-        docs = self._reader.load_resource(page_title)
+        docs = self._reader.load_resource(
+            page_title, resource_url=item.url, last_modified=item.last_modified
+        )
 
         if not docs:
             logger.warning(f"Failed to fetch content for page: {page_title}")
@@ -127,27 +129,21 @@ class MediaWikiIngestionJob(IngestionJob):
 
         return safe_name
 
-    def get_document_metadata(self, item: IngestionItem, item_name: str, checksum: str, version: int, last_modified: datetime) -> Dict[str, Any]:
-        """Generate document metadata with MediaWiki-specific page URL.
-
-        Uses explicitly cached URL from process_item() to avoid coupling to base class internals.
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Provide MediaWiki-specific page URL as extra metadata.
 
         Args:
             item: IngestionItem containing cached page URL
-            item_name: Generated filename for the document
-            checksum: MD5 hash of content for duplicate detection
-            version: Version number of this content
-            last_modified: Timestamp of last page modification
+            content: Raw page content
+            metadata: Standard metadata dictionary
 
         Returns:
-            Dictionary with standard metadata plus 'url' field from MediaWiki API
+            dict: Dictionary with 'url' field if available
         """
-        # Get base metadata
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
-
+        extra = {}
         if item.url:
-            metadata["url"] = item.url
+            extra["url"] = item.url
         else:
             logger.warning(f"URL not found for page: {item.source_ref}")
 
-        return metadata
+        return extra

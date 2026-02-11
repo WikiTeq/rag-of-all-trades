@@ -1,17 +1,8 @@
-"""Tests for MediaWikiIngestionJob.
+"""Tests for MediaWikiIngestionJob (Pytest version)."""
 
-After refactoring, the job delegates all MediaWiki API logic to
-MediaWikiReader.  These tests mock the reader's public API
-(list_resources, get_resources_info, load_resource) and verify job
-orchestration, metadata, and naming.
-
-API/parsing/error-handling coverage now lives in the MediaWikiReader test
-suite (~/git/MediaWikiReader/tests/test_mediawiki_reader.py).
-"""
-
-import unittest
+import pytest
 from datetime import datetime
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 from llama_index.core.schema import Document
 
@@ -49,11 +40,17 @@ def _make_job(config=None, **reader_attrs):
     return job, mock_reader
 
 
+@pytest.fixture
+def base_wiki_job():
+    """Provide a MediaWikiIngestionJob and its mock reader."""
+    return _make_job()
+
+
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
 
-class TestInitialization(unittest.TestCase):
+class TestInitialization:
 
     def test_creates_reader_with_config(self):
         """Reader should receive the config values from the job config."""
@@ -86,23 +83,23 @@ class TestInitialization(unittest.TestCase):
         """Reader should raise ValueError if api_url is empty/missing."""
         with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
             MockReader.side_effect = ValueError("api_url is required")
-            with self.assertRaises(ValueError):
+            with pytest.raises(ValueError, match="api_url is required"):
                 MediaWikiIngestionJob(_default_config(api_url=""))
 
-    def test_source_type(self):
-        job, _ = _make_job()
-        self.assertEqual(job.source_type, "mediawiki")
+    def test_source_type(self, base_wiki_job):
+        job, _ = base_wiki_job
+        assert job.source_type == "mediawiki"
 
 
 # ---------------------------------------------------------------------------
 # list_items
 # ---------------------------------------------------------------------------
 
-class TestListItems(unittest.TestCase):
+class TestListItems:
 
-    def test_list_items_basic(self):
+    def test_list_items_basic(self, base_wiki_job):
         """Pages returned from the reader's generator → IngestionItems."""
-        job, reader = _make_job()
+        job, reader = base_wiki_job
         reader._get_all_pages_generator.return_value = [
             {"title": "Page 1", "last_modified": datetime(2024, 1, 1), "url": "u1"},
             {"title": "Page 2", "last_modified": datetime(2024, 1, 2), "url": "u2"},
@@ -110,13 +107,13 @@ class TestListItems(unittest.TestCase):
 
         items = list(job.list_items())
 
-        self.assertEqual(len(items), 2)
-        self.assertEqual(items[0].id, "mediawiki:Page 1")
-        self.assertEqual(items[0].source_ref, "Page 1")
-        self.assertEqual(items[0].last_modified, datetime(2024, 1, 1))
-        self.assertEqual(items[0].url, "u1")
-        self.assertEqual(items[1].id, "mediawiki:Page 2")
-        self.assertEqual(items[1].url, "u2")
+        assert len(items) == 2
+        assert items[0].id == "mediawiki:Page 1"
+        assert items[0].source_ref == "Page 1"
+        assert items[0].last_modified == datetime(2024, 1, 1)
+        assert items[0].url == "u1"
+        assert items[1].id == "mediawiki:Page 2"
+        assert items[1].url == "u2"
 
         # reader._get_all_pages_generator called once
         reader._get_all_pages_generator.assert_called_once()
@@ -124,23 +121,23 @@ class TestListItems(unittest.TestCase):
         reader.list_resources.assert_not_called()
         reader.get_resources_info.assert_not_called()
 
-    def test_list_items_empty_wiki(self):
+    def test_list_items_empty_wiki(self, base_wiki_job):
         """No pages → no items."""
-        job, reader = _make_job()
+        job, reader = base_wiki_job
         reader._get_all_pages_generator.return_value = []
 
         items = list(job.list_items())
-        self.assertEqual(items, [])
+        assert items == []
 
 
 # ---------------------------------------------------------------------------
 # get_raw_content
 # ---------------------------------------------------------------------------
 
-class TestGetRawContent(unittest.TestCase):
+class TestGetRawContent:
 
-    def test_success(self):
-        job, reader = _make_job()
+    def test_success(self, base_wiki_job):
+        job, reader = base_wiki_job
         doc = Document(
             text="Clean content",
             metadata={"url": "https://example.com/wiki/P", "title": "P"},
@@ -150,66 +147,68 @@ class TestGetRawContent(unittest.TestCase):
         item = IngestionItem(id="mediawiki:P", source_ref="P")
         content = job.get_raw_content(item)
 
-        self.assertEqual(content, "Clean content")
-        reader.load_resource.assert_called_once_with("P")
+        assert content == "Clean content"
+        reader.load_resource.assert_called_once_with(
+            "P", resource_url=None, last_modified=None
+        )
 
-    def test_missing_page(self):
-        job, reader = _make_job()
+    def test_missing_page(self, base_wiki_job):
+        job, reader = base_wiki_job
         reader.load_resource.return_value = []
 
         item = IngestionItem(id="mediawiki:M", source_ref="M")
         content = job.get_raw_content(item)
 
-        self.assertEqual(content, "")
+        assert content == ""
 
 
 # ---------------------------------------------------------------------------
 # get_item_name
 # ---------------------------------------------------------------------------
 
-class TestGetItemName(unittest.TestCase):
+class TestGetItemName:
 
-    def test_basic(self):
-        job, _ = _make_job()
+    def test_basic(self, base_wiki_job):
+        job, _ = base_wiki_job
         item = IngestionItem(id="mediawiki:Test Page", source_ref="Test Page")
-        self.assertEqual(job.get_item_name(item), "Test_Page")
+        assert job.get_item_name(item) == "Test_Page"
 
-    def test_special_characters(self):
-        job, _ = _make_job()
+    def test_special_characters(self, base_wiki_job):
+        job, _ = base_wiki_job
         item = IngestionItem(
             id="mediawiki:Page/With:Special*Chars?",
             source_ref="Page/With:Special*Chars?",
         )
-        self.assertEqual(job.get_item_name(item), "Page_With_Special_Chars")
+        assert job.get_item_name(item) == "Page_With_Special_Chars"
 
-    def test_long_title(self):
-        job, _ = _make_job()
+    def test_long_title(self, base_wiki_job):
+        job, _ = base_wiki_job
         long_title = "A" * 300
         item = IngestionItem(id=f"mediawiki:{long_title}", source_ref=long_title)
         result = job.get_item_name(item)
-        self.assertEqual(len(result), 255)
-        self.assertTrue(result.endswith("A"))
+        assert len(result) == 255
+        assert result.endswith("A")
 
-    def test_unicode(self):
-        job, _ = _make_job()
+    def test_unicode(self, base_wiki_job):
+        job, _ = base_wiki_job
         title = "Página_tëst_中文_🚀"
         item = IngestionItem(id=f"mediawiki:{title}", source_ref=title)
-        self.assertEqual(job.get_item_name(item), "Página_tëst_中文")
+        assert job.get_item_name(item) == "Página_tëst_中文"
 
-    def test_leading_trailing_underscores(self):
-        job, _ = _make_job()
+    def test_leading_trailing_underscores(self, base_wiki_job):
+        job, _ = base_wiki_job
         item = IngestionItem(id="mediawiki:_Test_Page_", source_ref="_Test_Page_")
-        self.assertEqual(job.get_item_name(item), "Test_Page")
+        assert job.get_item_name(item) == "Test_Page"
 
 
 # ---------------------------------------------------------------------------
 # get_document_metadata
 # ---------------------------------------------------------------------------
 
-class TestGetDocumentMetadata(unittest.TestCase):
+class TestGetExtraMetadata:
 
-    def test_with_cached_url(self):
-        job, _ = _make_job()
+    def test_with_cached_url(self, base_wiki_job):
+        job, _ = base_wiki_job
         item = IngestionItem(
             id="mediawiki:Test Page",
             source_ref="Test Page",
@@ -217,48 +216,39 @@ class TestGetDocumentMetadata(unittest.TestCase):
             url="https://example.com/wiki/Test_Page",
         )
 
-        metadata = job.get_document_metadata(
+        extra = job.get_extra_metadata(
             item=item,
-            item_name="Test_Page.md",
-            checksum="abc123",
-            version=1,
-            last_modified=datetime(2024, 1, 1, 12, 0, 0),
+            content="content",
+            metadata={},
         )
 
-        self.assertEqual(metadata["source"], "mediawiki")
-        self.assertEqual(metadata["key"], "Test_Page.md")
-        self.assertEqual(metadata["checksum"], "abc123")
-        self.assertEqual(metadata["version"], 1)
-        self.assertEqual(metadata["url"], "https://example.com/wiki/Test_Page")
+        assert extra["url"] == "https://example.com/wiki/Test_Page"
 
-    def test_without_cached_url(self):
-        job, _ = _make_job()
+    def test_without_cached_url(self, base_wiki_job):
+        job, _ = base_wiki_job
         item = IngestionItem(
             id="mediawiki:Test Page",
             source_ref="Test Page",
             last_modified=datetime(2024, 1, 1, 12, 0, 0),
         )
 
-        metadata = job.get_document_metadata(
+        extra = job.get_extra_metadata(
             item=item,
-            item_name="Test_Page.md",
-            checksum="abc123",
-            version=1,
-            last_modified=datetime(2024, 1, 1, 12, 0, 0),
+            content="content",
+            metadata={},
         )
 
-        self.assertEqual(metadata["source"], "mediawiki")
-        self.assertNotIn("url", metadata)
+        assert "url" not in extra
 
 
 # ---------------------------------------------------------------------------
 # process_item
 # ---------------------------------------------------------------------------
 
-class TestProcessItem(unittest.TestCase):
+class TestProcessItem:
 
-    def test_success(self):
-        job, reader = _make_job()
+    def test_success(self, base_wiki_job):
+        job, reader = base_wiki_job
         reader.request_delay = 0.1
 
         doc = Document(
@@ -280,12 +270,12 @@ class TestProcessItem(unittest.TestCase):
                     )
                     result = job.process_item(item)
 
-                    self.assertEqual(result, 1)
+                    assert result == 1
                     job.metadata_tracker.record_metadata.assert_called_once()
                     job.vector_manager.insert_documents.assert_called_once()
 
-    def test_duplicate_content(self):
-        job, reader = _make_job()
+    def test_duplicate_content(self, base_wiki_job):
+        job, reader = base_wiki_job
         reader.request_delay = 0.1
 
         doc = Document(
@@ -308,7 +298,7 @@ class TestProcessItem(unittest.TestCase):
                     )
                     result = job.process_item(item)
 
-                    self.assertEqual(result, 0)
+                    assert result == 0
                     job.metadata_tracker.record_metadata.assert_not_called()
                     job.vector_manager.insert_documents.assert_not_called()
 
@@ -317,7 +307,7 @@ class TestProcessItem(unittest.TestCase):
 # run
 # ---------------------------------------------------------------------------
 
-class TestRun(unittest.TestCase):
+class TestRun:
 
     @patch("tasks.base.time.sleep")
     def test_run_applies_delay(self, mock_sleep):
@@ -333,9 +323,5 @@ class TestRun(unittest.TestCase):
             with patch.object(job, "process_item", return_value=1):
                 job.run()
 
-        self.assertEqual(mock_sleep.call_count, 2)
+        assert mock_sleep.call_count == 2
         mock_sleep.assert_called_with(2.0)
-
-
-if __name__ == "__main__":
-    unittest.main()
