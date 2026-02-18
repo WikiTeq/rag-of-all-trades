@@ -56,6 +56,22 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Access the API at `:8000`
 * Access the API docs at `:8000/docs`
 
+## MCP endpoint
+
+The service exposes an MCP server at `/mcp`.
+It is configured in stateless HTTP mode, so no `mcp-session-id` header is required.
+
+Authentication is required via API key in the `Authorization` header:
+
+```http
+Authorization: Bearer <MCP_API_KEY>
+```
+
+Available tools:
+
+* `retrieve_chunks` - top-k retrieval with optional metadata filters
+* `rephrase_chunks` - LLM-based rephrase over top-k retrieved chunks
+
 ## Connectors
 
 The service supports multiple data sources, including multiple data sources of the same type, each with its own

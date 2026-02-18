@@ -22,6 +22,7 @@ class EnvSettings(BaseSettings):
 
     OPENROUTER_API_KEY: str
     OPENROUTER_API_BASE: str
+    MCP_API_KEY: str = ""
 
     CELERY_CONCURRENCY: int = 2  #Default fallback
     MAX_TASK_CHILD: int = 50
@@ -148,4 +149,3 @@ class Settings:
         }
 
 settings = Settings()
-
