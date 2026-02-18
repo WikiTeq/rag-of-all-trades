@@ -40,6 +40,22 @@ sources:
   #    queries: "${SERPAPI_QUERIES}"
   #    schedules: "${SERPAPI_SCHEDULES}"
 
+  #- type: "jira"
+  #  name: "jira1"
+  #  config:
+  #    server_url: "${JIRA1_SERVER_URL}"
+  #    # auth_type: "basic" requires email + api_token (Jira Cloud)
+  #    # auth_type: "token" requires only api_token (Jira Server / Data Center PAT)
+  #    auth_type: "basic"
+  #    email: "${JIRA1_EMAIL}"
+  #    api_token: "${JIRA1_API_TOKEN}"
+  #    jql: "${JIRA1_JQL}"
+  #    max_results: 50           # optional, default 50
+  #    schedules: "${JIRA1_SCHEDULES}"
+  #    # Bonus: load top N comments per issue
+  #    load_comments: false      # optional, default false
+  #    max_comments: 10          # optional, default 10
+
 embedding:
   provider: openrouter
   model_config: sentence-transformers/all-mpnet-base-v2
