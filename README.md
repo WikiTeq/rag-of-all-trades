@@ -13,6 +13,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Ingestion from S3 buckets with Everything-to-Markdown conversion via [MarkItDown](https://github.com/microsoft/markitdown)
 * Ingestion from MediaWiki with Wiki-to-Markdown conversion via [html2text](https://github.com/Alir3z4/html2text)
 * SerpAPI ingestion from Google Search results with customizable queries
+* Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -21,6 +22,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * S3
 * MediaWiki
 * SerpAPI
+* Jira
 
 ## Embeddings support
 
@@ -45,7 +47,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 
 ## ⚡️Quick Start
 
-* Create a `.env` file based on the `.env.example` file. 
+* Create a `.env` file based on the `.env.example` file.
   * The defaults are good enough, you just need to put your OpenRouter key into `OPENROUTER_API_KEY`
 * If you use OpenAI or a different OpenAI-compatible endpoint, also update the `OPENROUTER_API_BASE` variable
 * By default, a single S3 connector is configured; specify your S3 bucket credentials in the `S3_ACCOUNT1_` variables
@@ -71,7 +73,6 @@ The connector has the following configuration options:
 # config.yaml
 
 sources:
-  - 
   - type: "s3" # must be s3
     name: "account1" # arbitrary name for the connector, will be stored in metadata
     config:
@@ -82,7 +83,7 @@ sources:
       use_ssl: "${S3_ACCOUNT1_USE_SSL}" # use ssl for s3 connection, can be True or False
       buckets: "${S3_ACCOUNT1_BUCKETS}" # single entry or comma-separated list i.e. bucket1,bucket2
       schedules: "${S3_ACCOUNT1_SCHEDULES}" # single entry or comma-separated list i.e. 3600,60
-      
+
   - type: "s3"
     name: "account2"
     config:
@@ -173,6 +174,51 @@ SERPAPI1_QUERIES=aaa
 SERPAPI1_SCHEDULES=3600
 ````
 
+### Jira Connector
+
+The Jira connector ingests issues from Jira Cloud or on-premise (Server/Data Center) instances using a
+JQL query. Issue content (summary + description) is converted to Markdown. Metadata collected per issue
+includes: id, title, url, status, assignee, reporter, labels, project, priority, issue type
+
+Supports two authentication modes:
+- **Basic auth** (`auth_type: basic`) — email + API token, for Jira Cloud
+- **Personal Access Token** (`auth_type: token`) — PAT as Bearer header, for Jira Server / Data Center
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "jira"
+    name: "jira1"
+    config:
+      server_url: "${JIRA1_SERVER_URL}"
+      auth_type: "basic"              # "basic" or "token"
+      email: "${JIRA1_EMAIL}"         # required for auth_type=basic
+      api_token: "${JIRA1_API_TOKEN}"
+      jql: "${JIRA1_JQL}"
+      max_results: 50                 # optional, default 50
+      schedules: "${JIRA1_SCHEDULES}"
+      # Optional: load top N comments per issue
+      load_comments: false            # optional, default false
+      max_comments: 10                # optional, default 10
+```
+
+```dotenv
+# .env
+
+# Jira Cloud (basic auth)
+JIRA1_SERVER_URL=https://your-org.atlassian.net
+JIRA1_EMAIL=your-email@example.com
+JIRA1_API_TOKEN=your-api-token
+JIRA1_JQL=project = MYPROJECT ORDER BY updated DESC
+JIRA1_SCHEDULES=3600
+
+# Jira Server / Data Center (Personal Access Token)
+# JIRA1_SERVER_URL=https://jira.your-company.com
+# JIRA1_API_TOKEN=your-personal-access-token
+# (set auth_type: "token" in config.yaml; email is not needed)
+```
+
 ## Reference of the `config.yaml`
 
 The `config.yaml` file contains the main configuration of the service.
@@ -182,7 +228,7 @@ The `config.yaml` file contains the main configuration of the service.
 ```yaml
 sources: # holds the list of sources to ingest from (Connectors)
 
-  - type: # type of the connector (s3, mediawiki, serpapi)
+  - type: # type of the connector (s3, mediawiki, serpapi, jira)
     name: # arbitrary name for the connector, will be stored in metadata
     config:
       # connector specific configuration
