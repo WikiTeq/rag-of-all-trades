@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from unittest.mock import Mock, patch
 
@@ -24,6 +25,11 @@ class _DummyNodeWithScore:
         self.score = score
 
 
+def _run(coro):
+    """Helper to run async functions in sync tests."""
+    return asyncio.get_event_loop().run_until_complete(coro)
+
+
 class TestMCPServer(unittest.TestCase):
     def test_retrieve_chunks_response_returns_expected_shape(self):
         rag_engine = Mock()
@@ -35,12 +41,12 @@ class TestMCPServer(unittest.TestCase):
             )
         ]
 
-        result = mcp_server.retrieve_chunks_response(
+        result = _run(mcp_server.retrieve_chunks_response(
             rag_engine=rag_engine,
             query="hello",
             top_k=3,
             metadata_filters={"source_name": "docs"},
-        )
+        ))
 
         rag_engine.retrieve_top_k.assert_called_once_with(
             query="hello",
@@ -55,19 +61,19 @@ class TestMCPServer(unittest.TestCase):
     def test_retrieve_chunks_response_validates_inputs(self):
         rag_engine = Mock()
         with self.assertRaises(ValueError):
-            mcp_server.retrieve_chunks_response(rag_engine=rag_engine, query="", top_k=5)
+            _run(mcp_server.retrieve_chunks_response(rag_engine=rag_engine, query="", top_k=5))
         with self.assertRaises(ValueError):
-            mcp_server.retrieve_chunks_response(rag_engine=rag_engine, query="ok", top_k=0)
+            _run(mcp_server.retrieve_chunks_response(rag_engine=rag_engine, query="ok", top_k=0))
 
     def test_rephrase_chunks_response_without_results(self):
         rag_engine = Mock()
         rag_engine.retrieve_top_k.return_value = []
 
         with patch.object(mcp_server, "llm", Mock()):
-            result = mcp_server.rephrase_chunks_response(
+            result = _run(mcp_server.rephrase_chunks_response(
                 rag_engine=rag_engine,
                 query="hello",
-            )
+            ))
 
         self.assertEqual(result, {"answer": "No relevant content found.", "references": []})
 
@@ -77,7 +83,7 @@ class TestMCPServer(unittest.TestCase):
 
         with patch.object(mcp_server, "llm", None):
             with self.assertRaises(RuntimeError):
-                mcp_server.rephrase_chunks_response(rag_engine=rag_engine, query="hello")
+                _run(mcp_server.rephrase_chunks_response(rag_engine=rag_engine, query="hello"))
 
     def test_rephrase_chunks_response_success(self):
         rag_engine = Mock()
@@ -92,11 +98,11 @@ class TestMCPServer(unittest.TestCase):
         llm_mock.complete.return_value = "Rephrased output"
 
         with patch.object(mcp_server, "llm", llm_mock):
-            result = mcp_server.rephrase_chunks_response(
+            result = _run(mcp_server.rephrase_chunks_response(
                 rag_engine=rag_engine,
                 query="question",
                 top_k=2,
-            )
+            ))
 
         rag_engine.retrieve_top_k.assert_called_once_with(query="question", top_k=2)
         self.assertEqual(result["answer"], "Rephrased output")
@@ -104,8 +110,13 @@ class TestMCPServer(unittest.TestCase):
 
     def test_create_mcp_server_builds_instance(self):
         app = FastAPI()
-        mcp = mcp_server.create_mcp_server(app=app, api_key="")
+        mcp = mcp_server.create_mcp_server(app=app, api_key="test-key")
         self.assertIsNotNone(mcp)
+
+    def test_create_mcp_server_rejects_empty_api_key(self):
+        app = FastAPI()
+        with self.assertRaises(ValueError):
+            mcp_server.create_mcp_server(app=app, api_key="")
 
 
 if __name__ == "__main__":

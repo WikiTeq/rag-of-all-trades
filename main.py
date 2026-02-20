@@ -157,6 +157,12 @@ app = FastAPI(
 mcp_server = create_mcp_server(app=app, api_key=settings.env.MCP_API_KEY)
 mcp_http_app = mcp_server.http_app(path="/", stateless_http=True)
 
+# IMPORTANT: Starlette's app.mount() does NOT invoke the mounted sub-app's
+# lifespan. FastMCP's StreamableHTTPSessionManager requires its lifespan to
+# run (it initializes the task group). We nest it inside the main app lifespan
+# here so both are managed together. If this combined_lifespan is removed or
+# refactored, MCP will fail at runtime on the first request with:
+#   "Task group is not initialized. Make sure to use run()."
 @asynccontextmanager
 async def combined_lifespan(app_instance: FastAPI):
     async with app_lifespan(app_instance):
