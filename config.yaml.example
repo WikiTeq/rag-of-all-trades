@@ -10,6 +10,14 @@ sources:
       buckets: "${S3_ACCOUNT1_BUCKETS}" # comma-separated string or list
       schedules: "${S3_ACCOUNT1_SCHEDULES}"
 
+  #- type: "directory"
+  #  name: "local_docs"
+  #  config:
+  #    path: "${DIRECTORY1_PATH}"
+  #    recursive: true
+  #    filter: "txt,md,pdf"
+  #    schedules: "${DIRECTORY1_SCHEDULES}"
+
   #- type: "s3"
   #  name: "account2"
   #  config:

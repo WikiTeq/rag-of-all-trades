@@ -11,6 +11,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 ## ✨ Features
 
 * Ingestion from S3 buckets with Everything-to-Markdown conversion via [MarkItDown](https://github.com/microsoft/markitdown)
+* Ingestion from local directories with Everything-to-Markdown conversion via [MarkItDown](https://github.com/microsoft/markitdown)
 * Ingestion from MediaWiki with Wiki-to-Markdown conversion via [html2text](https://github.com/Alir3z4/html2text)
 * SerpAPI ingestion from Google Search results with customizable queries
 * Flexible configuration supporting an arbitrary number of connectors
@@ -19,6 +20,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 ## 🌐 Connectors included
 
 * S3
+* Directory
 * MediaWiki
 * SerpAPI
 
@@ -106,6 +108,24 @@ S3_ACCOUNT1_BUCKETS=bucket1,bucket2
 S3_ACCOUNT1_SCHEDULES=3600,60
 ````
 
+### Directory Connector
+
+The directory connector ingests files from a local filesystem directory and converts them to Markdown format.
+The connector has the following configuration options:
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "directory"
+    name: "local_docs"
+    config:
+      path: "/data/docs" # required path to directory
+      recursive: true # optional, default true
+      filter: "txt,md,pdf" # optional, comma-separated extensions
+      schedules: "3600"
+```
+
 ### MediaWiki Connector
 
 The MediaWiki connector ingests documents from MediaWiki sites and converts them to Markdown format.
@@ -182,7 +202,7 @@ The `config.yaml` file contains the main configuration of the service.
 ```yaml
 sources: # holds the list of sources to ingest from (Connectors)
 
-  - type: # type of the connector (s3, mediawiki, serpapi)
+  - type: # type of the connector (s3, directory, mediawiki, serpapi)
     name: # arbitrary name for the connector, will be stored in metadata
     config:
       # connector specific configuration
