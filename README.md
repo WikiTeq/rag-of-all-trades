@@ -58,19 +58,45 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 
 ## MCP endpoint
 
-The service exposes an MCP server at `/mcp`.
-It is configured in stateless HTTP mode, so no `mcp-session-id` header is required.
+The service includes an optional MCP (Model Context Protocol) server at `/mcp/`.
+It is disabled by default and can be enabled via environment variables.
 
-Authentication is required via API key in the `Authorization` header:
+### Enabling MCP
+
+Set the following in your `.env` file:
+
+```dotenv
+MCP_ENABLE=1
+MCP_API_KEY=your-strong-api-key
+```
+
+### Authentication
+
+All MCP requests require a Bearer token in the `Authorization` header:
 
 ```http
 Authorization: Bearer <MCP_API_KEY>
 ```
 
-Available tools:
+### Transport
 
-* `retrieve_chunks` - top-k retrieval with optional metadata filters
-* `rephrase_chunks` - LLM-based rephrase over top-k retrieved chunks
+The MCP server uses stateless HTTP mode (Streamable HTTP transport), so no
+`mcp-session-id` header is required. The endpoint accepts JSON-RPC requests.
+
+### Available tools
+
+* `retrieve_chunks` - top-k retrieval from vector store with optional metadata filters
+* `rephrase_chunks` - LLM-based answer generation over top-k retrieved chunks (requires `inference` to be configured)
+
+### Testing with MCP Inspector
+
+You can use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to test the MCP endpoint:
+
+```bash
+./mcp_inspector.sh
+```
+
+This starts the inspector in Docker and prints a URL with pre-filled connection settings.
 
 ## Connectors
 
