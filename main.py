@@ -44,25 +44,6 @@ class _NormalizeMountedRootPath:
         await self.app(scope, receive, send)
 
 
-class _MCPNoSlashAlias:
-    """Serve /mcp without framework redirect to /mcp/."""
-
-    def __init__(self, app: ASGIApp):
-        self.app = app
-
-    async def __call__(
-        self,
-        scope: MutableMapping[str, Any] | Scope,
-        receive: Receive,
-        send: Send,
-    ) -> None:
-        if scope.get("type") == "http" and scope.get("path") == "/mcp":
-            scope = dict(scope)
-            scope["path"] = "/"
-            scope["raw_path"] = b"/"
-        await self.app(scope, receive, send)
-
-
 def validate_configuration():
     """Validate critical configuration on startup."""
     errors = []
@@ -97,9 +78,9 @@ def validate_configuration():
     if settings.LLM.get("provider") not in ("openai", "openrouter", None):
         logger.warning(f"Unknown LLM provider: {settings.LLM.get('provider')}. Rephrase endpoint may not work.")
 
-    # Validate MCP API key
-    if not settings.env.MCP_API_KEY:
-        errors.append("MCP_API_KEY not configured")
+    # Validate MCP API key (only if MCP is enabled)
+    if settings.env.MCP_ENABLE and not settings.env.MCP_API_KEY:
+        errors.append("MCP_API_KEY not configured (required when MCP_ENABLE=1)")
 
     if errors:
         error_msg = "Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
@@ -153,9 +134,14 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Configure MCP server and attach combined lifespan
-mcp_server = create_mcp_server(app=app, api_key=settings.env.MCP_API_KEY)
-mcp_http_app = mcp_server.http_app(path="/", stateless_http=True)
+# Configure MCP server (if enabled)
+mcp_http_app = None
+if settings.env.MCP_ENABLE:
+    mcp_server = create_mcp_server(app=app, api_key=settings.env.MCP_API_KEY)
+    mcp_http_app = mcp_server.http_app(path="/", stateless_http=True)
+    logger.info("MCP server enabled")
+else:
+    logger.info("MCP server disabled (MCP_ENABLE=0)")
 
 # IMPORTANT: Starlette's app.mount() does NOT invoke the mounted sub-app's
 # lifespan. FastMCP's StreamableHTTPSessionManager requires its lifespan to
@@ -166,12 +152,15 @@ mcp_http_app = mcp_server.http_app(path="/", stateless_http=True)
 @asynccontextmanager
 async def combined_lifespan(app_instance: FastAPI):
     async with app_lifespan(app_instance):
-        mcp_lifespan = getattr(mcp_http_app, "lifespan", None)
-        if mcp_lifespan is None:
+        if mcp_http_app is None:
             yield
         else:
-            async with mcp_lifespan(app_instance):
+            mcp_lifespan = getattr(mcp_http_app, "lifespan", None)
+            if mcp_lifespan is None:
                 yield
+            else:
+                async with mcp_lifespan(app_instance):
+                    yield
 
 app.router.lifespan_context = combined_lifespan
 
@@ -187,13 +176,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_route(
-    "/mcp",
-    _MCPNoSlashAlias(mcp_http_app),
-    methods=["GET", "POST", "DELETE"],
-    include_in_schema=False,
-)
-app.mount("/mcp", _NormalizeMountedRootPath(mcp_http_app))
+if mcp_http_app is not None:
+    app.add_route(
+        "/mcp",
+        mcp_http_app,
+        methods=["GET", "POST", "DELETE"],
+        include_in_schema=False,
+    )
+    app.mount("/mcp", _NormalizeMountedRootPath(mcp_http_app))
 
 @app.get("/health")
 def health_check():
