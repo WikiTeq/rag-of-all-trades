@@ -1,5 +1,6 @@
 from tasks.s3_ingestion import S3IngestionJob
 from tasks.mediawiki_ingestion import MediaWikiIngestionJob
+from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.base import IngestionJob
 
 class IngestionJobFactory:
@@ -20,3 +21,4 @@ class IngestionJobFactory:
 
 IngestionJobFactory.register("s3", S3IngestionJob)
 IngestionJobFactory.register("mediawiki", MediaWikiIngestionJob)
+IngestionJobFactory.register("directory", DirectoryIngestionJob)
