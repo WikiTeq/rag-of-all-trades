@@ -56,6 +56,48 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Access the API at `:8000`
 * Access the API docs at `:8000/docs`
 
+## MCP endpoint
+
+The service includes an optional MCP (Model Context Protocol) server at `/mcp/`.
+It is disabled by default and can be enabled via environment variables.
+
+### Enabling MCP
+
+Set the following in your `.env` file:
+
+```dotenv
+MCP_ENABLE=1
+MCP_API_KEY=your-strong-api-key
+```
+
+### Authentication
+
+All MCP requests require a Bearer token in the `Authorization` header:
+
+```http
+Authorization: Bearer <MCP_API_KEY>
+```
+
+### Transport
+
+The MCP server uses stateless HTTP mode (Streamable HTTP transport), so no
+`mcp-session-id` header is required. The endpoint accepts JSON-RPC requests.
+
+### Available tools
+
+* `retrieve_chunks` - top-k retrieval from vector store with optional metadata filters
+* `rephrase_chunks` - LLM-based answer generation over top-k retrieved chunks (requires `inference` to be configured)
+
+### Testing with MCP Inspector
+
+You can use the [MCP Inspector](https://github.com/modelcontextprotocol/inspector) to test the MCP endpoint:
+
+```bash
+./mcp_inspector.sh
+```
+
+This starts the inspector in Docker and prints a URL with pre-filled connection settings.
+
 ## Connectors
 
 The service supports multiple data sources, including multiple data sources of the same type, each with its own
