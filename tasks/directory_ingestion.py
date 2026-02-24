@@ -3,7 +3,7 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional, Set
+from typing import Iterable, Optional, Set
 
 from markitdown import MarkItDown
 
@@ -84,7 +84,7 @@ class DirectoryIngestionJob(IngestionJob):
         path = re.sub(r"[^a-zA-Z0-9\-_\.]", "", path)
         return path[:255]
 
-    def list_items(self):
+    def list_items(self) -> Iterable[IngestionItem]:
         pattern = "**/*" if self.recursive else "*"
         for file_path in sorted(self.directory.glob(pattern)):
             if not file_path.is_file():
