@@ -1,9 +1,10 @@
 import logging
 import re
 import unicodedata
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional, Set
+from typing import Optional, Set
 
 from markitdown import MarkItDown
 

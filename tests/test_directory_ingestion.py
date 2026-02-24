@@ -39,6 +39,16 @@ class TestDirectoryIngestionJob(unittest.TestCase):
         finally:
             Path(file_path).unlink(missing_ok=True)
 
+    def test_init_rejects_nonexistent_path(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            nonexistent = Path(temp_dir) / "does_not_exist"
+            assert not nonexistent.exists()
+            with self.assertRaises(ValueError) as ctx:
+                DirectoryIngestionJob(
+                    {"name": "local", "config": {"path": str(nonexistent)}}
+                )
+            self.assertIn("does not exist", str(ctx.exception))
+
     def test_list_items_recursive(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
