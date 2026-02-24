@@ -32,7 +32,15 @@ class DirectoryIngestionJob(IngestionJob):
         if not self.directory.is_dir():
             raise ValueError(f"Directory does not exist or is not a directory: {self.directory}")
 
-        self.recursive = bool(cfg.get("recursive", True))
+        raw_recursive = cfg.get("recursive", True)
+        if isinstance(raw_recursive, str):
+            self.recursive = raw_recursive.strip().lower() not in (
+                "false",
+                "0",
+                "no",
+            )
+        else:
+            self.recursive = bool(raw_recursive)
         self.extension_filter = self._parse_extension_filter(cfg.get("filter"))
         self.md = MarkItDown()
 

@@ -70,6 +70,26 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             self.assertEqual(len(items), 1)
             self.assertEqual(Path(items[0].source_ref).name, "root.txt")
 
+    def test_list_items_recursive_false_string(self):
+        """Config from env can give recursive as string 'false'; must be respected."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            (base / "root.txt").write_text("root", encoding="utf-8")
+            nested_dir = base / "nested"
+            nested_dir.mkdir()
+            (nested_dir / "child.md").write_text("child", encoding="utf-8")
+
+            job = DirectoryIngestionJob(
+                {
+                    "name": "local",
+                    "config": {"path": temp_dir, "recursive": "false"},
+                }
+            )
+
+            items = list(job.list_items())
+            self.assertEqual(len(items), 1)
+            self.assertEqual(Path(items[0].source_ref).name, "root.txt")
+
     def test_list_items_filter_by_extensions(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
