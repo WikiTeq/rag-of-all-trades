@@ -20,7 +20,7 @@ class DirectoryIngestionJob(IngestionJob):
     def source_type(self) -> str:
         return "directory"
 
-    def __init__(self, config):
+    def __init__(self, config: dict):
         super().__init__(config)
 
         cfg = config.get("config", {})

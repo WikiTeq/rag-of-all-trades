@@ -27,6 +27,18 @@ class TestDirectoryIngestionJob(unittest.TestCase):
         with self.assertRaises(ValueError):
             DirectoryIngestionJob({"name": "local", "config": {}})
 
+    def test_init_rejects_path_to_file(self):
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+            file_path = f.name
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                DirectoryIngestionJob(
+                    {"name": "local", "config": {"path": file_path}}
+                )
+            self.assertIn("not a directory", str(ctx.exception))
+        finally:
+            Path(file_path).unlink(missing_ok=True)
+
     def test_list_items_recursive(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
@@ -232,6 +244,22 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             self.assertIn("a__b.txt", names)
             self.assertIn("a_b.txt", names)
             self.assertNotEqual(names[0], names[1])
+
+    def test_get_item_name_fallback_when_outside_directory(self):
+        """When source_ref resolves outside job directory, use filename only."""
+        with tempfile.TemporaryDirectory() as job_dir:
+            with tempfile.TemporaryDirectory() as other_dir:
+                job = DirectoryIngestionJob(
+                    {"name": "local", "config": {"path": job_dir}}
+                )
+                outside_file = Path(other_dir) / "external.txt"
+                outside_file.write_text("x", encoding="utf-8")
+                item = IngestionItem(
+                    id=f"file://{outside_file}",
+                    source_ref=outside_file,
+                )
+                name = job.get_item_name(item)
+                self.assertEqual(name, "external.txt")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,8 @@
-from tasks.s3_ingestion import S3IngestionJob
-from tasks.mediawiki_ingestion import MediaWikiIngestionJob
-from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.base import IngestionJob
+from tasks.directory_ingestion import DirectoryIngestionJob
+from tasks.mediawiki_ingestion import MediaWikiIngestionJob
+from tasks.s3_ingestion import S3IngestionJob
+
 
 class IngestionJobFactory:
     _registry = {}
