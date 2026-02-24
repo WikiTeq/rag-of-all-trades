@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RAG Dashboard</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #0f766e;
+      --border: #e5e7eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: "JetBrains Mono", "Fira Code", "Menlo", monospace;
+      background: radial-gradient(circle at 10% 10%, #d1fae5, transparent 40%), var(--bg);
+      color: var(--text);
+    }
+    .wrap { max-width: 900px; margin: 0 auto; }
+    h1 { margin: 0 0 16px; font-size: 28px; }
+    .meta { color: var(--muted); margin-bottom: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+    .value { margin-top: 8px; font-size: 24px; font-weight: 700; }
+    .small { margin-top: 8px; color: var(--muted); font-size: 12px; }
+    .connectors {
+      margin-top: 14px;
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+    }
+    .connectors-title {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .connector-item {
+      padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    .connector-item:last-child { border-bottom: none; }
+    .connector-main { font-weight: 600; }
+    .connector-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>RAG Application Dashboard</h1>
+    <div class="meta">Refresh interval: {{ refresh_interval_seconds }} seconds</div>
+    <div class="grid">
+      <section class="card">
+        <div class="label">Vector Items</div>
+        <div id="vector-items" class="value">-</div>
+      </section>
+      <section class="card">
+        <div class="label">Vector DB Size</div>
+        <div id="vector-size" class="value">-</div>
+        <div id="vector-size-bytes" class="small"></div>
+      </section>
+      <section class="card">
+        <div class="label">Running Celery Jobs</div>
+        <div id="celery-jobs" class="value">-</div>
+      </section>
+      <section class="card">
+        <div class="label">Vector Table</div>
+        <div id="vector-table" class="value" style="font-size:18px">-</div>
+      </section>
+      <section class="card">
+        <div class="label">Configured Connectors</div>
+        <div id="connectors-count" class="value">-</div>
+        <div class="connectors">
+          <div class="connectors-title">Connector Details</div>
+          <div id="connectors-list" class="small">-</div>
+        </div>
+      </section>
+    </div>
+    <div id="updated-at" class="small" style="margin-top:16px;"></div>
+  </div>
+  <script>
+    const refreshIntervalMs = {{ refresh_interval_seconds }} * 1000;
+
+    async function refreshStats() {
+      const response = await fetch('/dashboard/stats', { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error('Failed to fetch dashboard stats');
+      }
+      const data = await response.json();
+      document.getElementById('vector-items').textContent = data.vector_items_count.toLocaleString();
+      document.getElementById('vector-size').textContent = data.vector_db_size_human;
+      document.getElementById('vector-size-bytes').textContent = data.vector_db_size_bytes.toLocaleString() + ' bytes';
+      document.getElementById('celery-jobs').textContent = data.running_celery_jobs.toLocaleString();
+      document.getElementById('vector-table').textContent = data.vector_table;
+      document.getElementById('connectors-count').textContent = data.configured_connectors_count.toLocaleString();
+      document.getElementById('updated-at').textContent = 'Last update: ' + new Date(data.updated_at).toLocaleString();
+
+      const connectorsList = document.getElementById('connectors-list');
+      const connectors = data.configured_connectors || [];
+      if (!connectors.length) {
+        connectorsList.textContent = 'No connectors configured';
+      } else {
+        connectorsList.textContent = '';
+        connectors.forEach((connector) => {
+          const name = connector.name || 'unknown';
+          const type = connector.type || 'unknown';
+          const schedule = connector.schedule_seconds ?? 'n/a';
+          const item = document.createElement('div');
+          item.className = 'connector-item';
+          const main = document.createElement('div');
+          main.className = 'connector-main';
+          main.textContent = name;
+          const meta = document.createElement('div');
+          meta.className = 'connector-meta';
+          meta.textContent = `type: ${type} | schedule: ${schedule}s`;
+          item.appendChild(main);
+          item.appendChild(meta);
+          connectorsList.appendChild(item);
+        });
+      }
+    }
+
+    async function startRefreshLoop() {
+      try {
+        await refreshStats();
+      } catch (error) {
+        document.getElementById('updated-at').textContent = 'Dashboard update error: ' + error.message;
+      }
+      setInterval(async () => {
+        try {
+          await refreshStats();
+        } catch (error) {
+          document.getElementById('updated-at').textContent = 'Dashboard update error: ' + error.message;
+        }
+      }, refreshIntervalMs);
+    }
+
+    startRefreshLoop();
+  </script>
+</body>
+</html>

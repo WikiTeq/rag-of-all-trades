@@ -11,6 +11,7 @@ from slowapi.util import get_remote_address
 from api.mcp_server import create_mcp_server
 from api.v1 import api_v1_router
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
+from api.dashboard import dashboard_router
 from celery_app import celery_app
 from utils.config import settings
 from utils.logger import configure_logging
@@ -186,3 +187,6 @@ async def read_root():
 
 
 app.include_router(api_v1_router)
+
+if settings.env.ENABLE_DASHBOARD:
+    app.include_router(dashboard_router)
