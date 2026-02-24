@@ -64,6 +64,9 @@ class DirectoryIngestionJob(IngestionJob):
         return extensions or None
 
     def _matches_filter(self, file_path: Path) -> bool:
+        """Return True if file matches the extension filter.
+        When a filter is set, files with no extension are excluded.
+        """
         if self.extension_filter is None:
             return True
         extension = file_path.suffix.lower().lstrip(".")
@@ -129,5 +132,5 @@ class DirectoryIngestionJob(IngestionJob):
         try:
             relative_path = file_path.relative_to(self.directory)
         except ValueError:
-            relative_path = file_path.name
+            relative_path = Path(file_path.name)
         return self._sanitize_path(str(relative_path))
