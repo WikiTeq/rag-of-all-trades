@@ -117,7 +117,7 @@ class DirectoryIngestionJob(IngestionJob):
             logger.warning(f"[{file_path}] Markdown conversion failed: {exc}. Using raw text.")
             return content_bytes.decode("utf-8", errors="ignore")
 
-    def get_item_name(self, item: IngestionItem):
+    def get_item_name(self, item: IngestionItem) -> str:
         file_path = Path(item.source_ref).resolve()
         try:
             relative_path = file_path.relative_to(self.directory)
