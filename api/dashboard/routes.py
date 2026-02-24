@@ -3,6 +3,7 @@ import re
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -10,6 +11,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import inspect, text
 
 from celery_app import celery_app
+from models.ingestion_run import IngestionRun
 from utils.config import settings
 from utils.db import get_db_session
 
@@ -66,6 +68,59 @@ def get_running_celery_jobs() -> int:
         return 0
 
 
+def format_duration_ms(duration_ms: Optional[int]) -> str:
+    if duration_ms is None:
+        return "-"
+    if duration_ms < 1000:
+        return f"{duration_ms} ms"
+    if duration_ms < 60_000:
+        return f"{duration_ms / 1000:.2f} s"
+    minutes = duration_ms // 60_000
+    seconds = (duration_ms % 60_000) / 1000
+    return f"{minutes}m {seconds:.1f}s"
+
+
+def serialize_ingestion_run(run: IngestionRun) -> dict:
+    duration_ms = run.duration_ms
+    if duration_ms is None and run.started_at and run.completed_at:
+        duration_ms = max(0, int((run.completed_at - run.started_at).total_seconds() * 1000))
+
+    return {
+        "id": run.id,
+        "connector_name": run.connector_name,
+        "connector_type": run.connector_type,
+        "status": run.status,
+        "items_ingested": run.items_ingested,
+        "items_skipped": run.items_skipped,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        "duration_ms": duration_ms,
+        "duration_human": format_duration_ms(duration_ms),
+    }
+
+
+def get_recent_ingestion_runs(limit: int = 10) -> list[dict]:
+    try:
+        with get_db_session() as db:
+            inspector = inspect(db.bind)
+            if not (
+                inspector.has_table("ingestion_runs", schema="public")
+                or inspector.has_table("ingestion_runs")
+            ):
+                return []
+
+            runs = (
+                db.query(IngestionRun)
+                .order_by(IngestionRun.started_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return [serialize_ingestion_run(run) for run in runs]
+    except Exception:
+        logger.exception("Failed to fetch ingestion run records")
+        return []
+
+
 def get_dashboard_stats():
     vector_table_name = resolve_vector_table_name()
     schema_sql = quote_sql_identifier("public")
@@ -95,6 +150,7 @@ def get_dashboard_stats():
             }
             for source in settings.SOURCES
         ],
+        "recent_ingestion_runs": get_recent_ingestion_runs(limit=10),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 

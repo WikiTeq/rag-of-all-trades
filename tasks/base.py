@@ -6,12 +6,13 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Any
+from typing import Dict, Any
 
 from llama_index.core import Document
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.helper_classes.metadata_tracker import MetadataTracker
+from tasks.helper_classes.ingestion_run_tracker import IngestionRunTracker
 from tasks.helper_classes.vector_store import VectorStoreManager
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ class IngestionJob(ABC):
 
         self.source_name = config.get("name")
         self.metadata_tracker = MetadataTracker()
+        self.run_tracker = IngestionRunTracker()
         self.vector_manager = VectorStoreManager()
 
         # Seen checksums - prevent reprocessing identical content
@@ -284,6 +286,13 @@ class IngestionJob(ABC):
         """
         total = 0
         skipped = 0
+        started_at = datetime.now(timezone.utc)
+        started_at_monotonic = time.perf_counter()
+        run_id = self.run_tracker.create_run(
+            connector_name=self.source_name or "unknown",
+            connector_type=self.source_type,
+            started_at=started_at,
+        )
 
         logger.info(f"[{self.source_name}] Starting ingestion job")
 
@@ -300,9 +309,26 @@ class IngestionJob(ABC):
 
             result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
             logger.info(result_msg)
+            self.run_tracker.complete_run(
+                run_id=run_id,
+                status="success",
+                items_ingested=total,
+                items_skipped=skipped,
+                completed_at=datetime.now(timezone.utc),
+                duration_ms=max(0, int((time.perf_counter() - started_at_monotonic) * 1000)),
+            )
             return result_msg
 
         except Exception as e:
             error_msg = f"[{self.source_name}] Job failed: {e}"
             logger.exception(error_msg)
+            self.run_tracker.complete_run(
+                run_id=run_id,
+                status="error",
+                items_ingested=total,
+                items_skipped=skipped,
+                completed_at=datetime.now(timezone.utc),
+                duration_ms=max(0, int((time.perf_counter() - started_at_monotonic) * 1000)),
+                error_message=str(e),
+            )
             return f"{error_msg}. Partial results: {total} ingested, {skipped} skipped"

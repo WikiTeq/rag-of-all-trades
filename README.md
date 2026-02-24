@@ -650,6 +650,13 @@ This endpoint serves a small live dashboard (auto-refresh every 5 seconds) with:
 * Total vector table size
 * Number of currently running Celery jobs
 * Number of configured connectors and their `name/type/schedule`
+* Latest 10 ingestion runs with:
+  * start timestamp
+  * duration
+  * ingested count
+  * skipped count
+  * status (`success`/`error`/`running`)
+  * connector (`name` + `type`)
 
 Dashboard is disabled by default and protected with HTTP Basic Auth.
 

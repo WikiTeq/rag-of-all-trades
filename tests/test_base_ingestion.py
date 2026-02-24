@@ -271,8 +271,46 @@ class TestIngestionJob:
         item2 = IngestionItem(id="item-2", source_ref="src")
         job = DummyIngestionJob(base_config, items=[item1, item2])
         job.process_item = Mock(side_effect=[1, 0])
+        job.run_tracker = Mock()
+        job.run_tracker.create_run.return_value = 42
 
         result = job.run()
 
-        assert result == "[test-source] Completed: 1 ingested, 1 skipped"
-        assert job.process_item.call_count == 2
+        self.assertEqual(result, "[test-source] Completed: 1 ingested, 1 skipped")
+        self.assertEqual(job.process_item.call_count, 2)
+        job.run_tracker.create_run.assert_called_once_with(
+            connector_name="test-source",
+            connector_type="dummy",
+            started_at=unittest.mock.ANY,
+        )
+        job.run_tracker.complete_run.assert_called_once_with(
+            run_id=42,
+            status="success",
+            items_ingested=1,
+            items_skipped=1,
+            completed_at=unittest.mock.ANY,
+            duration_ms=unittest.mock.ANY,
+        )
+
+    def test_run_records_error_status(self):
+        job = DummyIngestionJob(self.config, items=[])
+        job.list_items = Mock(side_effect=RuntimeError("boom"))
+        job.run_tracker = Mock()
+        job.run_tracker.create_run.return_value = 99
+
+        result = job.run()
+
+        self.assertIn("[test-source] Job failed: boom", result)
+        job.run_tracker.complete_run.assert_called_once_with(
+            run_id=99,
+            status="error",
+            items_ingested=0,
+            items_skipped=0,
+            completed_at=unittest.mock.ANY,
+            duration_ms=unittest.mock.ANY,
+            error_message="boom",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
