@@ -62,11 +62,15 @@ class DirectoryIngestionJob(IngestionJob):
         extension = file_path.suffix.lower().lstrip(".")
         return extension in self.extension_filter
 
-    def sanitize_path(self, path: str) -> str:
-        """Normalize a relative path into a filesystem-safe key."""
+    def _sanitize_path(self, path: str) -> str:
+        """Normalize a relative path into a unique, filesystem-safe key.
+        Uses double-underscore for path separators to avoid collisions
+        (e.g. a/b.txt vs a_b.txt).
+        """
         path = unicodedata.normalize("NFKD", path)
         path = path.encode("ascii", "ignore").decode("ascii")
-        path = re.sub(r"[ \\/]+", "_", path)
+        path = re.sub(r"[/\\]+", "__", path)
+        path = re.sub(r" +", "_", path)
         path = re.sub(r"[^a-zA-Z0-9\-_\.]", "", path)
         return path[:255]
 
@@ -117,4 +121,4 @@ class DirectoryIngestionJob(IngestionJob):
             relative_path = file_path.relative_to(self.directory)
         except ValueError:
             relative_path = file_path.name
-        return self.sanitize_path(str(relative_path))
+        return self._sanitize_path(str(relative_path))

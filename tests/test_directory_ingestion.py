@@ -188,7 +188,26 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             )
             item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
 
-            self.assertEqual(job.get_item_name(item), "A_folder_Angstrom_.txt")
+            self.assertEqual(job.get_item_name(item), "A_folder__Angstrom_.txt")
+
+    def test_get_item_name_distinguishes_path_from_underscore(self):
+        """a/b.txt and a_b.txt must produce different keys (no collision)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            base = Path(temp_dir)
+            sub = base / "a"
+            sub.mkdir()
+            (sub / "b.txt").write_text("nested", encoding="utf-8")
+            (base / "a_b.txt").write_text("flat", encoding="utf-8")
+
+            job = DirectoryIngestionJob(
+                {"name": "local", "config": {"path": temp_dir}}
+            )
+            items = list(job.list_items())
+            names = [job.get_item_name(item) for item in items]
+            self.assertEqual(len(names), 2)
+            self.assertIn("a__b.txt", names)
+            self.assertIn("a_b.txt", names)
+            self.assertNotEqual(names[0], names[1])
 
 
 if __name__ == "__main__":
