@@ -13,6 +13,7 @@ from llama_index.core import Document
 from markitdown import MarkItDown, StreamInfo
 
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.helper_classes.ingestion_run_tracker import IngestionRunTracker
 from tasks.helper_classes.metadata_tracker import MetadataTracker
 from tasks.helper_classes.vector_store import VectorStoreManager
 from tasks.schemas import BaseMetadataSchema
@@ -57,6 +58,7 @@ class IngestionJob(ABC):
 
         self.source_name = config.get("name")
         self.metadata_tracker = MetadataTracker()
+        self.run_tracker = IngestionRunTracker()
         self.vector_manager = VectorStoreManager()
 
         # Seen checksums - prevent reprocessing identical content
@@ -313,34 +315,56 @@ class IngestionJob(ABC):
 
         Discovers all items using list_items(), processes each one through process_item(),
         and provides comprehensive progress tracking and error reporting. Continues
-        processing even if individual items fail — but a fatal error while discovering
-        items (list_items() itself raising, e.g. an auth or listing-API failure) is not
-        swallowed: it propagates so the Celery task is marked FAILED instead of silently
-        "succeeding" with an error logged nobody reads (the task result is discarded via
-        ignore_result=True).
+        processing even if individual items fail.
 
         Returns:
-            str: Summary message indicating total items processed and skipped
-
-        Raises:
-            Exception: Any exception raised while iterating list_items() or otherwise
-                outside process_item()'s own per-item error handling.
+            str: Summary message indicating total items processed, skipped, and any errors
         """
         total = 0
         skipped = 0
+        started_at = datetime.now(UTC)
+        started_at_monotonic = time.perf_counter()
+        run_id = self.run_tracker.create_run(
+            connector_name=self.source_name or "unknown",
+            connector_type=self.source_type,
+            started_at=started_at,
+        )
 
         logger.info(f"[{self.source_name}] Starting ingestion job")
 
-        for item in self.list_items():
-            count = self.process_item(item)
-            if count == 0:
-                skipped += 1
-                continue
+        try:
+            for item in self.list_items():
+                count = self.process_item(item)
+                if count == 0:
+                    skipped += 1
+                    continue
 
-            total += count
-            if self.request_delay > 0:
-                time.sleep(self.request_delay)
+                total += count
+                if self.request_delay > 0:
+                    time.sleep(self.request_delay)
 
-        result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
-        logger.info(result_msg)
-        return result_msg
+            result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
+            logger.info(result_msg)
+            self.run_tracker.complete_run(
+                run_id=run_id,
+                status="success",
+                items_ingested=total,
+                items_skipped=skipped,
+                completed_at=datetime.now(UTC),
+                duration_ms=max(0, int((time.perf_counter() - started_at_monotonic) * 1000)),
+            )
+            return result_msg
+
+        except Exception as e:
+            error_msg = f"[{self.source_name}] Job failed: {e}"
+            logger.exception(error_msg)
+            self.run_tracker.complete_run(
+                run_id=run_id,
+                status="error",
+                items_ingested=total,
+                items_skipped=skipped,
+                completed_at=datetime.now(UTC),
+                duration_ms=max(0, int((time.perf_counter() - started_at_monotonic) * 1000)),
+                error_message=str(e),
+            )
+            return f"{error_msg}. Partial results: {total} ingested, {skipped} skipped"

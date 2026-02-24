@@ -21,7 +21,7 @@
       background: radial-gradient(circle at 10% 10%, #d1fae5, transparent 40%), var(--bg);
       color: var(--text);
     }
-    .wrap { max-width: 900px; margin: 0 auto; }
+    .wrap { max-width: 1100px; margin: 0 auto; }
     h1 { margin: 0 0 16px; font-size: 28px; }
     .meta { color: var(--muted); margin-bottom: 18px; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
@@ -40,6 +40,62 @@
       border: 1px solid var(--border);
       border-radius: 12px;
       padding: 16px;
+    }
+    .runs-section {
+      margin-top: 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+    .runs-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 780px;
+    }
+    .runs-table th,
+    .runs-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      font-size: 13px;
+    }
+    .runs-table th {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      background: #f8fafc;
+    }
+    .runs-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+    .status-pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+    .status-success {
+      color: #166534;
+      background: #dcfce7;
+    }
+    .status-error {
+      color: #991b1b;
+      background: #fee2e2;
+    }
+    .status-running {
+      color: #92400e;
+      background: #fef3c7;
     }
     .flow-header {
       display: flex;
@@ -204,6 +260,31 @@
         <div id="connectors-flow-list" class="connectors-flow-list"></div>
       </div>
     </section>
+    <section class="runs-section">
+      <div class="flow-header">
+        <div class="label">Recent Ingestion Runs</div>
+        <div id="ingestion-runs-summary" class="small">-</div>
+      </div>
+      <div class="table-wrap">
+        <table class="runs-table">
+          <thead>
+            <tr>
+              <th>Started At</th>
+              <th>Connector</th>
+              <th>Status</th>
+              <th>Duration</th>
+              <th>Ingested</th>
+              <th>Skipped</th>
+            </tr>
+          </thead>
+          <tbody id="ingestion-runs-body">
+            <tr>
+              <td colspan="6" class="small">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
     <div id="updated-at" class="small" style="margin-top:16px;"></div>
   </div>
   <script>
@@ -305,6 +386,66 @@
       requestAnimationFrame(drawFlowLinks);
     }
 
+    function getStatusClass(status) {
+      const normalized = (status || '').toLowerCase();
+      if (normalized === 'success') return 'status-success';
+      if (normalized === 'error') return 'status-error';
+      return 'status-running';
+    }
+
+    function renderRecentIngestionRuns(runs) {
+      const body = document.getElementById('ingestion-runs-body');
+      const summary = document.getElementById('ingestion-runs-summary');
+      body.textContent = '';
+
+      if (!runs.length) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 6;
+        cell.className = 'small';
+        cell.textContent = 'No ingestion runs logged yet';
+        row.appendChild(cell);
+        body.appendChild(row);
+        summary.textContent = '0 runs';
+        return;
+      }
+
+      runs.forEach((run) => {
+        const row = document.createElement('tr');
+
+        const started = document.createElement('td');
+        started.textContent = run.started_at ? new Date(run.started_at).toLocaleString() : '-';
+
+        const connector = document.createElement('td');
+        connector.textContent = `${run.connector_name || 'unknown'} (${run.connector_type || 'unknown'})`;
+
+        const status = document.createElement('td');
+        const statusPill = document.createElement('span');
+        statusPill.className = `status-pill ${getStatusClass(run.status)}`;
+        statusPill.textContent = run.status || 'unknown';
+        status.appendChild(statusPill);
+
+        const duration = document.createElement('td');
+        duration.textContent = run.duration_human || '-';
+
+        const ingested = document.createElement('td');
+        ingested.textContent = (run.items_ingested ?? 0).toLocaleString();
+
+        const skipped = document.createElement('td');
+        skipped.textContent = (run.items_skipped ?? 0).toLocaleString();
+
+        row.appendChild(started);
+        row.appendChild(connector);
+        row.appendChild(status);
+        row.appendChild(duration);
+        row.appendChild(ingested);
+        row.appendChild(skipped);
+        body.appendChild(row);
+      });
+
+      summary.textContent = `Latest ${runs.length} run${runs.length === 1 ? '' : 's'}`;
+    }
+
     async function refreshStats() {
       const response = await fetch('/dashboard/stats', { cache: 'no-store' });
       if (!response.ok) {
@@ -323,6 +464,7 @@
 
       const connectors = data.configured_connectors || [];
       renderConnectorsFlow(connectors);
+      renderRecentIngestionRuns(data.recent_ingestion_runs || []);
     }
 
     async function startRefreshLoop() {
