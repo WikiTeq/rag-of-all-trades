@@ -1,4 +1,3 @@
-import io
 import logging
 import re
 import unicodedata
@@ -96,26 +95,26 @@ class DirectoryIngestionJob(IngestionJob):
                 last_modified=modified_at,
             )
 
-    def get_raw_content(self, item: IngestionItem):
+    def get_raw_content(self, item: IngestionItem) -> str:
         file_path = Path(item.source_ref)
-
         try:
-            content_bytes = file_path.read_bytes()
-        except Exception as exc:
+            with file_path.open("rb") as f:
+                try:
+                    result = self.md.convert_stream(f)
+                    text = result.text_content or ""
+                    if text.strip():
+                        return text
+                    f.seek(0)
+                    return f.read().decode("utf-8", errors="ignore")
+                except Exception as exc:
+                    logger.warning(
+                        f"[{file_path}] Markdown conversion failed: {exc}. Using raw text."
+                    )
+                    f.seek(0)
+                    return f.read().decode("utf-8", errors="ignore")
+        except (OSError, PermissionError) as exc:
             logger.error(f"[{file_path}] Failed to read file: {exc}")
             return ""
-
-        stream = io.BytesIO(content_bytes)
-
-        try:
-            result = self.md.convert_stream(stream)
-            text = result.text_content or ""
-            if text.strip():
-                return text
-            return content_bytes.decode("utf-8", errors="ignore")
-        except Exception as exc:
-            logger.warning(f"[{file_path}] Markdown conversion failed: {exc}. Using raw text.")
-            return content_bytes.decode("utf-8", errors="ignore")
 
     def get_item_name(self, item: IngestionItem) -> str:
         file_path = Path(item.source_ref).resolve()
