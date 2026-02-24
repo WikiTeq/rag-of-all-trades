@@ -643,6 +643,31 @@ curl -X 'GET' \
 }
 ```
 
+### /dashboard
+
+This endpoint serves a small live dashboard (auto-refresh every 5 seconds) with:
+* Number of vector items
+* Total vector table size
+* Number of currently running Celery jobs
+* Number of configured connectors and their `name/type/schedule`
+
+Dashboard is disabled by default and protected with HTTP Basic Auth.
+
+Enable it in `.env`:
+
+```dotenv
+ENABLE_DASHBOARD=1
+DASHBOARD_USER=admin
+DASHBOARD_PASS=admin
+```
+
+Open the page:
+
+```bash
+curl -u admin:admin \
+  'http://localhost:8000/dashboard'
+```
+
 ## Integration examples
 
 ### OpenWebUI
