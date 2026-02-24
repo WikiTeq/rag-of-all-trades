@@ -2,7 +2,7 @@ import io
 import logging
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Set
 
@@ -83,7 +83,9 @@ class DirectoryIngestionJob(IngestionJob):
                 continue
 
             try:
-                modified_at = datetime.fromtimestamp(file_path.stat().st_mtime)
+                modified_at = datetime.fromtimestamp(
+                    file_path.stat().st_mtime, tz=timezone.utc
+                )
             except OSError as exc:
                 logger.warning(f"Failed to read file metadata for {file_path}: {exc}")
                 continue

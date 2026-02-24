@@ -45,6 +45,10 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             self.assertTrue(items[0].id.startswith("file://"))
             self.assertIsInstance(items[0].source_ref, Path)
             self.assertIsNotNone(items[0].last_modified)
+            self.assertIsNotNone(
+                items[0].last_modified.tzinfo,
+                "last_modified must be timezone-aware",
+            )
 
     def test_list_items_non_recursive(self):
         with tempfile.TemporaryDirectory() as temp_dir:
