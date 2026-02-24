@@ -34,25 +34,131 @@
     .label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
     .value { margin-top: 8px; font-size: 24px; font-weight: 700; }
     .small { margin-top: 8px; color: var(--muted); font-size: 12px; }
-    .connectors {
-      margin-top: 14px;
-      border-top: 1px solid var(--border);
-      padding-top: 12px;
+    .flow-section {
+      margin-top: 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
     }
-    .connectors-title {
-      color: var(--muted);
-      font-size: 12px;
+    .flow-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .flow-canvas {
+      position: relative;
+      min-height: 320px;
+      overflow: hidden;
+      border-radius: 10px;
+      background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
+      border: 1px solid var(--border);
+      padding: 16px;
+    }
+    #flow-links {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .flow-node {
+      position: relative;
+      z-index: 2;
+      border-radius: 12px;
+      border: 1px solid #c7d2fe;
+      background: linear-gradient(145deg, #eef2ff 0%, #e0e7ff 100%);
+      padding: 12px 14px;
+      box-shadow: 0 8px 24px rgba(30, 64, 175, 0.08);
+    }
+    .db-node {
+      width: min(360px, 95%);
+      margin: 0 auto;
+      text-align: center;
+    }
+    .flow-node-title {
       text-transform: uppercase;
-      margin-bottom: 8px;
+      letter-spacing: 0.06em;
+      color: #4338ca;
+      font-size: 11px;
+      font-weight: 700;
     }
-    .connector-item {
-      padding: 8px 0;
-      border-bottom: 1px solid var(--border);
-      font-size: 13px;
+    .flow-node-main {
+      margin-top: 6px;
+      font-size: 20px;
+      font-weight: 700;
+      color: #1f2937;
+      word-break: break-word;
     }
-    .connector-item:last-child { border-bottom: none; }
-    .connector-main { font-weight: 600; }
-    .connector-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .flow-node-meta {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #4b5563;
+    }
+    .connectors-flow-list {
+      position: relative;
+      z-index: 2;
+      margin-top: 120px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 10px;
+    }
+    .connector-block {
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      padding: 10px 12px;
+      min-height: 76px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+    }
+    .connector-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .connector-type {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .connector-schedule {
+      margin-top: 3px;
+      font-size: 12px;
+      color: #334155;
+    }
+    .flow-path {
+      fill: none;
+      stroke: #2563eb;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-dasharray: 8 9;
+      animation: flow-dash 1.2s linear infinite;
+      opacity: 0.9;
+    }
+    .flow-pulse {
+      fill: none;
+      stroke: #0f766e;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-dasharray: 1 140;
+      animation: flow-pulse 1.4s linear infinite;
+      opacity: 0.9;
+    }
+    @keyframes flow-dash {
+      to { stroke-dashoffset: -34; }
+    }
+    @keyframes flow-pulse {
+      to { stroke-dashoffset: -282; }
+    }
+    @media (max-width: 700px) {
+      .flow-canvas { min-height: 420px; }
+      .connectors-flow-list { margin-top: 90px; }
+    }
   </style>
 </head>
 <body>
@@ -80,16 +186,124 @@
       <section class="card">
         <div class="label">Configured Connectors</div>
         <div id="connectors-count" class="value">-</div>
-        <div class="connectors">
-          <div class="connectors-title">Connector Details</div>
-          <div id="connectors-list" class="small">-</div>
-        </div>
+        <div class="small">Rendered in flow map below</div>
       </section>
     </div>
+    <section class="flow-section">
+      <div class="flow-header">
+        <div class="label">Connector Data Flow</div>
+        <div id="connectors-summary" class="small">-</div>
+      </div>
+      <div id="flow-canvas" class="flow-canvas">
+        <svg id="flow-links" aria-hidden="true"></svg>
+        <div id="db-flow-node" class="flow-node db-node">
+          <div class="flow-node-title">Main Vector Database</div>
+          <div id="db-flow-table" class="flow-node-main">-</div>
+          <div id="db-flow-meta" class="flow-node-meta">-</div>
+        </div>
+        <div id="connectors-flow-list" class="connectors-flow-list"></div>
+      </div>
+    </section>
     <div id="updated-at" class="small" style="margin-top:16px;"></div>
   </div>
   <script>
     const refreshIntervalMs = {{ refresh_interval_seconds }} * 1000;
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+
+    function buildConnectorBlock(connector) {
+      const block = document.createElement('article');
+      block.className = 'connector-block';
+      const name = document.createElement('div');
+      name.className = 'connector-name';
+      name.textContent = connector.name || 'unknown';
+      const type = document.createElement('div');
+      type.className = 'connector-type';
+      type.textContent = connector.type || 'unknown';
+      const schedule = document.createElement('div');
+      schedule.className = 'connector-schedule';
+      schedule.textContent = `every ${connector.schedule_seconds ?? 'n/a'}s`;
+      block.appendChild(name);
+      block.appendChild(type);
+      block.appendChild(schedule);
+      return block;
+    }
+
+    function drawFlowLinks() {
+      const svg = document.getElementById('flow-links');
+      const canvas = document.getElementById('flow-canvas');
+      const dbNode = document.getElementById('db-flow-node');
+      const connectors = Array.from(document.querySelectorAll('.connector-block'));
+      const canvasRect = canvas.getBoundingClientRect();
+      const dbRect = dbNode.getBoundingClientRect();
+
+      svg.textContent = '';
+      svg.setAttribute('viewBox', `0 0 ${Math.ceil(canvasRect.width)} ${Math.ceil(canvasRect.height)}`);
+
+      const defs = document.createElementNS(SVG_NS, 'defs');
+      const marker = document.createElementNS(SVG_NS, 'marker');
+      marker.setAttribute('id', 'flow-arrow');
+      marker.setAttribute('viewBox', '0 0 10 10');
+      marker.setAttribute('refX', '8');
+      marker.setAttribute('refY', '5');
+      marker.setAttribute('markerWidth', '6');
+      marker.setAttribute('markerHeight', '6');
+      marker.setAttribute('orient', 'auto-start-reverse');
+      const arrowPath = document.createElementNS(SVG_NS, 'path');
+      arrowPath.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
+      arrowPath.setAttribute('fill', '#2563eb');
+      marker.appendChild(arrowPath);
+      defs.appendChild(marker);
+      svg.appendChild(defs);
+
+      if (!connectors.length) {
+        return;
+      }
+
+      const dbX = dbRect.left + (dbRect.width / 2) - canvasRect.left;
+      const dbY = dbRect.bottom - canvasRect.top;
+
+      connectors.forEach((connector) => {
+        const rect = connector.getBoundingClientRect();
+        const startX = rect.left + (rect.width / 2) - canvasRect.left;
+        const startY = rect.top - canvasRect.top;
+
+        const c1Y = startY - 64;
+        const c2Y = dbY + 64;
+        const d = `M ${startX} ${startY} C ${startX} ${c1Y}, ${dbX} ${c2Y}, ${dbX} ${dbY}`;
+
+        const pathBase = document.createElementNS(SVG_NS, 'path');
+        pathBase.setAttribute('d', d);
+        pathBase.setAttribute('class', 'flow-path');
+        pathBase.setAttribute('marker-end', 'url(#flow-arrow)');
+        svg.appendChild(pathBase);
+
+        const pathPulse = document.createElementNS(SVG_NS, 'path');
+        pathPulse.setAttribute('d', d);
+        pathPulse.setAttribute('class', 'flow-pulse');
+        svg.appendChild(pathPulse);
+      });
+    }
+
+    function renderConnectorsFlow(connectors) {
+      const flowList = document.getElementById('connectors-flow-list');
+      const summary = document.getElementById('connectors-summary');
+      flowList.textContent = '';
+
+      if (!connectors.length) {
+        const empty = document.createElement('div');
+        empty.className = 'small';
+        empty.textContent = 'No connectors configured';
+        flowList.appendChild(empty);
+        summary.textContent = 'No active connector flows';
+      } else {
+        connectors.forEach((connector) => {
+          flowList.appendChild(buildConnectorBlock(connector));
+        });
+        summary.textContent = `${connectors.length} connector flow${connectors.length === 1 ? '' : 's'} -> vector database`;
+      }
+
+      requestAnimationFrame(drawFlowLinks);
+    }
 
     async function refreshStats() {
       const response = await fetch('/dashboard/stats', { cache: 'no-store' });
@@ -103,31 +317,12 @@
       document.getElementById('celery-jobs').textContent = data.running_celery_jobs.toLocaleString();
       document.getElementById('vector-table').textContent = data.vector_table;
       document.getElementById('connectors-count').textContent = data.configured_connectors_count.toLocaleString();
+      document.getElementById('db-flow-table').textContent = data.vector_table;
+      document.getElementById('db-flow-meta').textContent = `${data.vector_items_count.toLocaleString()} items | ${data.vector_db_size_human}`;
       document.getElementById('updated-at').textContent = 'Last update: ' + new Date(data.updated_at).toLocaleString();
 
-      const connectorsList = document.getElementById('connectors-list');
       const connectors = data.configured_connectors || [];
-      if (!connectors.length) {
-        connectorsList.textContent = 'No connectors configured';
-      } else {
-        connectorsList.textContent = '';
-        connectors.forEach((connector) => {
-          const name = connector.name || 'unknown';
-          const type = connector.type || 'unknown';
-          const schedule = connector.schedule_seconds ?? 'n/a';
-          const item = document.createElement('div');
-          item.className = 'connector-item';
-          const main = document.createElement('div');
-          main.className = 'connector-main';
-          main.textContent = name;
-          const meta = document.createElement('div');
-          meta.className = 'connector-meta';
-          meta.textContent = `type: ${type} | schedule: ${schedule}s`;
-          item.appendChild(main);
-          item.appendChild(meta);
-          connectorsList.appendChild(item);
-        });
-      }
+      renderConnectorsFlow(connectors);
     }
 
     async function startRefreshLoop() {
@@ -146,6 +341,7 @@
     }
 
     startRefreshLoop();
+    window.addEventListener('resize', () => requestAnimationFrame(drawFlowLinks));
   </script>
 </body>
 </html>

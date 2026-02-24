@@ -118,7 +118,7 @@ def dashboard_page(request: Request, _: str = Depends(verify_dashboard_auth)):
     return templates.TemplateResponse(
         request=request,
         name="dashboard.html",
-        context={"refresh_interval_seconds": 5},
+        context={"refresh_interval_seconds": 30},
     )
 
 
