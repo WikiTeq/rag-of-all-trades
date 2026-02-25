@@ -117,7 +117,7 @@ components:
         top_k:
           type: integer
           title: Top K
-          default: 5
+          default: 20
         metadata_filters:
           anyOf:
           - additionalProperties: true

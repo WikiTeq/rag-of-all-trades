@@ -3,15 +3,15 @@ from typing import List, Optional, Dict, Any
 
 class QueryRequest(BaseModel):
     query: str
-    top_k: int = 5
+    top_k: int = 20
     metadata_filters: Optional[Dict[str, Any]] = None
-    
+
     # Validator for top_k
     @field_validator("top_k")
     @classmethod
     def validate_top_k(cls, value: int) -> int:
-        if not (1 <= value <= 20):
-            raise ValueError("top_k must be between 1 and 20")
+        if not (1 <= value <= 100):
+            raise ValueError("top_k must be between 1 and 100")
         return value
 
 class SourceReference(BaseModel):
