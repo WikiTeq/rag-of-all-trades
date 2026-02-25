@@ -21,7 +21,7 @@ jobs:
         run: cp .env.example .env
 
       - name: Dummy config for tests
-        run: cp config.example.yaml config.yaml
+        run: cp config.yaml.example config.yaml
 
       - name: Run tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
