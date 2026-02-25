@@ -21,21 +21,10 @@ RUN pip install --upgrade pip setuptools wheel
 # Install PyTorch first
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
-# Install HuggingFace stack
-RUN pip install --no-cache-dir \
-    transformers \
-    tokenizers \
-    sentence-transformers \
-    huggingface_hub
-
-# LlamaIndex embedding
-RUN pip install --no-cache-dir llama-index-embeddings-huggingface==0.6.1
-
 COPY requirements.txt .
 
 # Install EVERYTHING into normal site-packages
 RUN pip install --no-cache-dir -r requirements.txt
-
 
 # =========================
 #  FINAL IMAGE
