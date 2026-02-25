@@ -42,9 +42,8 @@ API is at `http://localhost:8000`, docs at `/docs`.
 
 ## Running (Python Only)
 ```bash
-python -m venv .venv
+uv sync
 source .venv/bin/activate
-pip install -r requirements.txt
 ```
 You still need PostgreSQL with pgvector and Redis running, plus valid `.env` and `config.yaml`.
 

@@ -16,25 +16,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --upgrade pip setuptools wheel
+# Install UV
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-# Install PyTorch first
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+# Set UV environment variables for optimal Docker builds
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_PYTHON_DOWNLOADS=never
+
+# Install PyTorch first (CPU version)
+RUN uv pip install --system --no-cache torch --index-url https://download.pytorch.org/whl/cpu
 
 # Install HuggingFace stack
-RUN pip install --no-cache-dir \
+RUN uv pip install --system --no-cache \
     transformers \
     tokenizers \
     sentence-transformers \
     huggingface_hub
 
 # LlamaIndex embedding
-RUN pip install --no-cache-dir llama-index-embeddings-huggingface==0.6.1
+RUN uv pip install --system --no-cache llama-index-embeddings-huggingface==0.6.1
 
-COPY requirements.txt .
+# Copy project files
+COPY pyproject.toml .
 
-# Install EVERYTHING into normal site-packages
-RUN pip install --no-cache-dir -r requirements.txt
+# Install project dependencies
+RUN uv pip install --system --no-cache .
 
 
 # =========================
