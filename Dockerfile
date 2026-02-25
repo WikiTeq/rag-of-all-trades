@@ -16,11 +16,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --upgrade pip setuptools wheel
-
-# Install PyTorch first
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
-
 COPY requirements.txt .
 
 # Install EVERYTHING into normal site-packages

@@ -1,14 +1,14 @@
 sources:
-  - type: "s3"
-    name: "account1"
-    config:
-      endpoint: "${S3_ACCOUNT1_ENDPOINT}"
-      access_key: "${S3_ACCOUNT1_ACCESS_KEY}"
-      secret_key: "${S3_ACCOUNT1_SECRET_KEY}"
-      region: "${S3_ACCOUNT1_REGION}"
-      use_ssl: "${S3_ACCOUNT1_USE_SSL}"
-      buckets: "${S3_ACCOUNT1_BUCKETS}" # comma-separated string or list
-      schedules: "${S3_ACCOUNT1_SCHEDULES}"
+  #- type: "s3"
+  #  name: "account1"
+  #  config:
+  #    endpoint: "${S3_ACCOUNT1_ENDPOINT}"
+  #    access_key: "${S3_ACCOUNT1_ACCESS_KEY}"
+  #    secret_key: "${S3_ACCOUNT1_SECRET_KEY}"
+  #    region: "${S3_ACCOUNT1_REGION}"
+  #    use_ssl: "${S3_ACCOUNT1_USE_SSL}"
+  #    buckets: "${S3_ACCOUNT1_BUCKETS}" # comma-separated string or list
+  #    schedules: "${S3_ACCOUNT1_SCHEDULES}"
 
   #- type: "s3"
   #  name: "account2"
