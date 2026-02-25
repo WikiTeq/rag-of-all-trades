@@ -17,5 +17,8 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Dummy env for tests
+        run: cp .env.example .env
+
       - name: Run tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
