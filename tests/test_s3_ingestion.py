@@ -120,9 +120,14 @@ class TestS3IngestionJob(unittest.TestCase):
             id="s3://bucket-a/file1.txt",
             source_ref=("bucket-a", "file1.txt"),
         )
-        result = job.get_raw_content(item)
+        with self.assertLogs("tasks.s3_ingestion", level="WARNING") as cm:
+            result = job.get_raw_content(item)
 
         self.assertEqual(result, "raw text")
+        self.assertIn(
+            "WARNING:tasks.s3_ingestion:[bucket-a/file1.txt] Markdown conversion failed: bad markdown. Using raw text.",
+            cm.output,
+        )
 
     def test_get_raw_content_returns_empty_on_s3_error(self):
         self.mock_s3.get_object.side_effect = Exception("boom")
@@ -132,6 +137,11 @@ class TestS3IngestionJob(unittest.TestCase):
             id="s3://bucket-a/file1.txt",
             source_ref=("bucket-a", "file1.txt"),
         )
-        result = job.get_raw_content(item)
+        with self.assertLogs("tasks.s3_ingestion", level="ERROR") as cm:
+            result = job.get_raw_content(item)
 
         self.assertEqual(result, "")
+        self.assertIn(
+            "ERROR:tasks.s3_ingestion:[bucket-a/file1.txt] Failed to fetch content: boom",
+            cm.output,
+        )

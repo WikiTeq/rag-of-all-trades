@@ -108,10 +108,15 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
         })
         mock_session.get.return_value = mock_response
 
-        job = MediaWikiIngestionJob(self.config)
-        result = job._get_page_info("Missing Page")
+        with self.assertLogs("tasks.mediawiki_ingestion", level="WARNING") as cm:
+            job = MediaWikiIngestionJob(self.config)
+            result = job._get_page_info("Missing Page")
 
         self.assertIsNone(result)
+        self.assertIn(
+            "WARNING:tasks.mediawiki_ingestion:Page 'Missing Page' is missing",
+            cm.output,
+        )
 
     @patch('tasks.mediawiki_ingestion.requests.Session')
     def test_get_page_url_success(self, mock_session_class):
@@ -165,17 +170,27 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
         })
         mock_session.get.return_value = mock_response
 
-        job = MediaWikiIngestionJob(self.config)
-        result = job._get_page_url("Page Without URL")
+        with self.assertLogs("tasks.mediawiki_ingestion", level="WARNING") as cm:
+            job = MediaWikiIngestionJob(self.config)
+            result = job._get_page_url("Page Without URL")
 
         self.assertIsNone(result)
+        self.assertIn(
+            "WARNING:tasks.mediawiki_ingestion:No URL found for page 'Page Without URL'",
+            cm.output,
+        )
 
     @patch('tasks.mediawiki_ingestion.requests.Session')
     def test_source_type(self, mock_session_class):
         """Test source type property."""
         self._create_mock_session(mock_session_class)
-        job = MediaWikiIngestionJob(self.config)
+        with self.assertLogs("tasks.mediawiki_ingestion", level="INFO") as cm:
+            job = MediaWikiIngestionJob(self.config)
         self.assertEqual(job.source_type, "mediawiki")
+        self.assertIn(
+            "INFO:tasks.mediawiki_ingestion:Initialized MediaWiki connector for https://example.com/w/api.php",
+            cm.output,
+        )
 
     @patch('tasks.mediawiki_ingestion.requests.Session')
     def test_initialization_validation(self, mock_session_class):
@@ -237,14 +252,19 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
         # Mock network error
         mock_session.get.side_effect = requests.exceptions.RequestException("Network error")
 
-        job = MediaWikiIngestionJob(self.config)
-        result = job._make_api_request({'action': 'query'})
+        with self.assertLogs("tasks.mediawiki_ingestion", level="WARNING") as cm:
+            job = MediaWikiIngestionJob(self.config)
+            result = job._make_api_request({'action': 'query'})
 
         # Should return None after all retries
         self.assertIsNone(result)
 
         # Should have made 3 attempts (max_retries)
         self.assertEqual(mock_session.get.call_count, 3)
+        self.assertIn(
+            "ERROR:tasks.mediawiki_ingestion:API request failed after 3 attempts",
+            cm.output,
+        )
 
     @patch('tasks.mediawiki_ingestion.requests.Session')
     def test_make_api_request_rate_limiting(self, mock_session_class):
@@ -261,14 +281,19 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
 
         mock_session.get.side_effect = [mock_rate_limited_response, mock_success_response]
 
-        job = MediaWikiIngestionJob(self.config)
-        result = job._make_api_request({'action': 'query'})
+        with self.assertLogs("tasks.mediawiki_ingestion", level="WARNING") as cm:
+            job = MediaWikiIngestionJob(self.config)
+            result = job._make_api_request({'action': 'query'})
 
         # Should eventually succeed after rate limit
         self.assertEqual(result, {"test": "data"})
 
         # Should have made 2 calls (rate limit + success)
         self.assertEqual(mock_session.get.call_count, 2)
+        self.assertIn(
+            "WARNING:tasks.mediawiki_ingestion:Rate limited. Waiting 2 seconds...",
+            cm.output,
+        )
 
     @patch('tasks.mediawiki_ingestion.requests.Session')
     @patch('tasks.mediawiki_ingestion.time.sleep')
@@ -279,14 +304,19 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
         # Mock timeout error
         mock_session.get.side_effect = requests.exceptions.Timeout("Request timed out")
 
-        job = MediaWikiIngestionJob(self.config)
-        result = job._make_api_request({'action': 'query'})
+        with self.assertLogs("tasks.mediawiki_ingestion", level="WARNING") as cm:
+            job = MediaWikiIngestionJob(self.config)
+            result = job._make_api_request({'action': 'query'})
 
         # Should return None after retries
         self.assertIsNone(result)
 
         # Should have made 3 attempts
         self.assertEqual(mock_session.get.call_count, 3)
+        self.assertIn(
+            "ERROR:tasks.mediawiki_ingestion:API request failed after 3 attempts",
+            cm.output,
+        )
 
     @patch('tasks.mediawiki_ingestion.requests.Session')
     @patch('tasks.mediawiki_ingestion.time.sleep')
@@ -297,8 +327,9 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
         # Mock persistent network error
         mock_session.get.side_effect = requests.exceptions.RequestException("Network error")
 
-        job = MediaWikiIngestionJob(self.config)
-        result = job._make_api_request({'action': 'query'})
+        with self.assertLogs("tasks.mediawiki_ingestion", level="WARNING") as cm:
+            job = MediaWikiIngestionJob(self.config)
+            result = job._make_api_request({'action': 'query'})
 
         # Should return None after all retries
         self.assertIsNone(result)
@@ -307,6 +338,10 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
         expected_delays = [1, 2]
         actual_delays = [call[0][0] for call in mock_sleep.call_args_list]
         self.assertEqual(actual_delays, expected_delays)
+        self.assertIn(
+            "ERROR:tasks.mediawiki_ingestion:API request failed after 3 attempts",
+            cm.output,
+        )
 
     @patch('tasks.mediawiki_ingestion.requests.Session')
     def test_make_api_request_empty_response(self, mock_session_class):
@@ -332,11 +367,16 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
         mock_response = self._create_mock_response(json_exception=ValueError("Invalid JSON"))
         mock_session.get.return_value = mock_response
 
-        job = MediaWikiIngestionJob(self.config)
-        result = job._make_api_request({'action': 'query'})
+        with self.assertLogs("tasks.mediawiki_ingestion", level="ERROR") as cm:
+            job = MediaWikiIngestionJob(self.config)
+            result = job._make_api_request({'action': 'query'})
 
         # Should return None due to JSON parsing error
         self.assertIsNone(result)
+        self.assertIn(
+            "ERROR:tasks.mediawiki_ingestion:Invalid JSON response: Invalid JSON",
+            cm.output,
+        )
 
     @patch('tasks.mediawiki_ingestion.requests.Session')
     def test_make_api_request_zero_retries(self, mock_session_class):
@@ -452,13 +492,22 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
         })
         mock_session.get.return_value = mock_response
 
-        job = MediaWikiIngestionJob(self.config)
-        item = IngestionItem(id="mediawiki:Missing Page", source_ref="Missing Page")
-        content = job.get_raw_content(item)
+        with self.assertLogs("tasks.mediawiki_ingestion", level="WARNING") as cm:
+            job = MediaWikiIngestionJob(self.config)
+            item = IngestionItem(id="mediawiki:Missing Page", source_ref="Missing Page")
+            content = job.get_raw_content(item)
 
         self.assertEqual(content, "")
         # URL should not be cached for missing pages
         self.assertNotIn('page_url', item._metadata_cache)
+        self.assertIn(
+            "WARNING:tasks.mediawiki_ingestion:Page 'Missing Page' is missing",
+            cm.output,
+        )
+        self.assertIn(
+            "WARNING:tasks.mediawiki_ingestion:Failed to fetch content for page: Missing Page",
+            cm.output,
+        )
 
     @patch('tasks.mediawiki_ingestion.requests.Session')
     def test_get_item_name_basic(self, mock_session_class):
@@ -733,11 +782,16 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
         })
         mock_session.get.return_value = mock_response
 
-        job = MediaWikiIngestionJob(self.config)
-        timestamps = job._get_pages_last_modified(["Test Page"])
+        with self.assertLogs("tasks.mediawiki_ingestion", level="WARNING") as cm:
+            job = MediaWikiIngestionJob(self.config)
+            timestamps = job._get_pages_last_modified(["Test Page"])
         timestamp = timestamps["Test Page"]
 
         self.assertIsNone(timestamp)
+        self.assertIn(
+            "WARNING:tasks.mediawiki_ingestion:Failed to parse timestamp 'invalid-timestamp' for page 'Test Page': Invalid isoformat string: 'invalid-timestamp'",
+            cm.output,
+        )
 
     @patch('tasks.mediawiki_ingestion.requests.Session')
     def test_get_pages_last_modified_empty_list(self, mock_session_class):
@@ -828,8 +882,6 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
         """Test document metadata generation when URL is not cached."""
         mock_session = self._create_mock_session(mock_session_class)
 
-        job = MediaWikiIngestionJob(self.config)
-
         item = IngestionItem(
             id="mediawiki:Test Page",
             source_ref="Test Page",
@@ -837,13 +889,15 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
         )
         # No cached URL in metadata cache (simulating failure case)
 
-        metadata = job.get_document_metadata(
-            item=item,
-            item_name="Test_Page.md",
-            checksum="abc123",
-            version=1,
-            last_modified=datetime(2024, 1, 1, 12, 0, 0)
-        )
+        with self.assertLogs("tasks.mediawiki_ingestion", level="WARNING") as cm:
+            job = MediaWikiIngestionJob(self.config)
+            metadata = job.get_document_metadata(
+                item=item,
+                item_name="Test_Page.md",
+                checksum="abc123",
+                version=1,
+                last_modified=datetime(2024, 1, 1, 12, 0, 0)
+            )
 
         # Check base metadata fields are still present
         self.assertEqual(metadata["source"], "mediawiki")
@@ -855,6 +909,10 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
 
         # Should not make API calls - URL should be cached by process_item before this is called
         mock_session.get.assert_not_called()
+        self.assertIn(
+            "WARNING:tasks.mediawiki_ingestion:URL not cached for page: Test Page - this should not happen",
+            cm.output,
+        )
 
     @patch('tasks.mediawiki_ingestion.time.sleep')
     @patch('tasks.mediawiki_ingestion.requests.Session')
