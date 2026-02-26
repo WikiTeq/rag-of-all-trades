@@ -164,6 +164,7 @@ class MediaWikiIngestionJob(IngestionJob):
                 'action': 'query',
                 'list': 'allpages',
                 'aplimit': self.page_limit,
+                'apfilterredir': 'nonredirects',
                 **continue_params
             }
 
