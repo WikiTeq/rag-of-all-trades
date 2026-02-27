@@ -10,6 +10,11 @@ from llama_index.core import SimpleDirectoryReader
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -141,18 +146,11 @@ class DirectoryIngestionJob(IngestionJob):
         try:
             docs = self._load_documents_for_path(file_path)
         except Exception as exc:
-            logger.warning(f"[{file_path}] SimpleDirectoryReader failed: {exc}. Trying raw text fallback.")
-            docs = []
+            logger.warning(f"[{file_path}] SimpleDirectoryReader failed: {exc}")
+            return ""
 
         merged = "\n\n".join((doc.text or "").strip() for doc in docs if (doc.text or "").strip())
-        if merged.strip():
-            return merged
-
-        try:
-            return file_path.read_text(encoding=self.encoding, errors=self.errors)
-        except Exception as exc:
-            logger.error(f"[{file_path}] Failed to read file with fallback: {exc}")
-            return ""
+        return merged if merged.strip() else ""
 
     def get_item_name(self, item: IngestionItem):
         file_path = Path(item.source_ref).resolve()

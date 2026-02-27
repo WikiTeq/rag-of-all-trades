@@ -160,7 +160,21 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
             self.assertEqual(result, "Part 1\n\nPart 2")
 
-    def test_get_raw_content_falls_back_on_loader_error(self):
+    def test_get_raw_content_removes_nul_chars_from_reader_output(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "doc.txt"
+            file_path.write_text("ignored", encoding="utf-8")
+            self.mock_directory_reader.load_resource.return_value = [Mock(text="a\x00b")]
+
+            job = DirectoryIngestionJob(
+                {"name": "local", "config": {"path": temp_dir}}
+            )
+            item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
+            result = job.get_raw_content(item)
+
+            self.assertEqual(result, "ab")
+
+    def test_get_raw_content_returns_empty_on_loader_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             file_path = Path(temp_dir) / "doc.txt"
             file_path.write_text("fallback text", encoding="utf-8")
@@ -175,13 +189,28 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             with patch("tasks.directory_ingestion.logger.warning") as mock_warning:
                 result = job.get_raw_content(item)
 
-            self.assertEqual(result, "fallback text")
+            self.assertEqual(result, "")
             mock_warning.assert_called_once()
             self.assertIn(str(file_path), mock_warning.call_args[0][0])
             self.assertIn("SimpleDirectoryReader failed", mock_warning.call_args[0][0])
             self.assertIn("bad loader", mock_warning.call_args[0][0])
 
-    def test_get_raw_content_returns_empty_on_read_error(self):
+    def test_get_raw_content_returns_empty_when_reader_returns_no_docs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "doc.txt"
+            file_path.write_text("fallback text", encoding="utf-8")
+            self.mock_directory_reader.load_resource.return_value = []
+
+            job = DirectoryIngestionJob(
+                {"name": "local", "config": {"path": temp_dir}}
+            )
+
+            item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
+            result = job.get_raw_content(item)
+
+            self.assertEqual(result, "")
+
+    def test_get_raw_content_returns_empty_on_loader_error_for_missing_file(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             missing_path = Path(temp_dir) / "missing.txt"
             self.mock_directory_reader.load_resource.side_effect = ValueError("missing file")
@@ -190,19 +219,14 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             )
 
             item = IngestionItem(id=f"file://{missing_path}", source_ref=missing_path)
-            with patch("tasks.directory_ingestion.logger.warning") as mock_warning, patch(
-                "tasks.directory_ingestion.logger.error"
-            ) as mock_error:
+            with patch("tasks.directory_ingestion.logger.warning") as mock_warning:
                 result = job.get_raw_content(item)
 
             self.assertEqual(result, "")
             mock_warning.assert_called_once()
-            mock_error.assert_called_once()
             self.assertIn(str(missing_path), mock_warning.call_args[0][0])
             self.assertIn("SimpleDirectoryReader failed", mock_warning.call_args[0][0])
             self.assertIn("missing file", mock_warning.call_args[0][0])
-            self.assertIn(str(missing_path), mock_error.call_args[0][0])
-            self.assertIn("Failed to read file with fallback", mock_error.call_args[0][0])
 
     def test_config_parses_bool_strings_and_num_files_limit_with_forced_raise_on_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -225,6 +249,20 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             self.assertEqual(job.exclude_empty, True)
             self.assertEqual(job.raise_on_error, True)
             self.assertEqual(job.num_files_limit, 7)
+
+    def test_config_forces_errors_ignore(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job = DirectoryIngestionJob(
+                {
+                    "name": "local",
+                    "config": {
+                        "path": temp_dir,
+                        "errors": "replace",
+                    },
+                }
+            )
+
+            self.assertEqual(job.errors, "ignore")
 
     def test_get_item_name_uses_relative_sanitized_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
