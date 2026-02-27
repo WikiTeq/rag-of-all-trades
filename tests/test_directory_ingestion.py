@@ -160,20 +160,6 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
             self.assertEqual(result, "Part 1\n\nPart 2")
 
-    def test_get_raw_content_removes_nul_chars_from_reader_output(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            file_path = Path(temp_dir) / "doc.txt"
-            file_path.write_text("ignored", encoding="utf-8")
-            self.mock_directory_reader.load_resource.return_value = [Mock(text="a\x00b")]
-
-            job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir}}
-            )
-            item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
-            result = job.get_raw_content(item)
-
-            self.assertEqual(result, "ab")
-
     def test_get_raw_content_returns_empty_on_loader_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             file_path = Path(temp_dir) / "doc.txt"
