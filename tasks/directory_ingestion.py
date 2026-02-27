@@ -1,12 +1,11 @@
-import io
 import logging
 import re
 import unicodedata
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Set
+from typing import Iterable, Optional
 
-from markitdown import MarkItDown
+from llama_index.core import SimpleDirectoryReader
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -15,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class DirectoryIngestionJob(IngestionJob):
-    """Ingest files from a local directory and convert them to markdown text."""
+    """Ingest files from a local directory using LlamaIndex SimpleDirectoryReader."""
 
     @property
     def source_type(self) -> str:
@@ -33,12 +32,39 @@ class DirectoryIngestionJob(IngestionJob):
         if not self.directory.is_dir():
             raise ValueError(f"Directory does not exist or is not a directory: {self.directory}")
 
-        self.recursive = bool(cfg.get("recursive", True))
-        self.extension_filter = self._parse_extension_filter(cfg.get("filter"))
-        self.md = MarkItDown()
+        self.recursive = self._as_bool(cfg.get("recursive"), default=True)
+        self.exclude_hidden = self._as_bool(cfg.get("exclude_hidden"), default=True)
+        self.exclude_empty = self._as_bool(cfg.get("exclude_empty"), default=False)
+        self.num_files_limit = self._parse_num_files_limit(cfg.get("num_files_limit"))
+        self.encoding = cfg.get("encoding", "utf-8")
+        self.required_exts = self._parse_required_exts(cfg.get("filter"))
+        self.errors = "ignore"
+        self.raise_on_error = True
+        self.reader = self._build_directory_reader()
 
-    def _parse_extension_filter(self, raw_filter) -> Optional[Set[str]]:
-        """Parse comma-separated extension filter into normalized lowercase set."""
+    def _as_bool(self, value, default: bool) -> bool:
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"1", "true", "yes", "on"}:
+                return True
+            if lowered in {"0", "false", "no", "off"}:
+                return False
+        return bool(value)
+
+    def _parse_num_files_limit(self, value) -> Optional[int]:
+        if value is None or value == "":
+            return None
+        parsed = int(value)
+        if parsed <= 0:
+            raise ValueError("num_files_limit must be positive when provided")
+        return parsed
+
+    def _parse_required_exts(self, raw_filter) -> Optional[list[str]]:
+        """Parse connector `filter` into SimpleDirectoryReader `required_exts` format."""
         if raw_filter is None:
             return None
 
@@ -49,18 +75,29 @@ class DirectoryIngestionJob(IngestionJob):
         else:
             values = [str(raw_filter)]
 
-        extensions = {
-            str(value).strip().lower().lstrip(".")
-            for value in values
-            if str(value).strip()
-        }
-        return extensions or None
+        required_exts = []
+        for value in values:
+            normalized = str(value).strip().lower()
+            if not normalized:
+                continue
+            if not normalized.startswith("."):
+                normalized = f".{normalized}"
+            required_exts.append(normalized)
 
-    def _matches_filter(self, file_path: Path) -> bool:
-        if self.extension_filter is None:
-            return True
-        extension = file_path.suffix.lower().lstrip(".")
-        return extension in self.extension_filter
+        return sorted(set(required_exts)) or None
+
+    def _build_directory_reader(self) -> SimpleDirectoryReader:
+        return SimpleDirectoryReader(
+            input_dir=str(self.directory),
+            recursive=self.recursive,
+            required_exts=self.required_exts,
+            exclude_hidden=self.exclude_hidden,
+            exclude_empty=self.exclude_empty,
+            num_files_limit=self.num_files_limit,
+            encoding=self.encoding,
+            errors=self.errors,
+            raise_on_error=self.raise_on_error,
+        )
 
     def sanitize_path(self, path: str) -> str:
         """Normalize a relative path into a filesystem-safe key."""
@@ -70,12 +107,16 @@ class DirectoryIngestionJob(IngestionJob):
         path = re.sub(r"[^a-zA-Z0-9\-_\.]", "", path)
         return path[:255]
 
+    def _get_discovered_paths(self) -> Iterable[Path]:
+        for resource in sorted(self.reader.list_resources()):
+            path = Path(resource).expanduser()
+            if not path.is_absolute():
+                path = self.directory / path
+            yield path.resolve()
+
     def list_items(self):
-        pattern = "**/*" if self.recursive else "*"
-        for file_path in sorted(self.directory.glob(pattern)):
+        for file_path in self._get_discovered_paths():
             if not file_path.is_file():
-                continue
-            if not self._matches_filter(file_path):
                 continue
 
             try:
@@ -90,26 +131,28 @@ class DirectoryIngestionJob(IngestionJob):
                 last_modified=modified_at,
             )
 
+    def _load_documents_for_path(self, file_path: Path):
+        """Load one file using the initialized directory reader context."""
+        return self.reader.load_resource(str(file_path))
+
     def get_raw_content(self, item: IngestionItem):
         file_path = Path(item.source_ref)
 
         try:
-            content_bytes = file_path.read_bytes()
+            docs = self._load_documents_for_path(file_path)
         except Exception as exc:
-            logger.error(f"[{file_path}] Failed to read file: {exc}")
-            return ""
+            logger.warning(f"[{file_path}] SimpleDirectoryReader failed: {exc}. Trying raw text fallback.")
+            docs = []
 
-        stream = io.BytesIO(content_bytes)
+        merged = "\n\n".join((doc.text or "").strip() for doc in docs if (doc.text or "").strip())
+        if merged.strip():
+            return merged
 
         try:
-            result = self.md.convert_stream(stream)
-            text = result.text_content or ""
-            if text.strip():
-                return text
-            return content_bytes.decode("utf-8", errors="ignore")
+            return file_path.read_text(encoding=self.encoding, errors=self.errors)
         except Exception as exc:
-            logger.warning(f"[{file_path}] Markdown conversion failed: {exc}. Using raw text.")
-            return content_bytes.decode("utf-8", errors="ignore")
+            logger.error(f"[{file_path}] Failed to read file with fallback: {exc}")
+            return ""
 
     def get_item_name(self, item: IngestionItem):
         file_path = Path(item.source_ref).resolve()

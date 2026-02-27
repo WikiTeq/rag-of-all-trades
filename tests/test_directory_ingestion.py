@@ -9,12 +9,14 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 
 class TestDirectoryIngestionJob(unittest.TestCase):
     def setUp(self):
-        self.markitdown_patcher = patch("tasks.directory_ingestion.MarkItDown")
-        self.mock_markitdown_class = self.markitdown_patcher.start()
-        self.mock_md = self.mock_markitdown_class.return_value
+        self.reader_patcher = patch("tasks.directory_ingestion.SimpleDirectoryReader")
+        self.mock_reader_class = self.reader_patcher.start()
+        self.mock_directory_reader = Mock()
+        self.mock_directory_reader.list_resources.return_value = []
+        self.mock_reader_class.return_value = self.mock_directory_reader
 
     def tearDown(self):
-        self.markitdown_patcher.stop()
+        self.reader_patcher.stop()
 
     def test_source_type(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -34,6 +36,10 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             nested_dir = base / "nested"
             nested_dir.mkdir()
             (nested_dir / "child.md").write_text("child", encoding="utf-8")
+            self.mock_directory_reader.list_resources.return_value = [
+                str(base / "root.txt"),
+                str(nested_dir / "child.md"),
+            ]
 
             job = DirectoryIngestionJob(
                 {"name": "local", "config": {"path": temp_dir}}
@@ -42,6 +48,17 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             items = list(job.list_items())
 
             self.assertEqual(len(items), 2)
+            self.mock_reader_class.assert_called_with(
+                input_dir=str(Path(temp_dir).resolve()),
+                recursive=True,
+                required_exts=None,
+                exclude_hidden=True,
+                exclude_empty=False,
+                num_files_limit=None,
+                encoding="utf-8",
+                errors="ignore",
+                raise_on_error=True,
+            )
             self.assertTrue(items[0].id.startswith("file://"))
             self.assertIsInstance(items[0].source_ref, Path)
             self.assertIsNotNone(items[0].last_modified)
@@ -53,6 +70,9 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             nested_dir = base / "nested"
             nested_dir.mkdir()
             (nested_dir / "child.md").write_text("child", encoding="utf-8")
+            self.mock_directory_reader.list_resources.return_value = [
+                str(base / "root.txt")
+            ]
 
             job = DirectoryIngestionJob(
                 {
@@ -65,16 +85,25 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
             self.assertEqual(len(items), 1)
             self.assertEqual(Path(items[0].source_ref).name, "root.txt")
+            self.assertEqual(job.recursive, False)
 
-    def test_list_items_filter_by_extensions(self):
+    def test_list_items_resolves_relative_resources_from_base_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
-            (base / "one.txt").write_text("one", encoding="utf-8")
-            (base / "two.pdf").write_text("two", encoding="utf-8")
-            nested_dir = base / "nested"
-            nested_dir.mkdir()
-            (nested_dir / "three.md").write_text("three", encoding="utf-8")
+            (base / "root.txt").write_text("root", encoding="utf-8")
+            self.mock_directory_reader.list_resources.return_value = ["root.txt"]
 
+            job = DirectoryIngestionJob(
+                {"name": "local", "config": {"path": temp_dir}}
+            )
+
+            items = list(job.list_items())
+
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0].source_ref, (base / "root.txt").resolve())
+
+    def test_filter_is_translated_to_required_exts(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
             job = DirectoryIngestionJob(
                 {
                     "name": "local",
@@ -82,21 +111,10 @@ class TestDirectoryIngestionJob(unittest.TestCase):
                 }
             )
 
-            items = list(job.list_items())
-            names = [Path(item.source_ref).name for item in items]
-
-            self.assertEqual(len(items), 2)
-            self.assertIn("one.txt", names)
-            self.assertIn("three.md", names)
-            self.assertNotIn("two.pdf", names)
+            self.assertEqual(job.required_exts, [".md", ".txt"])
 
     def test_list_items_filter_normalizes_dots_and_case(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            base = Path(temp_dir)
-            (base / "one.txt").write_text("one", encoding="utf-8")
-            (base / "two.md").write_text("two", encoding="utf-8")
-            (base / "three.PDF").write_text("three", encoding="utf-8")
-
             job = DirectoryIngestionJob(
                 {
                     "name": "local",
@@ -104,21 +122,14 @@ class TestDirectoryIngestionJob(unittest.TestCase):
                 }
             )
 
-            items = list(job.list_items())
-            names = [Path(item.source_ref).name for item in items]
+            self.assertEqual(job.required_exts, [".pdf", ".txt"])
 
-            self.assertEqual(len(items), 2)
-            self.assertIn("one.txt", names)
-            self.assertIn("three.PDF", names)
-            self.assertNotIn("two.md", names)
-
-    def test_get_raw_content_uses_markdown_conversion(self):
+    def test_get_raw_content_uses_simple_directory_reader(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             file_path = Path(temp_dir) / "doc.txt"
             file_path.write_text("raw text", encoding="utf-8")
 
-            conversion_result = Mock(text_content="Converted markdown")
-            self.mock_md.convert_stream.return_value = conversion_result
+            self.mock_directory_reader.load_resource.return_value = [Mock(text="Converted text")]
 
             job = DirectoryIngestionJob(
                 {"name": "local", "config": {"path": temp_dir}}
@@ -127,53 +138,93 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
             result = job.get_raw_content(item)
 
-            self.assertEqual(result, "Converted markdown")
-            self.mock_md.convert_stream.assert_called_once()
+            self.assertEqual(result, "Converted text")
+            self.mock_directory_reader.load_resource.assert_called_once_with(str(file_path))
 
-    def test_get_raw_content_falls_back_on_empty_conversion(self):
+    def test_get_raw_content_joins_multiple_documents(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "doc.txt"
+            file_path.write_text("ignored", encoding="utf-8")
+
+            self.mock_directory_reader.load_resource.return_value = [
+                Mock(text="Part 1"),
+                Mock(text="Part 2"),
+            ]
+
+            job = DirectoryIngestionJob(
+                {"name": "local", "config": {"path": temp_dir}}
+            )
+
+            item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
+            result = job.get_raw_content(item)
+
+            self.assertEqual(result, "Part 1\n\nPart 2")
+
+    def test_get_raw_content_falls_back_on_loader_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             file_path = Path(temp_dir) / "doc.txt"
             file_path.write_text("fallback text", encoding="utf-8")
 
-            conversion_result = Mock(text_content="   ")
-            self.mock_md.convert_stream.return_value = conversion_result
+            self.mock_directory_reader.load_resource.side_effect = ValueError("bad loader")
 
             job = DirectoryIngestionJob(
                 {"name": "local", "config": {"path": temp_dir}}
             )
 
             item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
-            result = job.get_raw_content(item)
+            with patch("tasks.directory_ingestion.logger.warning") as mock_warning:
+                result = job.get_raw_content(item)
 
             self.assertEqual(result, "fallback text")
-
-    def test_get_raw_content_falls_back_on_conversion_error(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            file_path = Path(temp_dir) / "doc.txt"
-            file_path.write_text("fallback text", encoding="utf-8")
-
-            self.mock_md.convert_stream.side_effect = ValueError("bad markdown")
-
-            job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir}}
-            )
-
-            item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
-            result = job.get_raw_content(item)
-
-            self.assertEqual(result, "fallback text")
+            mock_warning.assert_called_once()
+            self.assertIn(str(file_path), mock_warning.call_args[0][0])
+            self.assertIn("SimpleDirectoryReader failed", mock_warning.call_args[0][0])
+            self.assertIn("bad loader", mock_warning.call_args[0][0])
 
     def test_get_raw_content_returns_empty_on_read_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             missing_path = Path(temp_dir) / "missing.txt"
+            self.mock_directory_reader.load_resource.side_effect = ValueError("missing file")
             job = DirectoryIngestionJob(
                 {"name": "local", "config": {"path": temp_dir}}
             )
 
             item = IngestionItem(id=f"file://{missing_path}", source_ref=missing_path)
-            result = job.get_raw_content(item)
+            with patch("tasks.directory_ingestion.logger.warning") as mock_warning, patch(
+                "tasks.directory_ingestion.logger.error"
+            ) as mock_error:
+                result = job.get_raw_content(item)
 
             self.assertEqual(result, "")
+            mock_warning.assert_called_once()
+            mock_error.assert_called_once()
+            self.assertIn(str(missing_path), mock_warning.call_args[0][0])
+            self.assertIn("SimpleDirectoryReader failed", mock_warning.call_args[0][0])
+            self.assertIn("missing file", mock_warning.call_args[0][0])
+            self.assertIn(str(missing_path), mock_error.call_args[0][0])
+            self.assertIn("Failed to read file with fallback", mock_error.call_args[0][0])
+
+    def test_config_parses_bool_strings_and_num_files_limit_with_forced_raise_on_error(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job = DirectoryIngestionJob(
+                {
+                    "name": "local",
+                    "config": {
+                        "path": temp_dir,
+                        "recursive": "false",
+                        "exclude_hidden": "no",
+                        "exclude_empty": "yes",
+                        "raise_on_error": "0",
+                        "num_files_limit": "7",
+                    },
+                }
+            )
+
+            self.assertEqual(job.recursive, False)
+            self.assertEqual(job.exclude_hidden, False)
+            self.assertEqual(job.exclude_empty, True)
+            self.assertEqual(job.raise_on_error, True)
+            self.assertEqual(job.num_files_limit, 7)
 
     def test_get_item_name_uses_relative_sanitized_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:
