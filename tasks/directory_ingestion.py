@@ -115,11 +115,25 @@ class DirectoryIngestionJob(IngestionJob):
         return path[:255]
 
     def _get_discovered_paths(self) -> Iterable[Path]:
+        """Yield resolved file paths under the configured directory.
+
+        Paths that resolve outside the configured base (e.g. symlinks to external
+        files) are skipped with a warning to avoid ingesting unintended content.
+        """
+        base = self.connector_config.path.resolve()
         for resource in sorted(self.reader.list_resources()):
             path = Path(resource).expanduser()
             if not path.is_absolute():
-                path = self.connector_config.path / path
-            yield path.resolve()
+                path = base / path
+            path = path.resolve()
+            try:
+                path.relative_to(base)
+            except ValueError:
+                logger.warning(
+                    "Skipping path outside configured directory: %s", path
+                )
+                continue
+            yield path
 
     def list_items(self):
         for file_path in self._get_discovered_paths():
