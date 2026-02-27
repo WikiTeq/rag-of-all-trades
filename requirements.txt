@@ -2,6 +2,7 @@
 fastapi==0.120.1
 uvicorn[standard]==0.38.0
 slowapi==0.1.9
+fastmcp==2.14.5
 
 # Database Migration + ORM
 alembic==1.17.1
