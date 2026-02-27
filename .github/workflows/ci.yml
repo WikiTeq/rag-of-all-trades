@@ -1,0 +1,14 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    uses: ./.github/workflows/tests.yml
+
+  docker:
+    needs: [test]
+    uses: ./.github/workflows/docker-image.yml
+    secrets: inherit
