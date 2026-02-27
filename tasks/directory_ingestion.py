@@ -156,7 +156,13 @@ class DirectoryIngestionJob(IngestionJob):
         merged = "\n\n".join((doc.text or "").strip() for doc in docs if (doc.text or "").strip())
         return merged if merged.strip() else ""
 
-    def get_item_name(self, item: IngestionItem):
+    def get_item_name(self, item: IngestionItem) -> str:
+        """Return a filesystem-safe name for the item.
+
+        Uses the path relative to the configured directory. If the path is outside
+        the base (e.g. symlink escape), falls back to the bare filename; callers
+        should be aware this can collide if multiple such files share the same name.
+        """
         file_path = Path(item.source_ref).resolve()
         try:
             relative_path = file_path.relative_to(self.connector_config.path)
