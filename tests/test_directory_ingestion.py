@@ -204,9 +204,10 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
             self.assertEqual(result, "")
             mock_warning.assert_called_once()
-            self.assertIn(str(file_path), mock_warning.call_args[0][0])
-            self.assertIn("SimpleDirectoryReader failed", mock_warning.call_args[0][0])
-            self.assertIn("bad loader", mock_warning.call_args[0][0])
+            args = mock_warning.call_args[0]
+            self.assertEqual(args[1], file_path)
+            self.assertIn("SimpleDirectoryReader failed", args[0])
+            self.assertIn("bad loader", str(args[2]))
 
     def test_get_raw_content_returns_empty_when_reader_returns_no_docs(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -237,9 +238,10 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
             self.assertEqual(result, "")
             mock_warning.assert_called_once()
-            self.assertIn(str(missing_path), mock_warning.call_args[0][0])
-            self.assertIn("SimpleDirectoryReader failed", mock_warning.call_args[0][0])
-            self.assertIn("missing file", mock_warning.call_args[0][0])
+            args = mock_warning.call_args[0]
+            self.assertEqual(args[1], missing_path)
+            self.assertIn("SimpleDirectoryReader failed", args[0])
+            self.assertIn("missing file", str(args[2]))
 
     def test_config_parses_bools_and_num_files_limit_with_forced_raise_on_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:
