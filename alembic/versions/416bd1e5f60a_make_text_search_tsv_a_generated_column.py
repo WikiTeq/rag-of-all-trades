@@ -20,7 +20,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Replace plain tsvector column with a generated one."""
+    """Replace plain tsvector column with a generated one.
+
+    Note: On large tables, ADD COLUMN with a generated expression causes
+    PostgreSQL to compute the tsvector for every existing row and may
+    hold a lock; schedule during low traffic or expect brief downtime.
+    """
     op.drop_column('data_embeddings', 'text_search_tsv', schema='public')
     op.add_column('data_embeddings', sa.Column(
         'text_search_tsv',
