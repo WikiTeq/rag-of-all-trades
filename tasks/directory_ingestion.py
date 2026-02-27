@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from llama_index.core import SimpleDirectoryReader
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -28,7 +28,7 @@ class DirectoryConnectorConfig(BaseModel):
     exclude_empty: bool = False
     num_files_limit: Optional[int] = None
     encoding: str = "utf-8"
-    filter: Optional[list[str]] = None
+    required_exts: Optional[list[str]] = Field(default=None, alias="filter")
 
     model_config = {"extra": "ignore"}
 
@@ -52,10 +52,10 @@ class DirectoryConnectorConfig(BaseModel):
             raise ValueError("num_files_limit must be positive when provided")
         return parsed
 
-    @field_validator("filter", mode="before")
+    @field_validator("required_exts", mode="before")
     @classmethod
-    def normalize_filter(cls, v):
-        """Parse filter into a sorted list of dot-prefixed lowercase extensions.
+    def normalize_required_exts(cls, v):
+        """Parse required_exts (config key 'filter') into sorted dot-prefixed extensions.
 
         Accepts a comma-separated string ("txt,md") or a YAML list (["txt", "md"]).
         """
@@ -83,7 +83,7 @@ class DirectoryIngestionJob(IngestionJob):
     def source_type(self) -> str:
         return "directory"
 
-    def __init__(self, config):
+    def __init__(self, config: dict):
         super().__init__(config)
 
         self.connector_config = DirectoryConnectorConfig(**(config.get("config", {})))
@@ -91,10 +91,13 @@ class DirectoryIngestionJob(IngestionJob):
 
     def _build_directory_reader(self) -> SimpleDirectoryReader:
         cfg = self.connector_config
+        # errors="ignore" drops invalid bytes during text decode; raise_on_error=True
+        # raises on reader-level failures (e.g. missing file). Binary parsers (PDF, images)
+        # do not use encoding/errors, so this combination is intentional.
         return SimpleDirectoryReader(
             input_dir=str(cfg.path),
             recursive=cfg.recursive,
-            required_exts=cfg.filter,
+            required_exts=cfg.required_exts,
             exclude_hidden=cfg.exclude_hidden,
             exclude_empty=cfg.exclude_empty,
             num_files_limit=cfg.num_files_limit,
@@ -103,7 +106,7 @@ class DirectoryIngestionJob(IngestionJob):
             raise_on_error=True,
         )
 
-    def sanitize_path(self, path: str) -> str:
+    def _sanitize_path(self, path: str) -> str:
         """Normalize a relative path into a filesystem-safe key."""
         path = unicodedata.normalize("NFKD", path)
         path = path.encode("ascii", "ignore").decode("ascii")
@@ -112,11 +115,25 @@ class DirectoryIngestionJob(IngestionJob):
         return path[:255]
 
     def _get_discovered_paths(self) -> Iterable[Path]:
+        """Yield resolved file paths under the configured directory.
+
+        Paths that resolve outside the configured base (e.g. symlinks to external
+        files) are skipped with a warning to avoid ingesting unintended content.
+        """
+        base = self.connector_config.path.resolve()
         for resource in sorted(self.reader.list_resources()):
             path = Path(resource).expanduser()
             if not path.is_absolute():
-                path = self.connector_config.path / path
-            yield path.resolve()
+                path = base / path
+            path = path.resolve()
+            try:
+                path.relative_to(base)
+            except ValueError:
+                logger.warning(
+                    "Skipping path outside configured directory: %s", path
+                )
+                continue
+            yield path
 
     def list_items(self):
         for file_path in self._get_discovered_paths():
@@ -145,16 +162,24 @@ class DirectoryIngestionJob(IngestionJob):
         try:
             docs = self._load_documents_for_path(file_path)
         except Exception as exc:
-            logger.warning(f"[{file_path}] SimpleDirectoryReader failed: {exc}")
+            logger.warning(
+                "[%s] SimpleDirectoryReader failed: %s", file_path, exc, exc_info=True
+            )
             return ""
 
         merged = "\n\n".join((doc.text or "").strip() for doc in docs if (doc.text or "").strip())
         return merged if merged.strip() else ""
 
-    def get_item_name(self, item: IngestionItem):
+    def get_item_name(self, item: IngestionItem) -> str:
+        """Return a filesystem-safe name for the item.
+
+        Uses the path relative to the configured directory. If the path is outside
+        the base (e.g. symlink escape), falls back to the bare filename; callers
+        should be aware this can collide if multiple such files share the same name.
+        """
         file_path = Path(item.source_ref).resolve()
         try:
             relative_path = file_path.relative_to(self.connector_config.path)
         except ValueError:
             relative_path = file_path.name
-        return self.sanitize_path(str(relative_path))
+        return self._sanitize_path(str(relative_path))
