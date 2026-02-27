@@ -113,7 +113,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
                 }
             )
 
-            self.assertEqual(job.connector_config.filter, [".md", ".txt"])
+            self.assertEqual(job.connector_config.required_exts, [".md", ".txt"])
 
     def test_list_items_filter_normalizes_dots_and_case(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -124,7 +124,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
                 }
             )
 
-            self.assertEqual(job.connector_config.filter, [".pdf", ".txt"])
+            self.assertEqual(job.connector_config.required_exts, [".pdf", ".txt"])
 
     def test_get_raw_content_uses_simple_directory_reader(self):
         with tempfile.TemporaryDirectory() as temp_dir:

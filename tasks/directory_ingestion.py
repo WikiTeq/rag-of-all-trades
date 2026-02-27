@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from llama_index.core import SimpleDirectoryReader
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -28,7 +28,7 @@ class DirectoryConnectorConfig(BaseModel):
     exclude_empty: bool = False
     num_files_limit: Optional[int] = None
     encoding: str = "utf-8"
-    filter: Optional[list[str]] = None
+    required_exts: Optional[list[str]] = Field(default=None, alias="filter")
 
     model_config = {"extra": "ignore"}
 
@@ -52,10 +52,10 @@ class DirectoryConnectorConfig(BaseModel):
             raise ValueError("num_files_limit must be positive when provided")
         return parsed
 
-    @field_validator("filter", mode="before")
+    @field_validator("required_exts", mode="before")
     @classmethod
-    def normalize_filter(cls, v):
-        """Parse filter into a sorted list of dot-prefixed lowercase extensions.
+    def normalize_required_exts(cls, v):
+        """Parse required_exts (config key 'filter') into sorted dot-prefixed extensions.
 
         Accepts a comma-separated string ("txt,md") or a YAML list (["txt", "md"]).
         """
@@ -97,7 +97,7 @@ class DirectoryIngestionJob(IngestionJob):
         return SimpleDirectoryReader(
             input_dir=str(cfg.path),
             recursive=cfg.recursive,
-            required_exts=cfg.filter,
+            required_exts=cfg.required_exts,
             exclude_hidden=cfg.exclude_hidden,
             exclude_empty=cfg.exclude_empty,
             num_files_limit=cfg.num_files_limit,
