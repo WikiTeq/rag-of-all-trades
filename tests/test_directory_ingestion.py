@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from pydantic import ValidationError
+
 from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
@@ -26,7 +28,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             self.assertEqual(job.source_type, "directory")
 
     def test_init_requires_path(self):
-        with self.assertRaises(ValueError):
+        with self.assertRaises(ValidationError):
             DirectoryIngestionJob({"name": "local", "config": {}})
 
     def test_list_items_recursive(self):
@@ -85,7 +87,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
             self.assertEqual(len(items), 1)
             self.assertEqual(Path(items[0].source_ref).name, "root.txt")
-            self.assertEqual(job.recursive, False)
+            self.assertEqual(job.connector_config.recursive, False)
 
     def test_list_items_resolves_relative_resources_from_base_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -111,7 +113,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
                 }
             )
 
-            self.assertEqual(job.required_exts, [".md", ".txt"])
+            self.assertEqual(job.connector_config.filter, [".md", ".txt"])
 
     def test_list_items_filter_normalizes_dots_and_case(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -122,7 +124,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
                 }
             )
 
-            self.assertEqual(job.required_exts, [".pdf", ".txt"])
+            self.assertEqual(job.connector_config.filter, [".pdf", ".txt"])
 
     def test_get_raw_content_uses_simple_directory_reader(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -214,31 +216,44 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             self.assertIn("SimpleDirectoryReader failed", mock_warning.call_args[0][0])
             self.assertIn("missing file", mock_warning.call_args[0][0])
 
-    def test_config_parses_bool_strings_and_num_files_limit_with_forced_raise_on_error(self):
+    def test_config_parses_bools_and_num_files_limit_with_forced_raise_on_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             job = DirectoryIngestionJob(
                 {
                     "name": "local",
                     "config": {
                         "path": temp_dir,
-                        "recursive": "false",
-                        "exclude_hidden": "no",
-                        "exclude_empty": "yes",
-                        "raise_on_error": "0",
-                        "num_files_limit": "7",
+                        "recursive": False,
+                        "exclude_hidden": False,
+                        "exclude_empty": True,
+                        "raise_on_error": False,
+                        "num_files_limit": 7,
                     },
                 }
             )
 
-            self.assertEqual(job.recursive, False)
-            self.assertEqual(job.exclude_hidden, False)
-            self.assertEqual(job.exclude_empty, True)
-            self.assertEqual(job.raise_on_error, True)
-            self.assertEqual(job.num_files_limit, 7)
+            cfg = job.connector_config
+            self.assertEqual(cfg.recursive, False)
+            self.assertEqual(cfg.exclude_hidden, False)
+            self.assertEqual(cfg.exclude_empty, True)
+            self.assertEqual(cfg.num_files_limit, 7)
+            # raise_on_error / errors are hardcoded in _build_directory_reader,
+            # verified via the SimpleDirectoryReader constructor call
+            self.mock_reader_class.assert_called_with(
+                input_dir=str(Path(temp_dir).resolve()),
+                recursive=False,
+                required_exts=None,
+                exclude_hidden=False,
+                exclude_empty=True,
+                num_files_limit=7,
+                encoding="utf-8",
+                errors="ignore",
+                raise_on_error=True,
+            )
 
     def test_config_forces_errors_ignore(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            job = DirectoryIngestionJob(
+            DirectoryIngestionJob(
                 {
                     "name": "local",
                     "config": {
@@ -248,7 +263,10 @@ class TestDirectoryIngestionJob(unittest.TestCase):
                 }
             )
 
-            self.assertEqual(job.errors, "ignore")
+            # errors="replace" from config is dropped (extra="ignore"),
+            # _build_directory_reader always passes errors="ignore"
+            call_kwargs = self.mock_reader_class.call_args[1]
+            self.assertEqual(call_kwargs["errors"], "ignore")
 
     def test_get_item_name_uses_relative_sanitized_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:

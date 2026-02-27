@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from llama_index.core import SimpleDirectoryReader
+from pydantic import BaseModel, field_validator
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -18,6 +19,63 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class DirectoryConnectorConfig(BaseModel):
+    """Pydantic model validating the 'config' block of a directory connector."""
+
+    path: Path
+    recursive: bool = True
+    exclude_hidden: bool = True
+    exclude_empty: bool = False
+    num_files_limit: Optional[int] = None
+    encoding: str = "utf-8"
+    filter: Optional[list[str]] = None
+
+    model_config = {"extra": "ignore"}
+
+    # --- validators ---
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def resolve_path(cls, v):
+        p = Path(v).expanduser().resolve()
+        if not p.is_dir():
+            raise ValueError(f"Directory does not exist or is not a directory: {p}")
+        return p
+
+    @field_validator("num_files_limit", mode="before")
+    @classmethod
+    def validate_num_files_limit(cls, v):
+        if v is None or v == "":
+            return None
+        parsed = int(v)
+        if parsed <= 0:
+            raise ValueError("num_files_limit must be positive when provided")
+        return parsed
+
+    @field_validator("filter", mode="before")
+    @classmethod
+    def normalize_filter(cls, v):
+        """Parse filter into a sorted list of dot-prefixed lowercase extensions.
+
+        Accepts a comma-separated string ("txt,md") or a YAML list (["txt", "md"]).
+        """
+        if v is None:
+            return None
+
+        values = v.split(",") if isinstance(v, str) else v
+
+        exts = []
+        for item in values:
+            normalized = str(item).strip().lower()
+            if not normalized:
+                continue
+            if not normalized.startswith("."):
+                normalized = f".{normalized}"
+            exts.append(normalized)
+
+        return sorted(set(exts)) or None
+
+
 class DirectoryIngestionJob(IngestionJob):
     """Ingest files from a local directory using LlamaIndex SimpleDirectoryReader."""
 
@@ -28,80 +86,21 @@ class DirectoryIngestionJob(IngestionJob):
     def __init__(self, config):
         super().__init__(config)
 
-        cfg = config.get("config", {})
-        directory = cfg.get("path")
-        if not directory:
-            raise ValueError("path is required in directory connector config")
-
-        self.directory = Path(directory).expanduser().resolve()
-        if not self.directory.is_dir():
-            raise ValueError(f"Directory does not exist or is not a directory: {self.directory}")
-
-        self.recursive = self._as_bool(cfg.get("recursive"), default=True)
-        self.exclude_hidden = self._as_bool(cfg.get("exclude_hidden"), default=True)
-        self.exclude_empty = self._as_bool(cfg.get("exclude_empty"), default=False)
-        self.num_files_limit = self._parse_num_files_limit(cfg.get("num_files_limit"))
-        self.encoding = cfg.get("encoding", "utf-8")
-        self.required_exts = self._parse_required_exts(cfg.get("filter"))
-        self.errors = "ignore"
-        self.raise_on_error = True
+        self.connector_config = DirectoryConnectorConfig(**(config.get("config", {})))
         self.reader = self._build_directory_reader()
 
-    def _as_bool(self, value, default: bool) -> bool:
-        if value is None:
-            return default
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            lowered = value.strip().lower()
-            if lowered in {"1", "true", "yes", "on"}:
-                return True
-            if lowered in {"0", "false", "no", "off"}:
-                return False
-        return bool(value)
-
-    def _parse_num_files_limit(self, value) -> Optional[int]:
-        if value is None or value == "":
-            return None
-        parsed = int(value)
-        if parsed <= 0:
-            raise ValueError("num_files_limit must be positive when provided")
-        return parsed
-
-    def _parse_required_exts(self, raw_filter) -> Optional[list[str]]:
-        """Parse connector `filter` into SimpleDirectoryReader `required_exts` format."""
-        if raw_filter is None:
-            return None
-
-        if isinstance(raw_filter, str):
-            values = raw_filter.split(",")
-        elif isinstance(raw_filter, (list, tuple, set)):
-            values = raw_filter
-        else:
-            values = [str(raw_filter)]
-
-        required_exts = []
-        for value in values:
-            normalized = str(value).strip().lower()
-            if not normalized:
-                continue
-            if not normalized.startswith("."):
-                normalized = f".{normalized}"
-            required_exts.append(normalized)
-
-        return sorted(set(required_exts)) or None
-
     def _build_directory_reader(self) -> SimpleDirectoryReader:
+        cfg = self.connector_config
         return SimpleDirectoryReader(
-            input_dir=str(self.directory),
-            recursive=self.recursive,
-            required_exts=self.required_exts,
-            exclude_hidden=self.exclude_hidden,
-            exclude_empty=self.exclude_empty,
-            num_files_limit=self.num_files_limit,
-            encoding=self.encoding,
-            errors=self.errors,
-            raise_on_error=self.raise_on_error,
+            input_dir=str(cfg.path),
+            recursive=cfg.recursive,
+            required_exts=cfg.filter,
+            exclude_hidden=cfg.exclude_hidden,
+            exclude_empty=cfg.exclude_empty,
+            num_files_limit=cfg.num_files_limit,
+            encoding=cfg.encoding,
+            errors="ignore",
+            raise_on_error=True,
         )
 
     def sanitize_path(self, path: str) -> str:
@@ -116,7 +115,7 @@ class DirectoryIngestionJob(IngestionJob):
         for resource in sorted(self.reader.list_resources()):
             path = Path(resource).expanduser()
             if not path.is_absolute():
-                path = self.directory / path
+                path = self.connector_config.path / path
             yield path.resolve()
 
     def list_items(self):
@@ -155,7 +154,7 @@ class DirectoryIngestionJob(IngestionJob):
     def get_item_name(self, item: IngestionItem):
         file_path = Path(item.source_ref).resolve()
         try:
-            relative_path = file_path.relative_to(self.directory)
+            relative_path = file_path.relative_to(self.connector_config.path)
         except ValueError:
             relative_path = file_path.name
         return self.sanitize_path(str(relative_path))
