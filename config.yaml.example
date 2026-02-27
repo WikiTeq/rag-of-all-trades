@@ -16,6 +16,9 @@ sources:
   #    path: "${DIRECTORY1_PATH}"
   #    recursive: true
   #    filter: "txt,md,pdf"
+  #    exclude_hidden: true
+  #    exclude_empty: false
+  #    num_files_limit: 1000
   #    schedules: "${DIRECTORY1_SCHEDULES}"
 
   #- type: "s3"

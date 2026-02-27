@@ -11,7 +11,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 ## ✨ Features
 
 * Ingestion from S3 buckets with Everything-to-Markdown conversion via [MarkItDown](https://github.com/microsoft/markitdown)
-* Ingestion from local directories with Everything-to-Markdown conversion via [MarkItDown](https://github.com/microsoft/markitdown)
+* Ingestion from local directories via [LlamaIndex SimpleDirectoryReader](https://developers.llamaindex.ai/python/framework/module_guides/loading/simpledirectoryreader/)
 * Ingestion from MediaWiki with Wiki-to-Markdown conversion via [html2text](https://github.com/Alir3z4/html2text)
 * SerpAPI ingestion from Google Search results with customizable queries
 * Flexible configuration supporting an arbitrary number of connectors
@@ -110,7 +110,7 @@ S3_ACCOUNT1_SCHEDULES=3600,60
 
 ### Directory Connector
 
-The directory connector ingests files from a local filesystem directory and converts them to Markdown format.
+The directory connector ingests files from a local filesystem directory using LlamaIndex `SimpleDirectoryReader`.
 The connector has the following configuration options:
 
 ```yaml
@@ -123,6 +123,9 @@ sources:
       path: "/data/docs" # required path to directory
       recursive: true # optional, default true
       filter: "txt,md,pdf" # optional, comma-separated extensions
+      exclude_hidden: true # optional, default true
+      exclude_empty: false # optional, default false
+      num_files_limit: 1000 # optional, positive integer
       schedules: "3600"
 ```
 
