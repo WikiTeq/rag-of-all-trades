@@ -14,8 +14,7 @@ class DataEmbeddings(Base):
     metadata_ = Column(JSONB, nullable=True)
     node_id = Column(String, nullable=True)
     embedding = Column(Vector, nullable=True)
-    # 'simple' regconfig: language-agnostic (no stemming/stop words), safe for multilingual content.
-    text_search_tsv = Column(TSVECTOR, sa.Computed("to_tsvector('simple', text)", persisted=True))
+    text_search_tsv = Column(TSVECTOR, sa.Computed("to_tsvector('english', text)", persisted=True))
 
     key_text = Column(Text, sa.Computed("metadata_ ->> 'key'", persisted=True))
     checksum_text = Column(Text, sa.Computed("metadata_ ->> 'checksum'", persisted=True))
