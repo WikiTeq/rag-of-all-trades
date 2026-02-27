@@ -106,7 +106,7 @@ class DirectoryIngestionJob(IngestionJob):
             raise_on_error=True,
         )
 
-    def sanitize_path(self, path: str) -> str:
+    def _sanitize_path(self, path: str) -> str:
         """Normalize a relative path into a filesystem-safe key."""
         path = unicodedata.normalize("NFKD", path)
         path = path.encode("ascii", "ignore").decode("ascii")
@@ -168,4 +168,4 @@ class DirectoryIngestionJob(IngestionJob):
             relative_path = file_path.relative_to(self.connector_config.path)
         except ValueError:
             relative_path = file_path.name
-        return self.sanitize_path(str(relative_path))
+        return self._sanitize_path(str(relative_path))
