@@ -91,6 +91,9 @@ class DirectoryIngestionJob(IngestionJob):
 
     def _build_directory_reader(self) -> SimpleDirectoryReader:
         cfg = self.connector_config
+        # errors="ignore" drops invalid bytes during text decode; raise_on_error=True
+        # raises on reader-level failures (e.g. missing file). Binary parsers (PDF, images)
+        # do not use encoding/errors, so this combination is intentional.
         return SimpleDirectoryReader(
             input_dir=str(cfg.path),
             recursive=cfg.recursive,
