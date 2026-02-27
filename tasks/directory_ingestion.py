@@ -145,7 +145,9 @@ class DirectoryIngestionJob(IngestionJob):
         try:
             docs = self._load_documents_for_path(file_path)
         except Exception as exc:
-            logger.warning(f"[{file_path}] SimpleDirectoryReader failed: {exc}")
+            logger.warning(
+                "[%s] SimpleDirectoryReader failed: %s", file_path, exc, exc_info=True
+            )
             return ""
 
         merged = "\n\n".join((doc.text or "").strip() for doc in docs if (doc.text or "").strip())
