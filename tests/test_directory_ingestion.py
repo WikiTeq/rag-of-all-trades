@@ -31,6 +31,21 @@ class TestDirectoryIngestionJob(unittest.TestCase):
         with self.assertRaises(ValidationError):
             DirectoryIngestionJob({"name": "local", "config": {}})
 
+    def test_init_rejects_num_files_limit_zero_or_negative(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for invalid in (0, -1):
+                with self.subTest(num_files_limit=invalid):
+                    with self.assertRaises(ValidationError):
+                        DirectoryIngestionJob(
+                            {
+                                "name": "local",
+                                "config": {
+                                    "path": temp_dir,
+                                    "num_files_limit": invalid,
+                                },
+                            }
+                        )
+
     def test_list_items_recursive(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             base = Path(temp_dir)
@@ -125,6 +140,16 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             )
 
             self.assertEqual(job.connector_config.required_exts, [".pdf", ".txt"])
+
+    def test_filter_empty_string_normalizes_to_none(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job = DirectoryIngestionJob(
+                {
+                    "name": "local",
+                    "config": {"path": temp_dir, "filter": ""},
+                }
+            )
+            self.assertIsNone(job.connector_config.required_exts)
 
     def test_get_raw_content_uses_simple_directory_reader(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -265,7 +290,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
             # errors="replace" from config is dropped (extra="ignore"),
             # _build_directory_reader always passes errors="ignore"
-            call_kwargs = self.mock_reader_class.call_args[1]
+            call_kwargs = self.mock_reader_class.call_args.kwargs
             self.assertEqual(call_kwargs["errors"], "ignore")
 
     def test_get_item_name_uses_relative_sanitized_path(self):
@@ -282,6 +307,19 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
 
             self.assertEqual(job.get_item_name(item), "A_folder_Angstrom_.txt")
+
+    def test_get_item_name_fallback_to_bare_filename_when_path_outside_base(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job = DirectoryIngestionJob(
+                {"name": "local", "config": {"path": temp_dir}}
+            )
+            # Item whose path is outside the configured base (e.g. symlink escape)
+            outside_path = Path(temp_dir).resolve().parent / "outside_dir" / "file.txt"
+            item = IngestionItem(
+                id=f"file://{outside_path}", source_ref=outside_path
+            )
+            # Falls back to bare filename when relative_to raises ValueError
+            self.assertEqual(job.get_item_name(item), "file.txt")
 
 
 if __name__ == "__main__":
