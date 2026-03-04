@@ -1,9 +1,10 @@
 """Tests for S3IngestionJob (Pytest version)."""
 
 import io
-import pytest
 from datetime import datetime
 from unittest.mock import Mock, patch
+
+import pytest
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.s3_ingestion import S3IngestionJob
@@ -18,8 +19,10 @@ class TestS3IngestionJob:
         self.mock_s3 = Mock()
         self.mock_md = Mock()
 
-        with patch("tasks.s3_ingestion.get_s3_client", return_value=(self.mock_s3, None)), \
-             patch("tasks.s3_ingestion.MarkItDown", return_value=self.mock_md):
+        with (
+            patch("tasks.s3_ingestion.get_s3_client", return_value=(self.mock_s3, None)),
+            patch("tasks.s3_ingestion.MarkItDown", return_value=self.mock_md),
+        ):
             self.config = {"name": "test", "config": {"buckets": ["bucket-a"]}}
             yield
 
@@ -78,10 +81,9 @@ class TestS3IngestionJob:
 
     def test_get_raw_content_uses_markdown_conversion(self):
         self.mock_s3.get_object.return_value = {"Body": io.BytesIO(b"raw bytes")}
-        conversion_result = Mock(text_content="Converted text")
-        self.mock_md.convert_stream.return_value = conversion_result
 
         job = S3IngestionJob(self.config)
+        job.convert_bytes_to_markdown = Mock(return_value="Converted text")
         item = IngestionItem(
             id="s3://bucket-a/file1.txt",
             source_ref=("bucket-a", "file1.txt"),

@@ -93,7 +93,7 @@ def _make_issue(
 class TestJiraIngestionJob(unittest.TestCase):
     def setUp(self):
         self.jira_patcher = patch("tasks.jira_ingestion.JIRA")
-        self.markitdown_patcher = patch("tasks.jira_ingestion.MarkItDown")
+        self.markitdown_patcher = patch("tasks.base.MarkItDown")
         self.mock_jira_class = self.jira_patcher.start()
         self.mock_md_class = self.markitdown_patcher.start()
 
