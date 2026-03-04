@@ -2,6 +2,8 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
+from typing import Any, MutableMapping
+from starlette.types import ASGIApp, Receive, Scope, Send
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -9,6 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from llama_index.vector_stores.postgres import PGVectorStore
 from api.v1 import api_v1_router
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
+from api.mcp_server import create_mcp_server
 from utils.config import settings
 from celery_app import celery_app
 
@@ -21,6 +24,25 @@ logger = logging.getLogger(__name__)
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
+
+
+class _NormalizeMountedRootPath:
+    """Normalize mounted root path to avoid /mcp -> /mcp/ redirect."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(
+        self,
+        scope: MutableMapping[str, Any] | Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        if scope.get("type") == "http" and scope.get("path") == "":
+            scope["path"] = "/"
+            scope["raw_path"] = b"/"
+        await self.app(scope, receive, send)
+
 
 def validate_configuration():
     """Validate critical configuration on startup."""
@@ -56,6 +78,10 @@ def validate_configuration():
     if settings.LLM.get("provider") not in ("openai", "openrouter", None):
         logger.warning(f"Unknown LLM provider: {settings.LLM.get('provider')}. Rephrase endpoint may not work.")
 
+    # Validate MCP API key (only if MCP is enabled)
+    if settings.env.MCP_ENABLE and not settings.env.MCP_API_KEY:
+        errors.append("MCP_API_KEY not configured (required when MCP_ENABLE=1)")
+
     if errors:
         error_msg = "Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
         logger.error(error_msg)
@@ -64,7 +90,7 @@ def validate_configuration():
     logger.info("Configuration validation passed")
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def app_lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown."""
 
     #Startup - Validate configuration first
@@ -106,8 +132,37 @@ app = FastAPI(
     title="Rag Of All Trades",
     description="RAG Service",
     version="0.1.0",
-    lifespan=lifespan,
 )
+
+# Configure MCP server (if enabled)
+mcp_http_app = None
+if settings.env.MCP_ENABLE:
+    mcp_server = create_mcp_server(app=app, api_key=settings.env.MCP_API_KEY)
+    mcp_http_app = mcp_server.http_app(path="/", stateless_http=True)
+    logger.info("MCP server enabled")
+else:
+    logger.info("MCP server disabled (MCP_ENABLE=0)")
+
+# IMPORTANT: Starlette's app.mount() does NOT invoke the mounted sub-app's
+# lifespan. FastMCP's StreamableHTTPSessionManager requires its lifespan to
+# run (it initializes the task group). We nest it inside the main app lifespan
+# here so both are managed together. If this combined_lifespan is removed or
+# refactored, MCP will fail at runtime on the first request with:
+#   "Task group is not initialized. Make sure to use run()."
+@asynccontextmanager
+async def combined_lifespan(app_instance: FastAPI):
+    async with app_lifespan(app_instance):
+        if mcp_http_app is None:
+            yield
+        else:
+            mcp_lifespan = getattr(mcp_http_app, "lifespan", None)
+            if mcp_lifespan is None:
+                yield
+            else:
+                async with mcp_lifespan(app_instance):
+                    yield
+
+app.router.lifespan_context = combined_lifespan
 
 # Add rate limiter to app state
 app.state.limiter = limiter
@@ -121,6 +176,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+if mcp_http_app is not None:
+    app.add_route(
+        "/mcp",
+        mcp_http_app,
+        methods=["GET", "POST", "DELETE"],
+        include_in_schema=False,
+    )
+    app.mount("/mcp", _NormalizeMountedRootPath(mcp_http_app))
 
 @app.get("/health")
 def health_check():
