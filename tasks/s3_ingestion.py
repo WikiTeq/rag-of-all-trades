@@ -1,7 +1,4 @@
-import io
 import logging
-
-from markitdown import MarkItDown
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -77,19 +74,8 @@ class S3IngestionJob(IngestionJob):
         try:
             obj = self.s3_client.get_object(Bucket=bucket, Key=key)
             content_bytes = obj["Body"].read()
-            stream = io.BytesIO(content_bytes)
-            try:
-                result = self.md.convert_stream(stream)
-                text = result.text_content or ""
-                if text.strip():
-                    logger.debug(f"[{bucket}/{key}] Converted to markdown successfully")
-                    return text
-                else:
-                    logger.debug(f"[{bucket}/{key}] Empty markdown result, falling back to raw text")
-                    return content_bytes.decode("utf-8", errors="ignore")
-            except Exception as conversion_error:
-                logger.warning(f"[{bucket}/{key}] Markdown conversion failed: {conversion_error}. Using raw text.")
-                return content_bytes.decode("utf-8", errors="ignore")
+            fallback = content_bytes.decode("utf-8", errors="ignore")
+            return self.convert_bytes_to_markdown(content_bytes, fallback_text=fallback)
         except Exception as e:
             logger.error(f"[{bucket}/{key}] Failed to fetch content: {e}")
             return ""

@@ -83,10 +83,9 @@ class TestS3IngestionJob:
 
     def test_get_raw_content_uses_markdown_conversion(self):
         self.mock_s3.get_object.return_value = {"Body": io.BytesIO(b"raw bytes")}
-        conversion_result = Mock(text_content="Converted text")
-        self.mock_md.convert_stream.return_value = conversion_result
 
         job = S3IngestionJob(self.config)
+        job.convert_bytes_to_markdown = Mock(return_value="Converted text")
         item = IngestionItem(
             id="s3://bucket-a/file1.txt",
             source_ref=("bucket-a", "file1.txt"),
