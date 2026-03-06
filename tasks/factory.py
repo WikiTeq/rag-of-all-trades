@@ -4,6 +4,7 @@ from tasks.github_ingestion import GitHubIngestionJob
 from tasks.imap_ingestion import IMAPIngestionJob
 from tasks.jira_ingestion import JiraIngestionJob
 from tasks.mediawiki_ingestion import MediaWikiIngestionJob
+from tasks.notion_ingestion import NotionIngestionJob
 from tasks.onedrive_ingestion import OneDriveIngestionJob
 from tasks.pipedrive_ingestion import PipedriveIngestionJob
 from tasks.s3_ingestion import S3IngestionJob
@@ -42,3 +43,4 @@ IngestionJobFactory.register("imap", IMAPIngestionJob)
 IngestionJobFactory.register("onedrive", OneDriveIngestionJob)
 IngestionJobFactory.register("sharepoint", SharePointIngestionJob)
 IngestionJobFactory.register("github", GitHubIngestionJob)
+IngestionJobFactory.register("notion", NotionIngestionJob)
