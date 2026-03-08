@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from fastapi import FastAPI
 from fastmcp import FastMCP
 from fastmcp.server.auth import StaticTokenVerifier
+from llama_index.core.llms import ChatMessage, MessageRole
 
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
 from utils.llm_embedding import llm
@@ -76,14 +77,20 @@ async def rephrase_chunks_response(
         return {"answer": "No relevant content found.", "references": []}
 
     chunks_text = "\n\n".join(node.node.get_text() for node in nodes_with_score)
-    rephrase_prompt = (
-        f'"""Original Query: {query}\n\nRephrase the following content clearly and '
-        f'concisely:\n\n{chunks_text}"""'
-    )
-    llm_response = await asyncio.to_thread(llm.complete, rephrase_prompt)
+    messages = [
+        ChatMessage(
+            role=MessageRole.SYSTEM,
+            content="Rephrase the following content clearly and concisely.",
+        ),
+        ChatMessage(
+            role=MessageRole.USER,
+            content=f"Query: {query}\n\nContent:\n\n{chunks_text}",
+        ),
+    ]
+    llm_response = await asyncio.to_thread(llm.chat, messages)
     logger.info("MCP rephrase_chunks: LLM response generated, %d source chunks", len(nodes_with_score))
     return {
-        "answer": str(llm_response),
+        "answer": llm_response.message.content,
         "references": RAGQueryEngine.build_references(nodes_with_score),
     }
 
