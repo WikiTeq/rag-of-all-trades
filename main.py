@@ -2,8 +2,6 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from typing import Any, MutableMapping
-from starlette.types import ASGIApp, Receive, Scope, Send
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -25,23 +23,6 @@ logger = logging.getLogger(__name__)
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
 
-
-class _NormalizeMountedRootPath:
-    """Normalize mounted root path to avoid /mcp -> /mcp/ redirect."""
-
-    def __init__(self, app: ASGIApp):
-        self.app = app
-
-    async def __call__(
-        self,
-        scope: MutableMapping[str, Any] | Scope,
-        receive: Receive,
-        send: Send,
-    ) -> None:
-        if scope.get("type") == "http" and scope.get("path") == "":
-            scope["path"] = "/"
-            scope["raw_path"] = b"/"
-        await self.app(scope, receive, send)
 
 
 def validate_configuration():
@@ -177,13 +158,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 if mcp_http_app is not None:
-    app.add_route(
-        "/mcp",
-        mcp_http_app,
-        methods=["GET", "POST", "DELETE"],
-        include_in_schema=False,
-    )
-    app.mount("/mcp", _NormalizeMountedRootPath(mcp_http_app))
+    app.mount("/mcp", mcp_http_app)
 
 @app.get("/health")
 def health_check():

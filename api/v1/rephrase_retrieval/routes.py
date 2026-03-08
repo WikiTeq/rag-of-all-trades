@@ -3,6 +3,7 @@ import logging
 from functools import wraps
 from .schema import QueryRequest, QueryResponse, SourceReference
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
+from llama_index.core.llms import ChatMessage, MessageRole
 from utils.llm_embedding import llm
 from utils.config import settings
 
@@ -67,14 +68,22 @@ async def query_endpoint(
             )
 
         chunks_text = "\n\n".join([n.node.get_text() for n in nodes_with_score])
-        rephrase_prompt = f'"""Original Query: {payload.query}\n\nRephrase the following content clearly and concisely:\n\n{chunks_text}"""'
-
-        llm_response = llm.complete(rephrase_prompt)
+        messages = [
+            ChatMessage(
+                role=MessageRole.SYSTEM,
+                content="Rephrase the following content clearly and concisely.",
+            ),
+            ChatMessage(
+                role=MessageRole.USER,
+                content=f"Query: {payload.query}\n\nContent:\n\n{chunks_text}",
+            ),
+        ]
+        llm_response = llm.chat(messages)
 
         source_refs = RAGQueryEngine.build_references(nodes_with_score)
 
         return QueryResponse(
-            answer=str(llm_response),
+            answer=llm_response.message.content,
             references=[SourceReference(**r) for r in source_refs]
         )
 

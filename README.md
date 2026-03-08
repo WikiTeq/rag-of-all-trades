@@ -62,7 +62,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 
 ## MCP endpoint
 
-The service includes an optional MCP (Model Context Protocol) server at `/mcp/`.
+The service includes an optional MCP (Model Context Protocol) server at `/mcp`.
 It is disabled by default and can be enabled via environment variables.
 
 ### Enabling MCP
@@ -515,6 +515,14 @@ TODO
 ### Anything-LLM
 
 TODO
+
+## Running tests
+
+Tests require the Docker container to be running. Once started, run:
+
+```bash
+docker exec rag-of-all-trades-api-1 pytest tests/ -v
+```
 
 ## ✨ Contributions
 
