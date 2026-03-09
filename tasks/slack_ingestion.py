@@ -1,11 +1,13 @@
 # Standard library imports
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional
 
 # Third-party imports
 from llama_index.readers.slack import SlackReader
+from slack_sdk.errors import SlackApiError
 
 # Local imports
 from tasks.base import IngestionJob
@@ -17,17 +19,17 @@ logger = logging.getLogger(__name__)
 class SlackIngestionJob(IngestionJob):
     """Ingestion connector for Slack workspaces.
 
-    Uses the LlamaIndex SlackReader for all channel discovery, content
-    fetching, thread replies, and rate-limit handling. This connector only
-    adds ROAT-specific orchestration: config parsing, validation, and
-    IngestionItem production.
+    Uses the LlamaIndex SlackReader for channel discovery (get_channel_ids).
+    Messages are fetched directly via the Slack WebClient so that each message
+    (with its thread replies) becomes an individual IngestionItem, compatible
+    with the base class contract.
 
     Configuration (config.yaml):
         - config.token: Slack bot token (required)
         - config.channel_ids: Comma-separated channel IDs (mutually exclusive with channel_patterns)
         - config.channel_patterns: Comma-separated channel name patterns / regex (mutually exclusive with channel_ids)
         - config.channel_types: Comma-separated channel types for pattern discovery,
-            default "public_channel,private_channel" (optional, only used with channel_patterns)
+            default "public_channel,private_channel" (optional, only with channel_patterns)
         - config.earliest_date: Earliest date to fetch messages from, e.g. "2024-01-01" (optional)
         - config.latest_date: Latest date to fetch messages up to, e.g. "2025-01-01" (optional)
         - config.schedules: Celery schedule in seconds (optional)
@@ -101,11 +103,11 @@ class SlackIngestionJob(IngestionJob):
     # ------------------------------------------------------------------
 
     def list_items(self) -> Iterator[IngestionItem]:
-        """Resolve channel IDs and yield one IngestionItem per channel.
+        """Resolve channel IDs and yield one IngestionItem per message.
 
-        If channel_ids are configured, yields them directly.
-        If channel_patterns are configured, uses SlackReader.get_channel_ids()
-        to resolve patterns/regex against the workspace channel list.
+        Each top-level message (with its thread replies concatenated) becomes
+        a separate IngestionItem so the base class can checksum, dedup, chunk,
+        and embed them individually.
         """
         logger.info(f"[{self.source_name}] Discovering Slack channels")
 
@@ -116,35 +118,19 @@ class SlackIngestionJob(IngestionJob):
         )
 
         for channel_id in channel_ids:
-            yield IngestionItem(
-                id=f"slack:{channel_id}",
-                source_ref=channel_id,
-                last_modified=None,
-            )
+            yield from self._yield_messages(channel_id)
 
     def get_raw_content(self, item: IngestionItem) -> str:
-        """Fetch and return the full text content of a Slack channel using
-        the LlamaIndex SlackReader.
-
-        The reader handles pagination, thread replies, and rate limiting.
-        """
-        channel_id: str = item.source_ref
-        try:
-            docs = self._reader.load_data(channel_ids=[channel_id])
-        except Exception as e:
-            logger.error(
-                f"[{self.source_name}] Failed to read channel {channel_id}: {e}"
-            )
-            return ""
-        if not docs:
-            return ""
-        return docs[0].text or ""
+        """Return the text of a single Slack message (with thread replies)."""
+        return item.source_ref.get("text", "") or ""
 
     def get_item_name(self, item: IngestionItem) -> str:
-        """Return a filesystem-safe, unique identifier for the channel."""
-        channel_id: str = item.source_ref
-        safe_id = re.sub(r"[^\w\-]", "_", channel_id)
-        return safe_id[:255]
+        """Return a filesystem-safe, unique identifier for the message."""
+        channel_id = item.source_ref.get("channel_id", "")
+        message_ts = item.source_ref.get("message_ts", "")
+        raw = f"{channel_id}_{message_ts}"
+        safe = re.sub(r"[^\w\-]", "_", raw)
+        return safe[:255]
 
     def get_document_metadata(
         self,
@@ -155,14 +141,18 @@ class SlackIngestionJob(IngestionJob):
         last_modified: Any,
     ) -> Dict[str, Any]:
         """Build metadata dict with Slack-specific fields."""
-        channel_id: str = item.source_ref
+        channel_id = item.source_ref.get("channel_id", "")
+        message_ts = item.source_ref.get("message_ts", "")
         metadata = super().get_document_metadata(
             item, item_name, checksum, version, last_modified
         )
+        # Convert ts "1234567890.123456" → "12345678901234​56" for Slack URL anchor
+        ts_anchor = message_ts.replace(".", "")
         metadata.update(
             {
                 "channel_id": channel_id,
-                "url": f"https://slack.com/app_redirect?channel={channel_id}",
+                "message_ts": message_ts,
+                "url": f"https://slack.com/app_redirect?channel={channel_id}&message_ts={ts_anchor}",
             }
         )
         return metadata
@@ -171,12 +161,128 @@ class SlackIngestionJob(IngestionJob):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _resolve_channel_ids(self) -> List[str]:
-        """Return the list of channel IDs to ingest.
+    def _yield_messages(self, channel_id: str) -> Iterator[IngestionItem]:
+        """Fetch all top-level messages from a channel and yield one IngestionItem each.
 
-        Uses explicit channel_ids if configured, otherwise resolves
-        channel_patterns via the reader.
+        Thread replies are fetched for each message and concatenated into its text.
         """
+        client = self._reader._client
+        next_cursor = None
+        earliest_ts = (
+            str(self.earliest_date.timestamp()) if self.earliest_date else None
+        )
+        latest_ts = (
+            str(self.latest_date.timestamp())
+            if self.latest_date
+            else str(datetime.now().timestamp())
+        )
+
+        while True:
+            try:
+                kwargs: Dict[str, Any] = {
+                    "channel": channel_id,
+                    "cursor": next_cursor,
+                    "latest": latest_ts,
+                }
+                if earliest_ts:
+                    kwargs["oldest"] = earliest_ts
+
+                result = client.conversations_history(**kwargs)
+                messages = result["messages"]
+
+                logger.info(
+                    f"[{self.source_name}] {len(messages)} message(s) fetched from {channel_id}"
+                )
+
+                for message in messages:
+                    ts = message.get("ts", "")
+                    text = self._fetch_message_with_replies(channel_id, ts)
+                    last_modified = (
+                        datetime.fromtimestamp(float(ts)) if ts else None
+                    )
+                    yield IngestionItem(
+                        id=f"slack:{self.source_name}:{channel_id}:{ts}",
+                        source_ref={
+                            "channel_id": channel_id,
+                            "message_ts": ts,
+                            "text": text,
+                        },
+                        last_modified=last_modified,
+                    )
+
+                if not result["has_more"]:
+                    break
+                next_cursor = result["response_metadata"]["next_cursor"]
+
+            except SlackApiError as e:
+                error = e.response["error"]
+                if error == "ratelimited":
+                    retry_after = int(e.response.headers.get("retry-after", 1))
+                    logger.error(
+                        f"[{self.source_name}] Rate limited, sleeping {retry_after}s"
+                    )
+                    time.sleep(retry_after)
+                elif error == "not_in_channel":
+                    logger.error(
+                        f"[{self.source_name}] Bot not in channel {channel_id}, skipping"
+                    )
+                    break
+                else:
+                    logger.error(
+                        f"[{self.source_name}] Error fetching messages from {channel_id}: {e}"
+                    )
+                    break
+
+    def _fetch_message_with_replies(self, channel_id: str, message_ts: str) -> str:
+        """Fetch a message and its thread replies, returning all text concatenated."""
+        client = self._reader._client
+        texts: List[str] = []
+        next_cursor = None
+        earliest_ts = (
+            str(self.earliest_date.timestamp()) if self.earliest_date else None
+        )
+        latest_ts = (
+            str(self.latest_date.timestamp())
+            if self.latest_date
+            else str(datetime.now().timestamp())
+        )
+
+        while True:
+            try:
+                kwargs: Dict[str, Any] = {
+                    "channel": channel_id,
+                    "ts": message_ts,
+                    "cursor": next_cursor,
+                    "latest": latest_ts,
+                }
+                if earliest_ts:
+                    kwargs["oldest"] = earliest_ts
+
+                result = client.conversations_replies(**kwargs)
+                texts.extend(m["text"] for m in result["messages"])
+
+                if not result["has_more"]:
+                    break
+                next_cursor = result["response_metadata"]["next_cursor"]
+
+            except SlackApiError as e:
+                error = e.response["error"]
+                if error == "ratelimited":
+                    retry_after = int(e.response.headers.get("retry-after", 1))
+                    logger.error(
+                        f"[{self.source_name}] Rate limited, sleeping {retry_after}s"
+                    )
+                    time.sleep(retry_after)
+                else:
+                    logger.error(
+                        f"[{self.source_name}] Error fetching replies for {message_ts}: {e}"
+                    )
+                    break
+
+        return "\n\n".join(texts)
+
+    def _resolve_channel_ids(self) -> List[str]:
+        """Return the list of channel IDs to ingest."""
         if self.channel_ids:
             return self.channel_ids
 
@@ -190,13 +296,12 @@ class SlackIngestionJob(IngestionJob):
                     f"from patterns {self.channel_patterns}"
                 )
                 return ids
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.error(
                     f"[{self.source_name}] Failed to resolve channel patterns: {e}"
                 )
                 return []
 
-        # Neither channel_ids nor channel_patterns — log and return empty
         logger.warning(
             f"[{self.source_name}] No channel_ids or channel_patterns configured, "
             "nothing to ingest"
