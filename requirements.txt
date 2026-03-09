@@ -36,6 +36,9 @@ jira==3.10.5
 
 # Web connector
 llama-index-readers-web==0.6.0
+# Database connector (MySQL + PostgreSQL)
+llama-index-readers-database==0.5.1
+pymysql==1.1.1
 
 # Environment management
 python-dotenv==1.2.1
