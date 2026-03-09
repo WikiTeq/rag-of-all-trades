@@ -33,6 +33,10 @@ requests==2.32.5
 # Jira connector
 jira==3.10.5
 
+# Database connector (MySQL + PostgreSQL)
+llama-index-readers-database==0.5.1
+pymysql==1.1.1
+
 # Environment management
 python-dotenv==1.2.1
 
