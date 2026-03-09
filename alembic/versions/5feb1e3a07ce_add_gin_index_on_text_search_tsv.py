@@ -35,7 +35,7 @@ def upgrade() -> None:
         postgresql_using="gin",
     )
     op.create_index(
-        "embeddings_idx_1",
+        "idx_data_embeddings_text_search_tsv_1",
         "data_embeddings",
         [sa.text("(metadata_->>'ref_doc_id')")],
         schema="public",
@@ -46,7 +46,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Drop GIN index on text_search_tsv and btree index on ref_doc_id."""
     op.drop_index(
-        "embeddings_idx_1",
+        "idx_data_embeddings_text_search_tsv_1",
         table_name="data_embeddings",
         schema="public",
     )
