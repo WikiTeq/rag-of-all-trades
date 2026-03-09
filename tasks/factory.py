@@ -2,6 +2,7 @@ from tasks.base import IngestionJob
 from tasks.bookstack_ingestion import BookStackIngestionJob
 from tasks.box_ingestion import BoxIngestionJob
 from tasks.confluence_ingestion import ConfluenceIngestionJob
+from tasks.database_ingestion import DatabaseIngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.dropbox_ingestion import DropboxIngestionJob
 from tasks.gitbook_ingestion import GitBookIngestionJob
@@ -60,3 +61,4 @@ IngestionJobFactory.register("outlook", OutlookIngestionJob)
 IngestionJobFactory.register("gitlab", GitLabIngestionJob)
 IngestionJobFactory.register("trello", TrelloIngestionJob)
 IngestionJobFactory.register("gitbook", GitBookIngestionJob)
+IngestionJobFactory.register("database", DatabaseIngestionJob)

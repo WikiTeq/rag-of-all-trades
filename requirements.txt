@@ -73,6 +73,10 @@ py-trello==0.20.1
 docx2txt==0.8
 openpyxl==3.1.5
 
+# Database connector (MySQL + PostgreSQL)
+llama-index-readers-database==0.5.1
+pymysql==1.1.1
+
 # Environment management
 python-dotenv==1.2.1
 
