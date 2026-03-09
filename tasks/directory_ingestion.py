@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from llama_index.core import SimpleDirectoryReader
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, field_validator
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -28,7 +28,7 @@ class DirectoryConnectorConfig(BaseModel):
     exclude_empty: bool = False
     num_files_limit: Optional[int] = None
     encoding: str = "utf-8"
-    required_exts: Optional[list[str]] = Field(default=None, alias="filter")
+    required_exts: Optional[list[str]] = None
 
     model_config = {"extra": "ignore"}
 
@@ -55,7 +55,7 @@ class DirectoryConnectorConfig(BaseModel):
     @field_validator("required_exts", mode="before")
     @classmethod
     def normalize_required_exts(cls, v):
-        """Parse required_exts (config key 'filter') into sorted dot-prefixed extensions.
+        """Parse required_exts into sorted dot-prefixed extensions.
 
         Accepts a comma-separated string ("txt,md") or a YAML list (["txt", "md"]).
         """
@@ -181,5 +181,6 @@ class DirectoryIngestionJob(IngestionJob):
         try:
             relative_path = file_path.relative_to(self.connector_config.path)
         except ValueError:
+            logger.warning("Path %s is outside configured directory, falling back to filename", file_path)
             relative_path = file_path.name
         return self._sanitize_path(str(relative_path))
