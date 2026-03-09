@@ -1,6 +1,6 @@
 import unittest
 from datetime import datetime
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.slack_ingestion import SlackIngestionJob
@@ -31,10 +31,22 @@ def _make_config(
     }
 
 
-def _make_doc(text="Hello from Slack"):
-    doc = Mock()
-    doc.text = text
-    return doc
+def _make_message(ts="1700000000.000001", text="Hello from Slack"):
+    return {"ts": ts, "text": text}
+
+
+def _make_history_result(messages, has_more=False):
+    result = {"messages": messages, "has_more": has_more}
+    if has_more:
+        result["response_metadata"] = {"next_cursor": "next123"}
+    return result
+
+
+def _make_replies_result(messages, has_more=False):
+    result = {"messages": messages, "has_more": has_more}
+    if has_more:
+        result["response_metadata"] = {"next_cursor": "next456"}
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +58,7 @@ class TestSlackIngestionJob(unittest.TestCase):
     def setUp(self):
         self.reader_patcher = patch("tasks.slack_ingestion.SlackReader")
         self.mock_reader_class = self.reader_patcher.start()
-        self.mock_reader = Mock()
+        self.mock_reader = MagicMock()
         self.mock_reader_class.return_value = self.mock_reader
 
     def tearDown(self):
@@ -54,6 +66,21 @@ class TestSlackIngestionJob(unittest.TestCase):
 
     def _make_job(self, **kwargs):
         return SlackIngestionJob(_make_config(**kwargs))
+
+    def _setup_client(self, job, history_messages=None, replies_messages=None):
+        """Wire up mock _client on the reader."""
+        mock_client = MagicMock()
+        job._reader._client = mock_client
+
+        if history_messages is not None:
+            mock_client.conversations_history.return_value = _make_history_result(
+                history_messages
+            )
+        if replies_messages is not None:
+            mock_client.conversations_replies.return_value = _make_replies_result(
+                replies_messages
+            )
+        return mock_client
 
     # ------------------------------------------------------------------
     # source_type
@@ -155,28 +182,90 @@ class TestSlackIngestionJob(unittest.TestCase):
             SlackIngestionJob._parse_date("not-a-date")
 
     # ------------------------------------------------------------------
-    # list_items — channel_ids mode
+    # list_items — channel_ids mode, yields per message
     # ------------------------------------------------------------------
 
-    def test_list_items_with_explicit_channel_ids(self):
-        job = self._make_job(channel_ids="C111,C222")
+    def test_list_items_yields_one_item_per_message(self):
+        job = self._make_job(channel_ids="C111")
+        mock_client = self._setup_client(
+            job,
+            history_messages=[
+                _make_message("1700000001.000001", "msg1"),
+                _make_message("1700000002.000002", "msg2"),
+            ],
+            replies_messages=[],
+        )
+        mock_client.conversations_replies.return_value = _make_replies_result(
+            [_make_message("1700000001.000001", "msg1")]
+        )
+
         items = list(job.list_items())
-
         self.assertEqual(len(items), 2)
-        self.assertEqual(items[0].id, "slack:C111")
-        self.assertEqual(items[0].source_ref, "C111")
-        self.assertEqual(items[1].id, "slack:C222")
-        self.assertIsNone(items[0].last_modified)
 
-    def test_list_items_channel_ids_as_list(self):
-        config = {
-            "name": "test_slack",
-            "config": {
-                "token": "xoxb-test",
-                "channel_ids": ["C111", "C222"],
-            },
-        }
-        job = SlackIngestionJob(config)
+    def test_list_items_item_id_format(self):
+        job = self._make_job(channel_ids="C111")
+        mock_client = self._setup_client(job)
+        mock_client.conversations_history.return_value = _make_history_result(
+            [_make_message("1700000001.000001", "msg")]
+        )
+        mock_client.conversations_replies.return_value = _make_replies_result(
+            [_make_message("1700000001.000001", "msg")]
+        )
+
+        items = list(job.list_items())
+        self.assertEqual(items[0].id, "slack:test_slack:C111:1700000001.000001")
+
+    def test_list_items_source_ref_contains_channel_ts_text(self):
+        job = self._make_job(channel_ids="C111")
+        mock_client = self._setup_client(job)
+        mock_client.conversations_history.return_value = _make_history_result(
+            [_make_message("1700000001.000001", "hello")]
+        )
+        mock_client.conversations_replies.return_value = _make_replies_result(
+            [_make_message("1700000001.000001", "hello")]
+        )
+
+        items = list(job.list_items())
+        ref = items[0].source_ref
+        self.assertEqual(ref["channel_id"], "C111")
+        self.assertEqual(ref["message_ts"], "1700000001.000001")
+        self.assertIn("hello", ref["text"])
+
+    def test_list_items_last_modified_parsed_from_ts(self):
+        job = self._make_job(channel_ids="C111")
+        mock_client = self._setup_client(job)
+        ts = "1700000001.000001"
+        mock_client.conversations_history.return_value = _make_history_result(
+            [_make_message(ts, "msg")]
+        )
+        mock_client.conversations_replies.return_value = _make_replies_result(
+            [_make_message(ts, "msg")]
+        )
+
+        items = list(job.list_items())
+        self.assertIsInstance(items[0].last_modified, datetime)
+        self.assertAlmostEqual(
+            items[0].last_modified.timestamp(), float(ts), places=0
+        )
+
+    def test_list_items_empty_channel_yields_nothing(self):
+        job = self._make_job(channel_ids="C111")
+        mock_client = self._setup_client(job)
+        mock_client.conversations_history.return_value = _make_history_result([])
+
+        items = list(job.list_items())
+        self.assertEqual(items, [])
+
+    def test_list_items_multiple_channels(self):
+        job = self._make_job(channel_ids="C111,C222")
+        mock_client = self._setup_client(job)
+        mock_client.conversations_history.return_value = _make_history_result(
+            [_make_message("1700000001.000001", "msg")]
+        )
+        mock_client.conversations_replies.return_value = _make_replies_result(
+            [_make_message("1700000001.000001", "msg")]
+        )
+
         items = list(job.list_items())
         self.assertEqual(len(items), 2)
 
@@ -185,12 +274,19 @@ class TestSlackIngestionJob(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_list_items_with_channel_patterns(self):
-        self.mock_reader.get_channel_ids.return_value = ["C001", "C002", "C003"]
+        self.mock_reader.get_channel_ids.return_value = ["C001", "C002"]
 
         job = self._make_job(channel_patterns="general,eng.*")
-        items = list(job.list_items())
+        mock_client = self._setup_client(job)
+        mock_client.conversations_history.return_value = _make_history_result(
+            [_make_message("1700000001.000001", "msg")]
+        )
+        mock_client.conversations_replies.return_value = _make_replies_result(
+            [_make_message("1700000001.000001", "msg")]
+        )
 
-        self.assertEqual(len(items), 3)
+        items = list(job.list_items())
+        self.assertEqual(len(items), 2)
         self.mock_reader.get_channel_ids.assert_called_once_with(
             channel_patterns=["general", "eng.*"]
         )
@@ -200,7 +296,6 @@ class TestSlackIngestionJob(unittest.TestCase):
 
         job = self._make_job(channel_patterns="general")
         items = list(job.list_items())
-
         self.assertEqual(items, [])
 
     # ------------------------------------------------------------------
@@ -216,95 +311,101 @@ class TestSlackIngestionJob(unittest.TestCase):
     # get_raw_content
     # ------------------------------------------------------------------
 
-    def test_get_raw_content_returns_doc_text(self):
-        self.mock_reader.load_data.return_value = [_make_doc("Hello world")]
-
+    def test_get_raw_content_returns_text_from_source_ref(self):
         job = self._make_job(channel_ids="C123")
-        item = IngestionItem(id="slack:C123", source_ref="C123")
-        content = job.get_raw_content(item)
+        item = IngestionItem(
+            id="slack:test_slack:C123:1700000001.000001",
+            source_ref={
+                "channel_id": "C123",
+                "message_ts": "1700000001.000001",
+                "text": "Hello world",
+            },
+        )
+        self.assertEqual(job.get_raw_content(item), "Hello world")
 
-        self.assertEqual(content, "Hello world")
-        self.mock_reader.load_data.assert_called_once_with(channel_ids=["C123"])
-
-    def test_get_raw_content_empty_docs_returns_empty_string(self):
-        self.mock_reader.load_data.return_value = []
-
+    def test_get_raw_content_empty_text_returns_empty_string(self):
         job = self._make_job(channel_ids="C123")
-        item = IngestionItem(id="slack:C123", source_ref="C123")
-        content = job.get_raw_content(item)
-
-        self.assertEqual(content, "")
+        item = IngestionItem(
+            id="slack:test_slack:C123:1700000001.000001",
+            source_ref={"channel_id": "C123", "message_ts": "1700000001.000001", "text": ""},
+        )
+        self.assertEqual(job.get_raw_content(item), "")
 
     def test_get_raw_content_none_text_returns_empty_string(self):
-        doc = Mock()
-        doc.text = None
-        self.mock_reader.load_data.return_value = [doc]
-
         job = self._make_job(channel_ids="C123")
-        item = IngestionItem(id="slack:C123", source_ref="C123")
-        content = job.get_raw_content(item)
-
-        self.assertEqual(content, "")
-
-    def test_get_raw_content_reader_exception_returns_empty_string(self):
-        self.mock_reader.load_data.side_effect = Exception("Rate limit")
-
-        job = self._make_job(channel_ids="C123")
-        item = IngestionItem(id="slack:C123", source_ref="C123")
-        content = job.get_raw_content(item)
-
-        self.assertEqual(content, "")
+        item = IngestionItem(
+            id="slack:test_slack:C123:1700000001.000001",
+            source_ref={"channel_id": "C123", "message_ts": "1700000001.000001", "text": None},
+        )
+        self.assertEqual(job.get_raw_content(item), "")
 
     # ------------------------------------------------------------------
     # get_item_name
     # ------------------------------------------------------------------
 
-    def test_get_item_name_returns_sanitized_channel_id(self):
+    def test_get_item_name_format(self):
         job = self._make_job(channel_ids="C123456")
-        item = IngestionItem(id="slack:C123456", source_ref="C123456")
-        self.assertEqual(job.get_item_name(item), "C123456")
+        item = IngestionItem(
+            id="slack:test_slack:C123456:1700000001.000001",
+            source_ref={"channel_id": "C123456", "message_ts": "1700000001.000001", "text": ""},
+        )
+        name = job.get_item_name(item)
+        self.assertIn("C123456", name)
+        self.assertIn("1700000001_000001", name)
 
     def test_get_item_name_sanitizes_special_chars(self):
         job = self._make_job(channel_ids="C123")
-        item = IngestionItem(id="slack:C123", source_ref="C!@#channel")
+        item = IngestionItem(
+            id="slack:test_slack:C123:1700000001.000001",
+            source_ref={"channel_id": "C123", "message_ts": "1700000001.000001", "text": ""},
+        )
         name = job.get_item_name(item)
-        self.assertNotIn("!", name)
-        self.assertNotIn("@", name)
-        self.assertNotIn("#", name)
+        self.assertNotIn(".", name)
 
     def test_get_item_name_truncates_to_255(self):
         long_id = "C" + "x" * 300
-        job = self._make_job(channel_ids=long_id)
-        item = IngestionItem(id=f"slack:{long_id}", source_ref=long_id)
+        job = self._make_job(channel_ids="C123")
+        item = IngestionItem(
+            id="slack:test_slack:C123:1700000001.000001",
+            source_ref={"channel_id": long_id, "message_ts": "1700000001.000001", "text": ""},
+        )
         self.assertLessEqual(len(job.get_item_name(item)), 255)
 
     # ------------------------------------------------------------------
     # get_document_metadata
     # ------------------------------------------------------------------
 
-    def test_get_document_metadata_contains_channel_id_and_url(self):
+    def test_get_document_metadata_contains_channel_id_ts_and_url(self):
         job = self._make_job(channel_ids="C123456")
-        item = IngestionItem(id="slack:C123456", source_ref="C123456")
+        item = IngestionItem(
+            id="slack:test_slack:C123456:1700000001.000001",
+            source_ref={
+                "channel_id": "C123456",
+                "message_ts": "1700000001.000001",
+                "text": "msg",
+            },
+        )
         metadata = job.get_document_metadata(
             item=item,
-            item_name="C123456",
+            item_name="C123456_1700000001_000001",
             checksum="abc123",
             version=1,
             last_modified=None,
         )
 
         self.assertEqual(metadata["channel_id"], "C123456")
-        self.assertEqual(
-            metadata["url"],
-            "https://slack.com/app_redirect?channel=C123456",
-        )
+        self.assertEqual(metadata["message_ts"], "1700000001.000001")
+        self.assertIn("C123456", metadata["url"])
 
     def test_get_document_metadata_base_fields_present(self):
         job = self._make_job(channel_ids="C123456")
-        item = IngestionItem(id="slack:C123456", source_ref="C123456")
+        item = IngestionItem(
+            id="slack:test_slack:C123456:1700000001.000001",
+            source_ref={"channel_id": "C123456", "message_ts": "1700000001.000001", "text": ""},
+        )
         metadata = job.get_document_metadata(
             item=item,
-            item_name="C123456",
+            item_name="C123456_1700000001_000001",
             checksum="abc123",
             version=2,
             last_modified=datetime(2024, 6, 1),
@@ -316,43 +417,66 @@ class TestSlackIngestionJob(unittest.TestCase):
         self.assertEqual(metadata["version"], 2)
 
     # ------------------------------------------------------------------
+    # _fetch_message_with_replies — thread concatenation
+    # ------------------------------------------------------------------
+
+    def test_fetch_message_with_replies_concatenates_thread(self):
+        job = self._make_job(channel_ids="C123")
+        mock_client = MagicMock()
+        job._reader._client = mock_client
+        mock_client.conversations_replies.return_value = _make_replies_result(
+            [
+                _make_message("1700000001.000001", "parent msg"),
+                _make_message("1700000001.000002", "reply 1"),
+            ]
+        )
+
+        text = job._fetch_message_with_replies("C123", "1700000001.000001")
+        self.assertIn("parent msg", text)
+        self.assertIn("reply 1", text)
+
+    # ------------------------------------------------------------------
     # Integration: process_item
     # ------------------------------------------------------------------
 
     def test_process_item_calls_vector_store_and_metadata_tracker(self):
-        self.mock_reader.load_data.return_value = [_make_doc("channel content")]
-
         job = self._make_job(channel_ids="C123")
-        item = IngestionItem(id="slack:C123", source_ref="C123")
+        item = IngestionItem(
+            id="slack:test_slack:C123:1700000001.000001",
+            source_ref={
+                "channel_id": "C123",
+                "message_ts": "1700000001.000001",
+                "text": "channel content",
+            },
+        )
         job.vector_manager.insert_documents = Mock()
 
         with (
-            patch.object(
-                job.metadata_tracker, "get_latest_record", return_value=None
-            ),
-            patch.object(
-                job.metadata_tracker, "record_metadata"
-            ) as mock_record,
+            patch.object(job.metadata_tracker, "get_latest_record", return_value=None),
+            patch.object(job.metadata_tracker, "record_metadata") as mock_record,
             patch.object(job.metadata_tracker, "delete_previous_embeddings"),
         ):
             result = job.process_item(item)
 
-            self.assertEqual(result, 1)
-            job.vector_manager.insert_documents.assert_called_once()
-            mock_record.assert_called_once()
+        self.assertEqual(result, 1)
+        job.vector_manager.insert_documents.assert_called_once()
+        mock_record.assert_called_once()
 
     def test_process_item_skips_duplicate_checksum(self):
-        self.mock_reader.load_data.return_value = [_make_doc("same content")]
-
         job = self._make_job(channel_ids="C123")
-        item = IngestionItem(id="slack:C123", source_ref="C123")
+        item = IngestionItem(
+            id="slack:test_slack:C123:1700000001.000001",
+            source_ref={
+                "channel_id": "C123",
+                "message_ts": "1700000001.000001",
+                "text": "same content",
+            },
+        )
         job._seen_add = Mock(return_value=False)
+        job.vector_manager.insert_documents = Mock()
 
-        with patch.object(
-            job.metadata_tracker, "get_latest_record", return_value=None
-        ):
+        with patch.object(job.metadata_tracker, "get_latest_record", return_value=None):
             with patch.object(job.metadata_tracker, "record_metadata"):
-                job.vector_manager.insert_documents = Mock()
                 result = job.process_item(item)
 
         self.assertEqual(result, 0)
