@@ -48,6 +48,10 @@ msal==1.37.0
 # which conflicts with llama-index==0.14.6 (requires <0.6). No functional changes in 0.9.x.
 llama-index-readers-microsoft-sharepoint==0.8.1
 
+# Database connector (MySQL + PostgreSQL)
+llama-index-readers-database==0.5.1
+pymysql==1.1.1
+
 # Environment management
 python-dotenv==1.2.1
 
