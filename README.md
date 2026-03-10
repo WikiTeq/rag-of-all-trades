@@ -15,6 +15,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Ingestion from MediaWiki with Wiki-to-Markdown conversion via [html2text](https://github.com/Alir3z4/html2text)
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
+* GitLab ingestion — repository files and issues from self-hosted or cloud GitLab
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -25,6 +26,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * MediaWiki
 * SerpAPI
 * Jira
+* GitLab
 
 ## Embeddings support
 
@@ -240,6 +242,54 @@ JIRA1_SCHEDULES=3600
 # JIRA1_SERVER_URL=https://jira.your-company.com
 # JIRA1_API_TOKEN=your-personal-access-token
 # (set auth_type: "token" in config.yaml; email is not needed)
+```
+
+### GitLab Connector
+
+The GitLab connector ingests repository files and optionally issues from a GitLab project or group.
+Uses [LlamaIndex GitLab readers](https://llamahub.ai/l/readers/llama-index-readers-gitlab) for all
+discovery and content fetching. Supports both GitLab.com and self-hosted instances.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "gitlab"
+    name: "gitlab1"
+    config:
+      gitlab_url: "${GITLAB1_URL}"        # e.g. https://gitlab.com
+      personal_token: "${GITLAB1_TOKEN}"
+      project_id: 12345678               # integer project ID
+      ref: "main"                        # optional, branch/tag/commit, default "main"
+      #path: "docs"                      # optional, limit to sub-directory
+      recursive: true                    # optional, default true
+      include_issues: false              # optional, default false
+      schedules: "${GITLAB1_SCHEDULES}"
+
+  # With issue ingestion and filters:
+  #- type: "gitlab"
+  #  name: "gitlab2"
+  #  config:
+  #    gitlab_url: "${GITLAB2_URL}"
+  #    personal_token: "${GITLAB2_TOKEN}"
+  #    project_id: 87654321
+  #    include_issues: true
+  #    issues_state: "opened"            # opened/closed/all, default "opened"
+  #    issues_labels: "bug,feature"      # optional, comma-separated
+  #    issues_assignee: "username"       # optional
+  #    issues_author: "username"         # optional
+  #    issues_milestone: "v2.0"          # optional
+  #    issues_search: "keyword"          # optional
+  #    issues_get_all: false             # optional, fetch all pages, default false
+  #    schedules: "${GITLAB2_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+GITLAB1_URL=https://gitlab.com
+GITLAB1_TOKEN=glpat-xxxxxxxxxxxxxxxxxxxx
+GITLAB1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
