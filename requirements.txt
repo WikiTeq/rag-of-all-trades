@@ -33,6 +33,11 @@ requests==2.32.5
 # Jira connector
 jira==3.10.5
 
+# GitLab connector
+llama-index-readers-gitlab==0.5.1
+# llama-index-readers-gitlab 0.5.1 depends on python-gitlab<5 and >=4.8.0
+python-gitlab==4.13.0
+
 # Environment management
 python-dotenv==1.2.1
 
