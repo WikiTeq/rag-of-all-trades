@@ -54,7 +54,7 @@ def _make_file_doc(file_path="README.md", text="File content"):
     doc = Mock()
     doc.doc_id = file_path
     doc.text = text
-    doc.extra_info = {"file_path": file_path}
+    doc.metadata = {"file_path": file_path}
     return doc
 
 
@@ -62,7 +62,7 @@ def _make_issue_doc(number="42", text="Issue title\nIssue body", state="open", l
     doc = Mock()
     doc.doc_id = number
     doc.text = text
-    doc.extra_info = {
+    doc.metadata = {
         "state": state,
         "url": f"https://api.github.com/repos/myorg/myrepo/issues/{number}",
         "source": f"https://github.com/myorg/myrepo/issues/{number}",
@@ -414,6 +414,47 @@ class TestGitHubIngestionJob(unittest.TestCase):
         self.assertEqual(metadata["labels"], ["bug"])
         self.assertIn("github.com/myorg/myrepo/issues/42", metadata["url"])
 
+    def test_get_document_metadata_issue_includes_assignee_and_closed_at_when_present(self):
+        doc = _make_issue_doc(number="7", state="closed")
+        doc.metadata["assignee"] = "octocat"
+        doc.metadata["closed_at"] = "2024-01-15T10:00:00Z"
+        item = IngestionItem(id="github:myorg/myrepo:issue:7", source_ref=doc)
+        job = self._make_job(owner="myorg", repo="myrepo", include_issues=True)
+        metadata = job.get_document_metadata(
+            item=item, item_name="7", checksum="xyz", version=1, last_modified=None
+        )
+        self.assertEqual(metadata["assignee"], "octocat")
+        self.assertEqual(metadata["closed_at"], "2024-01-15T10:00:00Z")
+
+    def test_get_document_metadata_issue_omits_assignee_and_closed_at_when_absent(self):
+        doc = _make_issue_doc(number="8", state="open")
+        item = IngestionItem(id="github:myorg/myrepo:issue:8", source_ref=doc)
+        job = self._make_job(owner="myorg", repo="myrepo", include_issues=True)
+        metadata = job.get_document_metadata(
+            item=item, item_name="8", checksum="xyz", version=1, last_modified=None
+        )
+        self.assertNotIn("assignee", metadata)
+        self.assertNotIn("closed_at", metadata)
+
+    def test_get_document_metadata_file_includes_file_name(self):
+        doc = _make_file_doc(file_path="docs/guide.md")
+        doc.metadata["file_name"] = "guide.md"
+        item = IngestionItem(id="github:myorg/myrepo:docs/guide.md", source_ref=doc)
+        job = self._make_job(owner="myorg", repo="myrepo")
+        metadata = job.get_document_metadata(
+            item=item, item_name="docs/guide.md", checksum="abc", version=1, last_modified=None
+        )
+        self.assertEqual(metadata["file_name"], "guide.md")
+
+    def test_get_document_metadata_file_name_falls_back_to_path_segment(self):
+        doc = _make_file_doc(file_path="src/utils/helper.py")
+        item = IngestionItem(id="github:myorg/myrepo:src/utils/helper.py", source_ref=doc)
+        job = self._make_job(owner="myorg", repo="myrepo")
+        metadata = job.get_document_metadata(
+            item=item, item_name="src/utils/helper.py", checksum="abc", version=1, last_modified=None
+        )
+        self.assertEqual(metadata["file_name"], "helper.py")
+
     # ------------------------------------------------------------------
     # _parse_list
     # ------------------------------------------------------------------
@@ -432,6 +473,32 @@ class TestGitHubIngestionJob(unittest.TestCase):
 
     def test_parse_list_filters_blank_entries(self):
         self.assertEqual(GitHubIngestionJob._parse_list("md,,  ,py"), ["md", "py"])
+
+    # ------------------------------------------------------------------
+    # _parse_timestamp
+    # ------------------------------------------------------------------
+
+    def test_parse_timestamp_valid_iso_string(self):
+        from datetime import datetime, timezone
+        result = GitHubIngestionJob._parse_timestamp("2024-01-15T10:00:00Z")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.year, 2024)
+        self.assertEqual(result.month, 1)
+        self.assertEqual(result.day, 15)
+
+    def test_parse_timestamp_none_returns_none(self):
+        self.assertIsNone(GitHubIngestionJob._parse_timestamp(None))
+
+    def test_parse_timestamp_empty_string_returns_none(self):
+        self.assertIsNone(GitHubIngestionJob._parse_timestamp(""))
+
+    def test_parse_timestamp_invalid_string_returns_none(self):
+        self.assertIsNone(GitHubIngestionJob._parse_timestamp("not-a-date"))
+
+    def test_parse_timestamp_datetime_passthrough(self):
+        from datetime import datetime, timezone
+        dt = datetime(2024, 6, 1, tzinfo=timezone.utc)
+        self.assertEqual(GitHubIngestionJob._parse_timestamp(dt), dt)
 
     # ------------------------------------------------------------------
     # Integration: process_item

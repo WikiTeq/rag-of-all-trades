@@ -1,21 +1,26 @@
 # Standard library imports
 import logging
 import re
+from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 # Third-party imports
 from llama_index.readers.github import (
-    GithubClient,
-    GithubRepositoryReader,
     GitHubAppAuth,
+    GithubClient,
     GitHubIssuesClient,
     GitHubRepositoryIssuesReader,
+    GithubRepositoryReader,
 )
 
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -48,9 +53,12 @@ class GitHubIngestionJob(IngestionJob):
 
         Issues:
             - config.include_issues: bool (default false)
-            - config.include_issues_labels: comma-separated labels to include (mutually exclusive with exclude_issues_labels)
-            - config.exclude_issues_labels: comma-separated labels to exclude (mutually exclusive with include_issues_labels)
+            - config.include_issues_labels: comma-separated labels to include
+              (mutually exclusive with exclude_issues_labels)
+            - config.exclude_issues_labels: comma-separated labels to exclude
+              (mutually exclusive with include_issues_labels)
 
+        - config.concurrent_requests: number of concurrent API requests (default 5)
         - config.schedules: Celery schedule in seconds (optional)
 
     Constraints:
@@ -86,7 +94,9 @@ class GitHubIngestionJob(IngestionJob):
                 "personal_token and GitHub App credentials are mutually exclusive "
                 "in GitHub connector config"
             )
-        if has_app and not (app_id and app_installation_id and app_private_key):
+        if has_app and not (
+            app_id and app_installation_id and app_private_key
+        ):
             raise ValueError(
                 "github_app_id, github_app_installation_id, and github_app_private_key "
                 "are all required for GitHub App authentication"
@@ -140,9 +150,7 @@ class GitHubIngestionJob(IngestionJob):
         # ------------------------------------------------------------------
         # Issues params
         # ------------------------------------------------------------------
-        self.include_issues: bool = str(cfg.get("include_issues", "false")).strip().lower() in (
-            "true", "1", "yes"
-        )
+        self.include_issues: bool = bool(cfg.get("include_issues", False))
 
         include_labels = self._parse_list(cfg.get("include_issues_labels", ""))
         exclude_labels = self._parse_list(cfg.get("exclude_issues_labels", ""))
@@ -173,15 +181,29 @@ class GitHubIngestionJob(IngestionJob):
 
         filter_dirs: Optional[Tuple] = None
         if include_dirs:
-            filter_dirs = (include_dirs, GithubRepositoryReader.FilterType.INCLUDE)
+            filter_dirs = (
+                include_dirs,
+                GithubRepositoryReader.FilterType.INCLUDE,
+            )
         elif exclude_dirs:
-            filter_dirs = (exclude_dirs, GithubRepositoryReader.FilterType.EXCLUDE)
+            filter_dirs = (
+                exclude_dirs,
+                GithubRepositoryReader.FilterType.EXCLUDE,
+            )
 
         filter_exts: Optional[Tuple] = None
         if include_ext:
-            filter_exts = (include_ext, GithubRepositoryReader.FilterType.INCLUDE)
+            filter_exts = (
+                include_ext,
+                GithubRepositoryReader.FilterType.INCLUDE,
+            )
         elif exclude_ext:
-            filter_exts = (exclude_ext, GithubRepositoryReader.FilterType.EXCLUDE)
+            filter_exts = (
+                exclude_ext,
+                GithubRepositoryReader.FilterType.EXCLUDE,
+            )
+
+        self.concurrent_requests: int = int(cfg.get("concurrent_requests", 5))
 
         self._repo_reader = GithubRepositoryReader(
             github_client=github_client,
@@ -190,7 +212,7 @@ class GitHubIngestionJob(IngestionJob):
             filter_directories=filter_dirs,
             filter_file_extensions=filter_exts,
             verbose=False,
-            concurrent_requests=10,
+            concurrent_requests=self.concurrent_requests,
         )
 
         self._issues_reader = GitHubRepositoryIssuesReader(
@@ -220,11 +242,13 @@ class GitHubIngestionJob(IngestionJob):
             else:
                 docs = self._repo_reader.load_data(commit_sha=self.commit_sha)
         except Exception as e:
-            logger.error(f"[{self.source_name}] Failed to load repository files: {e}")
+            logger.error(
+                f"[{self.source_name}] Failed to load repository files: {e}"
+            )
             docs = []
 
         for doc in docs:
-            file_path = doc.extra_info.get("file_path", doc.doc_id or "unknown")
+            file_path = doc.metadata.get("file_path", doc.doc_id or "unknown")
             yield IngestionItem(
                 id=f"github:{self.owner}/{self.repo}:{file_path}",
                 source_ref=doc,
@@ -246,10 +270,12 @@ class GitHubIngestionJob(IngestionJob):
                 issues = []
 
             for doc in issues:
+                created_at = doc.metadata.get("created_at")
+                last_modified = self._parse_timestamp(created_at)
                 yield IngestionItem(
                     id=f"github:{self.owner}/{self.repo}:issue:{doc.doc_id}",
                     source_ref=doc,
-                    last_modified=None,
+                    last_modified=last_modified,
                 )
 
     def get_raw_content(self, item: IngestionItem) -> str:
@@ -264,7 +290,7 @@ class GitHubIngestionJob(IngestionJob):
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe identifier for the item."""
         doc = item.source_ref
-        path = doc.extra_info.get("file_path") or doc.doc_id or item.id
+        path = doc.metadata.get("file_path") or doc.doc_id or item.id
         safe = re.sub(r"[^\w\-/\.]", "_", str(path))
         return safe[:255]
 
@@ -278,7 +304,7 @@ class GitHubIngestionJob(IngestionJob):
     ) -> Dict[str, Any]:
         """Build metadata dict with GitHub-specific fields."""
         doc = item.source_ref
-        extra = doc.extra_info or {}
+        doc_metadata = doc.metadata or {}
 
         metadata = super().get_document_metadata(
             item, item_name, checksum, version, last_modified
@@ -286,21 +312,27 @@ class GitHubIngestionJob(IngestionJob):
 
         is_issue = ":issue:" in item.id
         if is_issue:
-            url = extra.get("source", extra.get("url", ""))
-            metadata.update(
-                {
-                    "owner": self.owner,
-                    "repo": self.repo,
-                    "item_type": "issue",
-                    "issue_number": doc.doc_id,
-                    "url": url,
-                    "state": extra.get("state", ""),
-                    "labels": extra.get("labels", []),
-                }
-            )
+            url = doc_metadata.get("source", doc_metadata.get("url", ""))
+            issue_meta: Dict[str, Any] = {
+                "owner": self.owner,
+                "repo": self.repo,
+                "item_type": "issue",
+                "issue_number": doc.doc_id,
+                "url": url,
+                "state": doc_metadata.get("state", ""),
+                "labels": doc_metadata.get("labels", []),
+            }
+            if doc_metadata.get("assignee"):
+                issue_meta["assignee"] = doc_metadata["assignee"]
+            if doc_metadata.get("closed_at"):
+                issue_meta["closed_at"] = doc_metadata["closed_at"]
+            metadata.update(issue_meta)
         else:
-            file_path = extra.get("file_path", "")
-            url = (
+            file_path = doc_metadata.get("file_path", "")
+            file_name = doc_metadata.get(
+                "file_name", file_path.split("/")[-1] if file_path else ""
+            )
+            url = doc_metadata.get("url") or (
                 f"https://github.com/{self.owner}/{self.repo}/blob/"
                 f"{self.branch or self.commit_sha}/{file_path}"
             )
@@ -310,6 +342,7 @@ class GitHubIngestionJob(IngestionJob):
                     "repo": self.repo,
                     "item_type": "file",
                     "file_path": file_path,
+                    "file_name": file_name,
                     "url": url,
                 }
             )
@@ -332,6 +365,18 @@ class GitHubIngestionJob(IngestionJob):
                 for label in self._exclude_labels
             ]
         return None
+
+    @staticmethod
+    def _parse_timestamp(value: Any) -> Optional[datetime]:
+        """Parse an ISO-8601 timestamp string into a datetime, or return None."""
+        if not value:
+            return None
+        if isinstance(value, datetime):
+            return value
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
 
     @staticmethod
     def _parse_list(value: Any) -> List[str]:
