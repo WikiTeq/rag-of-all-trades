@@ -1,5 +1,6 @@
 from tasks.base import IngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
+from tasks.dropbox_ingestion import DropboxIngestionJob
 from tasks.imap_ingestion import IMAPIngestionJob
 from tasks.jira_ingestion import JiraIngestionJob
 from tasks.mediawiki_ingestion import MediaWikiIngestionJob
@@ -38,3 +39,4 @@ IngestionJobFactory.register("pipedrive", PipedriveIngestionJob)
 IngestionJobFactory.register("slack", SlackIngestionJob)
 IngestionJobFactory.register("imap", IMAPIngestionJob)
 IngestionJobFactory.register("onedrive", OneDriveIngestionJob)
+IngestionJobFactory.register("dropbox", DropboxIngestionJob)
