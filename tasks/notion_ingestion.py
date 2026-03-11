@@ -27,11 +27,13 @@ class NotionIngestionJob(IngestionJob):
         - config.page_ids: Comma-separated list of page IDs to ingest (optional)
         - config.database_ids: Comma-separated list of database IDs to ingest (optional)
         - config.request_delay: Seconds to sleep between page reads, default 0 (optional)
-        - config.schedules: Celery schedule in seconds (optional)
 
     If neither page_ids nor database_ids are provided, all accessible pages and
     databases in the workspace are ingested (load-all mode).
     """
+
+    LOAD_MODE_ALL = "all"
+    LOAD_MODE_SELECTIVE = "selective"
 
     @property
     def source_type(self) -> str:
@@ -62,19 +64,15 @@ class NotionIngestionJob(IngestionJob):
         )
 
         load_mode = (
-            "all"
+            self.LOAD_MODE_ALL
             if not self.page_ids and not self.database_ids
-            else "selective"
+            else self.LOAD_MODE_SELECTIVE
         )
         logger.info(
             f"Initialized Notion connector "
             f"(mode={load_mode}, page_ids={self.page_ids}, "
             f"database_ids={self.database_ids}, request_delay={self.request_delay})"
         )
-
-    # ------------------------------------------------------------------
-    # IngestionJob abstract method implementations
-    # ------------------------------------------------------------------
 
     def list_items(self) -> Iterator[IngestionItem]:
         """Discover all Notion page IDs via the LlamaIndex reader and yield
@@ -87,7 +85,7 @@ class NotionIngestionJob(IngestionJob):
         """
         logger.info(f"[{self.source_name}] Discovering Notion pages")
 
-        all_page_ids: List[str] = list(self.page_ids)
+        all_page_ids: List[str] = self.page_ids.copy()
 
         if self.database_ids:
             for db_id in self.database_ids:
