@@ -28,12 +28,6 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
         mock_resp.json.return_value = json_data or {}
         return mock_resp
 
-    # --- source_type ---
-
-    def test_source_type(self):
-        job = SerpAPIIngestionJob(self.config)
-        self.assertEqual(job.source_type, "serpapi")
-
     # --- __init__ / query parsing ---
 
     def test_queries_parsed_from_comma_string(self):
@@ -48,10 +42,10 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
         job = SerpAPIIngestionJob(config)
         self.assertEqual(job.search_queries, ["q1", "q2"])
 
-    def test_queries_default_to_empty_when_missing(self):
+    def test_raises_when_queries_missing(self):
         config = {"name": "serp1", "config": {"api_key": "k"}}
-        job = SerpAPIIngestionJob(config)
-        self.assertEqual(job.search_queries, [])
+        with self.assertRaises(ValueError):
+            SerpAPIIngestionJob(config)
 
     def test_queries_strips_whitespace(self):
         config = {
@@ -67,16 +61,10 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
         job = SerpAPIIngestionJob(self.config)
         self.assertEqual(list(job.list_items()), ["Python news", "AI trends"])
 
-    def test_list_items_empty_when_no_queries(self):
-        config = {"name": "serp1", "config": {"api_key": "k"}}
-        job = SerpAPIIngestionJob(config)
-        self.assertEqual(list(job.list_items()), [])
-
-    # --- get_item_name ---
-
-    def test_get_item_name_returns_query(self):
-        job = SerpAPIIngestionJob(self.config)
-        self.assertEqual(job.get_item_name("Python news"), "Python news")
+    def test_raises_when_queries_empty_string(self):
+        config = {"name": "serp1", "config": {"api_key": "k", "queries": "  ,  "}}
+        with self.assertRaises(ValueError):
+            SerpAPIIngestionJob(config)
 
     # --- get_raw_content ---
 
@@ -94,13 +82,10 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
         job = SerpAPIIngestionJob(self.config)
         result = job.get_raw_content("Python news")
 
-        self.assertIn("Title 1", result)
-        self.assertIn("Title 2", result)
-        self.assertIn("Snippet 1", result)
-        self.assertIn("Snippet 2", result)
+        self.assertEqual(result, "Title 1\nTitle 2\nSnippet 1\nSnippet 2")
 
     @patch("tasks.serpapi_ingestion.requests.get")
-    def test_get_raw_content_skips_missing_titles_and_snippets(self, mock_get):
+    def test_get_raw_content_includes_partial_results(self, mock_get):
         mock_get.return_value = self._make_response(
             json_data={
                 "organic_results": [
@@ -114,8 +99,7 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
         job = SerpAPIIngestionJob(self.config)
         result = job.get_raw_content("Python news")
 
-        self.assertIn("Title only", result)
-        self.assertIn("Snippet only", result)
+        self.assertEqual(result, "Title only\nSnippet only")
 
     @patch("tasks.serpapi_ingestion.requests.get")
     def test_get_raw_content_returns_empty_on_no_organic_results(

@@ -23,12 +23,16 @@ class SerpAPIIngestionJob(IngestionJob):
 
         self.api_key = cfg.get("api_key")
 
-        # queries can be a comma-separated string from .env or a list from config.yaml
         queries = cfg.get("queries", [])
         if isinstance(queries, str):
             queries = [q.strip() for q in queries.split(",") if q.strip()]
 
-        self.search_queries = queries or []
+        if not queries:
+            raise ValueError(
+                f"[{config.get('name')}] SerpAPI connector requires at least one query"
+            )
+
+        self.search_queries = queries
 
         self.serpapi_endpoint = "https://serpapi.com/search"
 
