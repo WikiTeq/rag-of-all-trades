@@ -2,7 +2,8 @@
 import logging
 import re
 import time
-from typing import Any, Dict, Iterator, List
+from datetime import datetime
+from typing import Any, Dict, Iterator, List, Optional
 
 # Third-party imports
 from llama_index.readers.notion import NotionPageReader
@@ -13,14 +14,15 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 
 logger = logging.getLogger(__name__)
 
+NOTION_SEARCH_URL = "https://api.notion.com/v1/search"
+
 
 class NotionIngestionJob(IngestionJob):
     """Ingestion connector for Notion workspaces.
 
-    Uses the LlamaIndex NotionPageReader for all discovery, content fetching,
-    block recursion, and retry/rate-limit handling. This connector only adds
-    ROAT-specific orchestration: config parsing, IngestionItem production,
-    and optional per-page request delay.
+    Uses the Notion Search API for page discovery (with trash filtering,
+    last_modified, title, and metadata extraction) and the LlamaIndex
+    NotionPageReader for content fetching.
 
     Configuration (config.yaml):
         - config.integration_token: Notion integration token (required)
@@ -75,78 +77,18 @@ class NotionIngestionJob(IngestionJob):
         )
 
     def list_items(self) -> Iterator[IngestionItem]:
-        """Discover all Notion page IDs via the LlamaIndex reader and yield
-        one IngestionItem per page.
+        """Discover Notion pages and yield one IngestionItem per page.
 
-        In load-all mode (no page_ids/database_ids configured), calls
-        reader.list_pages() and reader.list_databases() to discover everything
-        accessible to the integration. Database pages are resolved via
-        reader.query_database().
+        In load-all mode uses the Search API to discover all accessible pages.
+        In selective mode resolves configured page_ids and database_ids.
+        Trashed pages are always skipped.
         """
         logger.info(f"[{self.source_name}] Discovering Notion pages")
 
-        all_page_ids: List[str] = self.page_ids.copy()
-
-        if self.database_ids:
-            for db_id in self.database_ids:
-                try:
-                    db_page_ids = self._reader.query_database(db_id)
-                    logger.info(
-                        f"[{self.source_name}] Database {db_id}: found {len(db_page_ids)} page(s)"
-                    )
-                    all_page_ids.extend(db_page_ids)
-                except Exception as e:
-                    logger.error(
-                        f"[{self.source_name}] Failed to query database {db_id}: {e}"
-                    )
-
-        # Load-all mode: no explicit IDs configured
         if not self.page_ids and not self.database_ids:
-            try:
-                workspace_page_ids = self._reader.list_pages()
-                all_page_ids.extend(workspace_page_ids)
-                logger.info(
-                    f"[{self.source_name}] Workspace: found {len(workspace_page_ids)} page(s)"
-                )
-            except Exception as e:
-                logger.error(
-                    f"[{self.source_name}] Failed to list workspace pages: {e}"
-                )
-
-            try:
-                db_ids = self._reader.list_databases()
-                logger.info(
-                    f"[{self.source_name}] Workspace: found {len(db_ids)} database(s)"
-                )
-                for db_id in db_ids:
-                    try:
-                        db_page_ids = self._reader.query_database(db_id)
-                        all_page_ids.extend(db_page_ids)
-                    except Exception as e:
-                        logger.error(
-                            f"[{self.source_name}] Failed to query database {db_id}: {e}"
-                        )
-            except Exception as e:
-                logger.error(
-                    f"[{self.source_name}] Failed to list workspace databases: {e}"
-                )
-
-        # Deduplicate while preserving order
-        seen: set = set()
-        unique_page_ids = [
-            pid for pid in all_page_ids if not (pid in seen or seen.add(pid))
-        ]
-
-        logger.info(
-            f"[{self.source_name}] Total unique pages to ingest: {len(unique_page_ids)}"
-        )
-
-        for page_id in unique_page_ids:
-            yield IngestionItem(
-                id=f"notion:{page_id}",
-                source_ref=page_id,
-                last_modified=None,
-            )
+            yield from self._search_all_pages()
+        else:
+            yield from self._selective_pages()
 
     def get_raw_content(self, item: IngestionItem) -> str:
         """Fetch and return the full text content of a Notion page using
@@ -169,10 +111,11 @@ class NotionIngestionJob(IngestionJob):
         return text or ""
 
     def get_item_name(self, item: IngestionItem) -> str:
-        """Return a filesystem-safe, unique identifier for the page."""
-        page_id: str = item.source_ref
-        safe_id = re.sub(r"[^\w\-]", "_", page_id)
-        return safe_id[:255]
+        """Return a filesystem-safe name derived from the page title, falling back to page ID."""
+        title = item._metadata_cache.get("title", "")
+        name = title if title else item.source_ref
+        safe = re.sub(r"[^\w\-]", "_", name)
+        return safe[:255]
 
     def get_document_metadata(
         self,
@@ -184,20 +127,161 @@ class NotionIngestionJob(IngestionJob):
     ) -> Dict[str, Any]:
         """Build metadata dict with Notion-specific fields."""
         page_id: str = item.source_ref
+        cache = item._metadata_cache
         metadata = super().get_document_metadata(
             item, item_name, checksum, version, last_modified
         )
         metadata.update(
             {
                 "id": page_id,
-                "url": f"https://notion.so/{page_id.replace('-', '')}",
+                "url": cache.get("url") or f"https://notion.so/{page_id.replace('-', '')}",
+                "created_time": cache.get("created_time"),
+                "parent_type": cache.get("parent_type"),
+                "parent_id": cache.get("parent_id"),
             }
         )
+        if cache.get("public_url"):
+            metadata["public_url"] = cache["public_url"]
         return metadata
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _search_all_pages(self) -> Iterator[IngestionItem]:
+        """Use the Notion Search API to yield all non-trashed pages."""
+        payload: Dict[str, Any] = {
+            "filter": {"value": "page", "property": "object"},
+            "page_size": 100,
+        }
+        total = 0
+        while True:
+            try:
+                resp = self._reader._request_with_retry(
+                    "POST", NOTION_SEARCH_URL, headers=self._reader.headers, json=payload
+                )
+                resp.raise_for_status()
+                data = resp.json()
+            except Exception as e:
+                logger.error(
+                    f"[{self.source_name}] Search API request failed: {e}"
+                )
+                break
+
+            for page in data.get("results", []):
+                item = self._page_to_item(page)
+                if item:
+                    total += 1
+                    yield item
+
+            if not data.get("has_more"):
+                break
+            payload["start_cursor"] = data["next_cursor"]
+
+        logger.info(
+            f"[{self.source_name}] Total pages discovered via search: {total}"
+        )
+
+    def _selective_pages(self) -> Iterator[IngestionItem]:
+        """Yield items for explicitly configured page_ids and database_ids."""
+        for page_id in self.page_ids:
+            try:
+                resp = self._reader._request_with_retry(
+                    "GET",
+                    f"https://api.notion.com/v1/pages/{page_id}",
+                    headers=self._reader.headers
+                )
+                resp.raise_for_status()
+                item = self._page_to_item(resp.json())
+                if item:
+                    yield item
+            except Exception as e:
+                logger.error(
+                    f"[{self.source_name}] Failed to fetch page {page_id}: {e}"
+                )
+
+        for db_id in self.database_ids:
+            try:
+                db_page_ids = self._reader.query_database(db_id)
+                logger.info(
+                    f"[{self.source_name}] Database {db_id}: found {len(db_page_ids)} page(s)"
+                )
+                for pid in db_page_ids:
+                    try:
+                        resp = self._reader._request_with_retry(
+                            "GET",
+                            f"https://api.notion.com/v1/pages/{pid}",
+                            headers=self._reader.headers
+                        )
+                        resp.raise_for_status()
+                        item = self._page_to_item(resp.json())
+                        if item:
+                            yield item
+                    except Exception as e:
+                        logger.error(
+                            f"[{self.source_name}] Failed to fetch page {pid}: {e}"
+                        )
+            except Exception as e:
+                logger.error(
+                    f"[{self.source_name}] Failed to query database {db_id}: {e}"
+                )
+
+    def _page_to_item(self, page: Dict[str, Any]) -> Optional[IngestionItem]:
+        """Convert a Notion page object to an IngestionItem, or None if trashed."""
+        if page.get("in_trash") or page.get("archived"):
+            return None
+
+        page_id: str = page.get("id", "")
+
+        last_modified: Optional[datetime] = None
+        raw_edited = page.get("last_edited_time")
+        if raw_edited:
+            try:
+                last_modified = datetime.fromisoformat(
+                    raw_edited.replace("Z", "+00:00")
+                )
+            except ValueError:
+                pass
+
+        created_time: Optional[datetime] = None
+        raw_created = page.get("created_time")
+        if raw_created:
+            try:
+                created_time = datetime.fromisoformat(
+                    raw_created.replace("Z", "+00:00")
+                )
+            except ValueError:
+                pass
+
+        title = self._extract_title(page)
+        parent = page.get("parent", {})
+
+        item = IngestionItem(
+            id=f"notion:{page_id}",
+            source_ref=page_id,
+            last_modified=last_modified,
+        )
+        item._metadata_cache.update(
+            {
+                "title": title,
+                "url": page.get("url"),
+                "public_url": page.get("public_url"),
+                "created_time": created_time,
+                "parent_type": parent.get("type"),
+                "parent_id": parent.get(parent.get("type")),
+            }
+        )
+        return item
+
+    @staticmethod
+    def _extract_title(page: Dict[str, Any]) -> str:
+        """Extract the page title from Notion page properties."""
+        properties = page.get("properties", {})
+        for prop in properties.values():
+            if prop.get("type") == "title":
+                title_parts = prop.get("title", [])
+                return "".join(t.get("plain_text", "") for t in title_parts)
+        return ""
 
     @staticmethod
     def _parse_ids(value: Any) -> List[str]:
