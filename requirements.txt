@@ -34,7 +34,7 @@ requests==2.32.5
 jira==3.10.5
 
 # Slack connector
-llama-index-readers-slack==0.4.1
+slack-sdk==3.35.0
 
 # Environment management
 python-dotenv==1.2.1
