@@ -15,6 +15,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Ingestion from MediaWiki with Wiki-to-Markdown conversion via [html2text](https://github.com/Alir3z4/html2text)
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
+* Slack ingestion from channels by ID or name/regex pattern, with thread reply support
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -27,6 +28,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Jira
 * Web
 * Pipedrive
+* Slack
 
 ## Embeddings support
 
@@ -159,7 +161,7 @@ sources:
       ...
 ```
 
-````dotenv
+```dotenv
 # .env
 
 S3_ACCOUNT1_ENDPOINT=https://s3.amazonaws.com
@@ -169,7 +171,7 @@ S3_ACCOUNT1_REGION=us-east-1
 S3_ACCOUNT1_USE_SSL=True
 S3_ACCOUNT1_BUCKETS=bucket1,bucket2
 S3_ACCOUNT1_SCHEDULES=3600,60
-````
+```
 
 ### Directory Connector
 
@@ -350,6 +352,10 @@ The Pipedrive connector ingests CRM records from Pipedrive using the REST API v1
 deals, notes, organizations, persons, products, projects, leads, tasks, and mails. Metadata collected
 per record includes type-specific fields such as linked entities, pipeline/stage names, assignees,
 authors, and timestamps.
+### Slack Connector
+
+The Slack connector ingests messages from Slack channels. Each message (with its thread replies) is
+ingested as an individual item. Channels can be specified by ID or resolved via name/regex patterns.
 
 ```yaml
 # config.yaml
@@ -384,6 +390,23 @@ sources:
       # filter_persons_filter_id: "xxx"
       # filter_mail_folders:
       #   - inbox
+  - type: "slack"
+    name: "slack1"
+    config:
+      token: "${SLACK1_TOKEN}"
+      channel_ids: "${SLACK1_CHANNEL_IDS}"           # comma-separated channel IDs
+      schedules: "${SLACK1_SCHEDULES}"
+
+  # Using channel name patterns instead of IDs:
+  - type: "slack"
+    name: "slack2"
+    config:
+      token: "${SLACK2_TOKEN}"
+      channel_patterns: "${SLACK2_CHANNEL_PATTERNS}" # comma-separated names or regex, e.g. "general,^dev.*"
+      channel_types: "public_channel,private_channel" # optional, default public_channel,private_channel
+      earliest_date: "2024-01-01"                    # optional
+      latest_date: "2025-01-01"                      # optional, requires earliest_date
+      schedules: "${SLACK2_SCHEDULES}"
 ```
 
 ```dotenv
@@ -392,6 +415,13 @@ sources:
 PIPEDRIVE1_API_TOKEN=your-pipedrive-api-token
 PIPEDRIVE1_SCHEDULES=3600
 ```
+
+SLACK1_TOKEN=xoxb-your-bot-token
+SLACK1_CHANNEL_IDS=C0123456789,C9876543210
+SLACK1_SCHEDULES=3600
+```
+
+> `channel_ids` and `channel_patterns` are mutually exclusive. `latest_date` requires `earliest_date`.
 
 ## Reference of the `config.yaml`
 
