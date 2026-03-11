@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional
 
 # Third-party imports
-from llama_index.readers.slack import SlackReader
+from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 # Local imports
@@ -19,10 +19,9 @@ logger = logging.getLogger(__name__)
 class SlackIngestionJob(IngestionJob):
     """Ingestion connector for Slack workspaces.
 
-    Uses the LlamaIndex SlackReader for channel discovery (get_channel_ids).
-    Messages are fetched directly via the Slack WebClient so that each message
-    (with its thread replies) becomes an individual IngestionItem, compatible
-    with the base class contract.
+    Uses the Slack SDK WebClient directly for channel discovery and message
+    fetching. Each message (with its thread replies) becomes an individual
+    IngestionItem, compatible with the base class contract.
 
     Configuration (config.yaml):
         - config.token: Slack bot token (required)
@@ -82,12 +81,7 @@ class SlackIngestionJob(IngestionJob):
                 "earliest_date is required when latest_date is set in Slack connector config"
             )
 
-        self._reader = SlackReader(
-            slack_token=self.token,
-            earliest_date=self.earliest_date,
-            latest_date=self.latest_date,
-            channel_types=self.channel_types,
-        )
+        self._client = WebClient(token=self.token)
 
         logger.info(
             f"Initialized Slack connector "
@@ -166,7 +160,7 @@ class SlackIngestionJob(IngestionJob):
 
         Thread replies are fetched for each message and concatenated into its text.
         """
-        client = self._reader._client
+        client = self._client
         next_cursor = None
         earliest_ts = (
             str(self.earliest_date.timestamp()) if self.earliest_date else None
@@ -235,7 +229,7 @@ class SlackIngestionJob(IngestionJob):
 
     def _fetch_message_with_replies(self, channel_id: str, message_ts: str) -> str:
         """Fetch a message and its thread replies, returning all text concatenated."""
-        client = self._reader._client
+        client = self._client
         texts: List[str] = []
         next_cursor = None
         earliest_ts = (
@@ -288,9 +282,7 @@ class SlackIngestionJob(IngestionJob):
 
         if self.channel_patterns:
             try:
-                ids = self._reader.get_channel_ids(
-                    channel_patterns=self.channel_patterns
-                )
+                ids = self._get_channel_ids_by_patterns(self.channel_patterns)
                 logger.info(
                     f"[{self.source_name}] Resolved {len(ids)} channel(s) "
                     f"from patterns {self.channel_patterns}"
@@ -307,6 +299,24 @@ class SlackIngestionJob(IngestionJob):
             "nothing to ingest"
         )
         return []
+
+    def _get_channel_ids_by_patterns(self, patterns: List[str]) -> List[str]:
+        """List all accessible channels and return IDs matching the given patterns."""
+        result = self._client.conversations_list(types=self.channel_types)
+        channels = result.get("channels", [])
+
+        matched: List[str] = []
+        exact_names = [p for p in patterns if not re.search(r"[\\^$.*+?()[\]{}|]", p)]
+        regex_patterns = [p for p in patterns if re.search(r"[\\^$.*+?()[\]{}|]", p)]
+
+        for channel in channels:
+            name = channel.get("name", "")
+            if name in exact_names:
+                matched.append(channel["id"])
+            elif any(re.match(pat, name) for pat in regex_patterns):
+                matched.append(channel["id"])
+
+        return list(set(matched))
 
     @staticmethod
     def _parse_ids(value: Any) -> List[str]:
