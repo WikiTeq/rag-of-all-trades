@@ -43,6 +43,7 @@ class NotionIngestionJob(IngestionJob):
 
     def __init__(self, config: dict):
         super().__init__(config)
+        self._user_cache: Dict[str, Optional[str]] = {}
 
         cfg = config.get("config", {})
 
@@ -138,6 +139,8 @@ class NotionIngestionJob(IngestionJob):
                 "created_time": cache.get("created_time"),
                 "parent_type": cache.get("parent_type"),
                 "parent_id": cache.get("parent_id"),
+                "created_by": cache.get("created_by"),
+                "last_edited_by": cache.get("last_edited_by"),
             }
         )
         if cache.get("public_url"):
@@ -255,6 +258,12 @@ class NotionIngestionJob(IngestionJob):
 
         title = self._extract_title(page)
         parent = page.get("parent", {})
+        created_by = self._resolve_user_name(
+            (page.get("created_by") or {}).get("id")
+        )
+        last_edited_by = self._resolve_user_name(
+            (page.get("last_edited_by") or {}).get("id")
+        )
 
         item = IngestionItem(
             id=f"notion:{page_id}",
@@ -269,9 +278,38 @@ class NotionIngestionJob(IngestionJob):
                 "created_time": created_time,
                 "parent_type": parent.get("type"),
                 "parent_id": parent.get(parent.get("type")),
+                "created_by": created_by,
+                "last_edited_by": last_edited_by,
             }
         )
         return item
+
+    def _resolve_user_name(self, user_id: Optional[str]) -> Optional[str]:
+        """Resolve a Notion user ID to a display name via GET /v1/users/{user_id}.
+
+        Results are cached per connector instance to avoid redundant API calls.
+        Returns None if the user_id is missing or the request fails (e.g. 403
+        when the integration lacks user information capabilities).
+        """
+        if not user_id:
+            return None
+        if user_id in self._user_cache:
+            return self._user_cache[user_id]
+        try:
+            resp = self._reader._request_with_retry(
+                "GET",
+                f"https://api.notion.com/v1/users/{user_id}",
+                headers=self._reader.headers,
+            )
+            resp.raise_for_status()
+            name = resp.json().get("name")
+        except Exception as e:
+            logger.warning(
+                f"[{self.source_name}] Could not resolve user {user_id}: {e}"
+            )
+            name = None
+        self._user_cache[user_id] = name
+        return name
 
     @staticmethod
     def _extract_title(page: Dict[str, Any]) -> str:
