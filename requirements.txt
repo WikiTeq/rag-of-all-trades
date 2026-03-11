@@ -37,6 +37,9 @@ jira==3.10.5
 # Web connector
 llama-index-readers-web==0.6.0
 
+# Dropbox connector
+dropbox==12.0.2
+
 # Environment management
 python-dotenv==1.2.1
 
