@@ -45,6 +45,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * BookStack
 * Outlook (Microsoft 365 / Entra ID mailboxes via Microsoft Graph)
 * GitLab
+* Trello
 
 ## Embeddings support
 
@@ -994,6 +995,38 @@ OUTLOOK1_CLIENT_SECRET=your-azure-app-client-secret
 OUTLOOK1_TENANT_ID=your-azure-tenant-id
 OUTLOOK1_USER_EMAIL=user@company.onmicrosoft.com
 OUTLOOK1_SCHEDULES=3600
+```
+
+### Trello Connector
+
+The Trello connector ingests cards from Trello boards using the `py-trello` SDK.
+Optionally loads card comments (newest first, up to `max_comments`).
+
+Metadata collected per card: `card_id`, `card_title`, `board_id`, `board_name`, `url`, `labels`,
+`due_date`, `creation_date`, `list_id`, `list_name`.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "trello"
+    name: "trello1"
+    config:
+      api_key: "${TRELLO1_API_KEY}"
+      api_token: "${TRELLO1_API_TOKEN}"
+      #board_ids: "${TRELLO1_BOARD_IDS}"  # optional, comma-separated; omit to ingest all boards
+      load_comments: false                # optional, default false
+      max_comments: 10                    # optional, default 10
+      schedules: "${TRELLO1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+TRELLO1_API_KEY=your-trello-api-key
+TRELLO1_API_TOKEN=your-trello-api-token
+#TRELLO1_BOARD_IDS=boardid1,boardid2
+TRELLO1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
