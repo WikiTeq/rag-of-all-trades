@@ -51,6 +51,26 @@ sources:
   #    queries: "${SERPAPI_QUERIES}"
   #    schedules: "${SERPAPI_SCHEDULES}"
 
+  #- type: "confluence"
+  #  name: "confluence1"
+  #  config:
+  #    base_url: "${CONFLUENCE1_BASE_URL}"           # e.g. https://yoursite.atlassian.net/wiki
+  #    # Auth: use api_token (recommended for Cloud) OR username+password (Server/Data Center)
+  #    username: "${CONFLUENCE1_USERNAME}"           # optional
+  #    api_token: "${CONFLUENCE1_API_TOKEN}"         # mutually exclusive with password
+  #    # password: "${CONFLUENCE1_PASSWORD}"         # mutually exclusive with api_token
+  #    cloud: true                                   # true for Cloud, false for Server/DC (default true)
+  #    # Discovery mode: exactly one of the following is required
+  #    space_key: "${CONFLUENCE1_SPACE_KEY}"         # load all pages from a space
+  #    # page_ids: "${CONFLUENCE1_PAGE_IDS}"         # comma-separated page IDs
+  #    # page_label: "${CONFLUENCE1_PAGE_LABEL}"     # pages with a given label
+  #    # cql: "${CONFLUENCE1_CQL}"                   # CQL query
+  #    # folder_id: "${CONFLUENCE1_FOLDER_ID}"       # pages inside a folder
+  #    page_status: "current"                        # optional; filter by status (space_key mode only)
+  #    include_children: false                       # optional; recurse into children (page_ids mode only)
+  #    max_pages: 50                                 # optional, default 50
+  #    schedules: "${CONFLUENCE1_SCHEDULES}"
+
   #- type: "jira"
   #  name: "jira1"
   #  config:
