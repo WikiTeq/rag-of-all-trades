@@ -8,6 +8,7 @@ from tasks.pipedrive_ingestion import PipedriveIngestionJob
 from tasks.s3_ingestion import S3IngestionJob
 from tasks.serpapi_ingestion import SerpAPIIngestionJob
 from tasks.slack_ingestion import SlackIngestionJob
+from tasks.trello_ingestion import TrelloIngestionJob
 from tasks.web_ingestion import WebIngestionJob
 
 
@@ -38,3 +39,4 @@ IngestionJobFactory.register("pipedrive", PipedriveIngestionJob)
 IngestionJobFactory.register("slack", SlackIngestionJob)
 IngestionJobFactory.register("imap", IMAPIngestionJob)
 IngestionJobFactory.register("onedrive", OneDriveIngestionJob)
+IngestionJobFactory.register("trello", TrelloIngestionJob)
