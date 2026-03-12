@@ -5,11 +5,6 @@ from unittest.mock import Mock, patch
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.jira_ingestion import JiraIngestionJob
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _make_config(
     auth_type="basic",
     email="user@example.com",
@@ -32,7 +27,6 @@ def _make_config(
     if auth_type == "basic":
         cfg["email"] = email
     return {"name": "test_jira", "config": cfg}
-
 
 def _make_issue(
     key="TEST-1",
@@ -84,12 +78,6 @@ def _make_issue(
     issue.fields = fields
     return issue
 
-
-# ---------------------------------------------------------------------------
-# Test class
-# ---------------------------------------------------------------------------
-
-
 class TestJiraIngestionJob(unittest.TestCase):
     def setUp(self):
         self.jira_patcher = patch("tasks.jira_ingestion.JIRA")
@@ -109,10 +97,6 @@ class TestJiraIngestionJob(unittest.TestCase):
 
     def _make_job(self, **kwargs):
         return JiraIngestionJob(_make_config(**kwargs))
-
-    # ------------------------------------------------------------------
-    # Initialisation & validation
-    # ------------------------------------------------------------------
 
     def test_source_type(self):
         job = self._make_job()
@@ -222,10 +206,6 @@ class TestJiraIngestionJob(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._make_job(load_comments=True, max_comments=0)
 
-    # ------------------------------------------------------------------
-    # list_items
-    # ------------------------------------------------------------------
-
     def test_list_items_yields_ingestion_items(self):
         issue1 = _make_issue(key="TEST-1")
         issue2 = _make_issue(
@@ -299,10 +279,6 @@ class TestJiraIngestionJob(unittest.TestCase):
 
         self.assertEqual(items, [])
 
-    # ------------------------------------------------------------------
-    # get_item_name
-    # ------------------------------------------------------------------
-
     def test_get_item_name_returns_issue_key(self):
         issue = _make_issue(key="PROJ-42")
         item = IngestionItem(id="jira:PROJ-42", source_ref=issue)
@@ -330,10 +306,6 @@ class TestJiraIngestionJob(unittest.TestCase):
         name = job.get_item_name(item)
 
         self.assertLessEqual(len(name), 255)
-
-    # ------------------------------------------------------------------
-    # get_raw_content
-    # ------------------------------------------------------------------
 
     def test_get_raw_content_returns_markdown_with_summary_and_description(
         self,
@@ -462,10 +434,6 @@ class TestJiraIngestionJob(unittest.TestCase):
         content = job.get_raw_content(item)
         self.assertIn("Issue", content)
 
-    # ------------------------------------------------------------------
-    # get_document_metadata
-    # ------------------------------------------------------------------
-
     def test_get_document_metadata_contains_all_required_fields(self):
         issue = _make_issue(
             key="TEST-1",
@@ -558,10 +526,6 @@ class TestJiraIngestionJob(unittest.TestCase):
 
         self.assertEqual(metadata["url"], "")
 
-    # ------------------------------------------------------------------
-    # _to_markdown helpers
-    # ------------------------------------------------------------------
-
     def test_to_markdown_falls_back_on_empty_conversion(self):
         md_result = Mock()
         md_result.text_content = "   "
@@ -598,10 +562,6 @@ class TestJiraIngestionJob(unittest.TestCase):
         job = self._make_job()
         result = job._to_markdown(adf)
         self.assertIn("Hello ADF", result)
-
-    # ------------------------------------------------------------------
-    # _extract_adf_text
-    # ------------------------------------------------------------------
 
     def test_extract_adf_text_simple_paragraph(self):
         adf = {
@@ -658,10 +618,6 @@ class TestJiraIngestionJob(unittest.TestCase):
         result = job._extract_adf_text(adf)
         self.assertIn("Item one", result)
 
-    # ------------------------------------------------------------------
-    # _parse_jira_timestamp
-    # ------------------------------------------------------------------
-
     def test_parse_jira_timestamp_valid(self):
         result = JiraIngestionJob._parse_jira_timestamp(
             "2024-06-15T10:30:00.000+0000"
@@ -676,10 +632,6 @@ class TestJiraIngestionJob(unittest.TestCase):
 
     def test_parse_jira_timestamp_invalid_returns_none(self):
         self.assertIsNone(JiraIngestionJob._parse_jira_timestamp("not-a-date"))
-
-    # ------------------------------------------------------------------
-    # Integration: process_item delegates to base with correct data
-    # ------------------------------------------------------------------
 
     def test_process_item_calls_vector_store_and_metadata_tracker(self):
         issue = _make_issue(
@@ -733,7 +685,6 @@ class TestJiraIngestionJob(unittest.TestCase):
 
         self.assertEqual(result, 0)
         job.vector_manager.insert_documents.assert_not_called()
-
 
 if __name__ == "__main__":
     unittest.main()

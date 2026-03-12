@@ -33,6 +33,9 @@ requests==2.32.5
 # Jira connector
 jira==3.10.5
 
+# Confluence connector
+llama-index-readers-confluence==0.6.1
+
 # Environment management
 python-dotenv==1.2.1
 
