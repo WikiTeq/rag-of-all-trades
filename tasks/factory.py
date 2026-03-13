@@ -1,8 +1,9 @@
-from tasks.s3_ingestion import S3IngestionJob
-from tasks.mediawiki_ingestion import MediaWikiIngestionJob
-from tasks.jira_ingestion import JiraIngestionJob
-from tasks.trello_ingestion import TrelloIngestionJob
 from tasks.base import IngestionJob
+from tasks.jira_ingestion import JiraIngestionJob
+from tasks.mediawiki_ingestion import MediaWikiIngestionJob
+from tasks.s3_ingestion import S3IngestionJob
+from tasks.serpapi_ingestion import SerpAPIIngestionJob
+
 
 class IngestionJobFactory:
     _registry = {}
@@ -20,7 +21,8 @@ class IngestionJobFactory:
             raise ValueError(f"No ingestion job registered for type: {job_type}")
         return job_class(config)
 
+
 IngestionJobFactory.register("s3", S3IngestionJob)
 IngestionJobFactory.register("mediawiki", MediaWikiIngestionJob)
 IngestionJobFactory.register("jira", JiraIngestionJob)
-IngestionJobFactory.register("trello", TrelloIngestionJob)
+IngestionJobFactory.register("serpapi", SerpAPIIngestionJob)
