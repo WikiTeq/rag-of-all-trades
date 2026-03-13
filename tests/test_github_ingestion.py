@@ -54,7 +54,12 @@ def _make_file_doc(file_path="README.md", text="File content"):
     doc = Mock()
     doc.doc_id = file_path
     doc.text = text
-    doc.metadata = {"file_path": file_path}
+    file_name = file_path.split("/")[-1]
+    doc.metadata = {
+        "file_path": file_path,
+        "file_name": file_name,
+        "url": f"https://github.com/myorg/myrepo/blob/main/{file_path}",
+    }
     return doc
 
 
@@ -396,6 +401,7 @@ class TestGitHubIngestionJob(unittest.TestCase):
         self.assertEqual(metadata["item_type"], "file")
         self.assertEqual(metadata["file_path"], "README.md")
         self.assertIn("github.com/myorg/myrepo/blob/main/README.md", metadata["url"])
+        self.assertEqual(metadata["file_name"], "README.md")
 
     # ------------------------------------------------------------------
     # get_document_metadata — issues
@@ -426,8 +432,11 @@ class TestGitHubIngestionJob(unittest.TestCase):
         self.assertEqual(metadata["assignee"], "octocat")
         self.assertEqual(metadata["closed_at"], "2024-01-15T10:00:00Z")
 
-    def test_get_document_metadata_issue_omits_assignee_and_closed_at_when_absent(self):
+    def test_get_document_metadata_issue_omits_optional_fields_when_absent(self):
         doc = _make_issue_doc(number="8", state="open")
+        # Remove optional fields so they are absent from metadata
+        doc.metadata.pop("state", None)
+        doc.metadata.pop("labels", None)
         item = IngestionItem(id="github:myorg/myrepo:issue:8", source_ref=doc)
         job = self._make_job(owner="myorg", repo="myrepo", include_issues=True)
         metadata = job.get_document_metadata(
@@ -435,25 +444,8 @@ class TestGitHubIngestionJob(unittest.TestCase):
         )
         self.assertNotIn("assignee", metadata)
         self.assertNotIn("closed_at", metadata)
-
-    def test_get_document_metadata_file_includes_file_name(self):
-        doc = _make_file_doc(file_path="docs/guide.md")
-        doc.metadata["file_name"] = "guide.md"
-        item = IngestionItem(id="github:myorg/myrepo:docs/guide.md", source_ref=doc)
-        job = self._make_job(owner="myorg", repo="myrepo")
-        metadata = job.get_document_metadata(
-            item=item, item_name="docs/guide.md", checksum="abc", version=1, last_modified=None
-        )
-        self.assertEqual(metadata["file_name"], "guide.md")
-
-    def test_get_document_metadata_file_name_falls_back_to_path_segment(self):
-        doc = _make_file_doc(file_path="src/utils/helper.py")
-        item = IngestionItem(id="github:myorg/myrepo:src/utils/helper.py", source_ref=doc)
-        job = self._make_job(owner="myorg", repo="myrepo")
-        metadata = job.get_document_metadata(
-            item=item, item_name="src/utils/helper.py", checksum="abc", version=1, last_modified=None
-        )
-        self.assertEqual(metadata["file_name"], "helper.py")
+        self.assertNotIn("state", metadata)
+        self.assertNotIn("labels", metadata)
 
     # ------------------------------------------------------------------
     # _parse_list

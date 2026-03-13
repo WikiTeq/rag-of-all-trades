@@ -319,23 +319,15 @@ class GitHubIngestionJob(IngestionJob):
                 "item_type": "issue",
                 "issue_number": doc.doc_id,
                 "url": url,
-                "state": doc_metadata.get("state", ""),
-                "labels": doc_metadata.get("labels", []),
-            }
-            if doc_metadata.get("assignee"):
-                issue_meta["assignee"] = doc_metadata["assignee"]
-            if doc_metadata.get("closed_at"):
-                issue_meta["closed_at"] = doc_metadata["closed_at"]
+                }
+            for field in ("state", "labels", "assignee", "closed_at"):
+                if doc_metadata.get(field) is not None:
+                    issue_meta[field] = doc_metadata[field]
             metadata.update(issue_meta)
         else:
             file_path = doc_metadata.get("file_path", "")
-            file_name = doc_metadata.get(
-                "file_name", file_path.split("/")[-1] if file_path else ""
-            )
-            url = doc_metadata.get("url") or (
-                f"https://github.com/{self.owner}/{self.repo}/blob/"
-                f"{self.branch or self.commit_sha}/{file_path}"
-            )
+            file_name = doc_metadata.get("file_name", "")
+            url = doc_metadata.get("url", "")
             metadata.update(
                 {
                     "owner": self.owner,
