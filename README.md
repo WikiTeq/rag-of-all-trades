@@ -474,6 +474,42 @@ TODO
 
 TODO
 
+## Upgrading
+
+### Migrating from `ankane/pgvector` to `pgvector/pgvector` (PostgreSQL 18)
+
+The `ankane/pgvector` image is deprecated. The replacement is `pgvector/pgvector`, which also changes
+the PostgreSQL major version (15 → 18). Because PostgreSQL data directories are version-specific,
+an in-place upgrade is not possible — you must dump and restore.
+
+> **Note:** PostgreSQL 18+ also changed the expected volume mount point from
+> `/var/lib/postgresql/data` to `/var/lib/postgresql`. This is already reflected in `compose.yml`.
+
+**If you have existing data to preserve:**
+
+```bash
+# 1. While the old container is still running, dump all data
+docker compose exec postgres pg_dumpall -U ${POSTGRES_USER} > pgdump_pg15.sql
+
+# 2. Stop all services and remove the old volume
+docker compose down -v
+
+# 3. Start the new postgres container
+docker compose up postgres -d
+
+# 4. Wait for it to be healthy, then restore
+docker compose exec -T postgres psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < pgdump_pg15.sql
+
+# 5. Start everything else
+docker compose up -d
+```
+
+**If you have no data to preserve (fresh / dev environment):**
+
+```bash
+docker compose down -v && docker compose up -d
+```
+
 ## ✨ Contributions
 
 Contributions, suggestions, bug reports, and fixes are welcome!
