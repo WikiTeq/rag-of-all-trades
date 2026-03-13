@@ -1,7 +1,9 @@
-from tasks.s3_ingestion import S3IngestionJob
-from tasks.mediawiki_ingestion import MediaWikiIngestionJob
-from tasks.jira_ingestion import JiraIngestionJob
 from tasks.base import IngestionJob
+from tasks.jira_ingestion import JiraIngestionJob
+from tasks.mediawiki_ingestion import MediaWikiIngestionJob
+from tasks.s3_ingestion import S3IngestionJob
+from tasks.serpapi_ingestion import SerpAPIIngestionJob
+
 
 class IngestionJobFactory:
     _registry = {}
@@ -16,9 +18,13 @@ class IngestionJobFactory:
     def create(cls, job_type: str, config: dict) -> IngestionJob:
         job_class = cls._registry.get(job_type)
         if not job_class:
-            raise ValueError(f"No ingestion job registered for type: {job_type}")
+            raise ValueError(
+                f"No ingestion job registered for type: {job_type}"
+            )
         return job_class(config)
+
 
 IngestionJobFactory.register("s3", S3IngestionJob)
 IngestionJobFactory.register("mediawiki", MediaWikiIngestionJob)
 IngestionJobFactory.register("jira", JiraIngestionJob)
+IngestionJobFactory.register("serpapi", SerpAPIIngestionJob)
