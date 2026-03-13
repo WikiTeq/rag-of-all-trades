@@ -2,6 +2,7 @@
 fastapi==0.120.1
 uvicorn[standard]==0.38.0
 slowapi==0.1.9
+fastmcp==2.14.5
 
 # Database Migration + ORM
 alembic==1.17.1
@@ -42,3 +43,7 @@ pydantic-settings==2.11.0
 markitdown[pdf, docx, pptx]==0.1.3
 html2text==2025.4.15
 pyyaml==6.0.3
+
+# Testing
+pytest==9.0.2
+pytest-asyncio==1.3.0
