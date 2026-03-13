@@ -434,7 +434,7 @@ class TestGitHubIngestionJob(unittest.TestCase):
         self.assertEqual(metadata["labels"], ["bug"])
         self.assertIn("github.com/myorg/myrepo/issues/42", metadata["url"])
 
-    def test_get_document_metadata_issue_includes_assignee_and_closed_at_when_present(self):
+    def test_get_document_metadata_issue_optional_fields_included_when_present_omitted_when_absent(self):
         doc = _make_issue_doc(number="7", state="closed")
         doc.metadata["assignee"] = "octocat"
         doc.metadata["closed_at"] = "2024-01-15T10:00:00Z"
@@ -445,39 +445,28 @@ class TestGitHubIngestionJob(unittest.TestCase):
         )
         self.assertEqual(metadata["assignee"], "octocat")
         self.assertEqual(metadata["closed_at"], "2024-01-15T10:00:00Z")
+        self.assertEqual(metadata["state"], "closed")
 
-    def test_get_document_metadata_issue_omits_optional_fields_when_absent(self):
-        doc = _make_issue_doc(number="8", state="open")
-        # Remove optional fields so they are absent from metadata
-        doc.metadata.pop("state", None)
-        doc.metadata.pop("labels", None)
-        item = IngestionItem(id="github:myorg/myrepo:issue:8", source_ref=doc)
-        job = self._make_job(owner="myorg", repo="myrepo", include_issues=True)
-        metadata = job.get_document_metadata(
-            item=item, item_name="8", checksum="xyz", version=1, last_modified=None
+        # When fields are absent they must not appear in metadata
+        doc2 = _make_issue_doc(number="8")
+        for field in ("state", "labels", "assignee", "closed_at"):
+            doc2.metadata.pop(field, None)
+        item2 = IngestionItem(id="github:myorg/myrepo:issue:8", source_ref=doc2)
+        metadata2 = job.get_document_metadata(
+            item=item2, item_name="8", checksum="xyz", version=1, last_modified=None
         )
-        self.assertNotIn("assignee", metadata)
-        self.assertNotIn("closed_at", metadata)
-        self.assertNotIn("state", metadata)
-        self.assertNotIn("labels", metadata)
+        for field in ("state", "labels", "assignee", "closed_at"):
+            self.assertNotIn(field, metadata2)
 
     # ------------------------------------------------------------------
     # _parse_list
     # ------------------------------------------------------------------
 
-    def test_parse_list_comma_string(self):
-        self.assertEqual(
-            GitHubIngestionJob._parse_list("md,py, txt"), ["md", "py", "txt"]
-        )
-
-    def test_parse_list_list_input(self):
+    def test_parse_list(self):
+        self.assertEqual(GitHubIngestionJob._parse_list("md,py, txt"), ["md", "py", "txt"])
         self.assertEqual(GitHubIngestionJob._parse_list(["md", "py"]), ["md", "py"])
-
-    def test_parse_list_empty(self):
         self.assertEqual(GitHubIngestionJob._parse_list(""), [])
         self.assertEqual(GitHubIngestionJob._parse_list(None), [])
-
-    def test_parse_list_filters_blank_entries(self):
         self.assertEqual(GitHubIngestionJob._parse_list("md,,  ,py"), ["md", "py"])
 
     # ------------------------------------------------------------------
