@@ -1,7 +1,6 @@
 # Standard library imports
 import logging
 import re
-from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 # Third-party imports
@@ -270,8 +269,10 @@ class GitHubIngestionJob(IngestionJob):
                 issues = []
 
             for doc in issues:
-                created_at = doc.metadata.get("created_at")
-                last_modified = self._parse_timestamp(created_at)
+                # The GitHub Issues API returns both issues and PRs; skip PRs
+                if "/pull/" in doc.metadata.get("source", ""):
+                    continue
+                last_modified = doc.metadata.get("created_at")
                 yield IngestionItem(
                     id=f"github:{self.owner}/{self.repo}:issue:{doc.doc_id}",
                     source_ref=doc,
@@ -319,7 +320,7 @@ class GitHubIngestionJob(IngestionJob):
                 "item_type": "issue",
                 "issue_number": doc.doc_id,
                 "url": url,
-                }
+            }
             for field in ("state", "labels", "assignee", "closed_at"):
                 if doc_metadata.get(field) is not None:
                     issue_meta[field] = doc_metadata[field]
@@ -357,18 +358,6 @@ class GitHubIngestionJob(IngestionJob):
                 for label in self._exclude_labels
             ]
         return None
-
-    @staticmethod
-    def _parse_timestamp(value: Any) -> Optional[datetime]:
-        """Parse an ISO-8601 timestamp string into a datetime, or return None."""
-        if not value:
-            return None
-        if isinstance(value, datetime):
-            return value
-        try:
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            return None
 
     @staticmethod
     def _parse_list(value: Any) -> List[str]:

@@ -298,6 +298,20 @@ class TestGitHubIngestionJob(unittest.TestCase):
         self.assertEqual(len(items), 2)
         self.assertIn(":issue:", items[0].id)
 
+    def test_list_items_skips_pull_requests(self):
+        pr_doc = _make_issue_doc("10")
+        pr_doc.metadata["source"] = "https://github.com/myorg/myrepo/pull/10"
+        self.mock_repo_reader.load_data.return_value = []
+        self.mock_issues_reader.load_data.return_value = [
+            _make_issue_doc("1"),
+            pr_doc,
+            _make_issue_doc("2"),
+        ]
+        job = self._make_job(include_issues=True)
+        items = list(job.list_items())
+        self.assertEqual(len(items), 2)
+        self.assertNotIn("issue:10", " ".join(i.id for i in items))
+
     def test_list_items_no_issues_when_disabled(self):
         self.mock_repo_reader.load_data.return_value = []
         job = self._make_job(include_issues=False)
@@ -465,32 +479,6 @@ class TestGitHubIngestionJob(unittest.TestCase):
 
     def test_parse_list_filters_blank_entries(self):
         self.assertEqual(GitHubIngestionJob._parse_list("md,,  ,py"), ["md", "py"])
-
-    # ------------------------------------------------------------------
-    # _parse_timestamp
-    # ------------------------------------------------------------------
-
-    def test_parse_timestamp_valid_iso_string(self):
-        from datetime import datetime, timezone
-        result = GitHubIngestionJob._parse_timestamp("2024-01-15T10:00:00Z")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.year, 2024)
-        self.assertEqual(result.month, 1)
-        self.assertEqual(result.day, 15)
-
-    def test_parse_timestamp_none_returns_none(self):
-        self.assertIsNone(GitHubIngestionJob._parse_timestamp(None))
-
-    def test_parse_timestamp_empty_string_returns_none(self):
-        self.assertIsNone(GitHubIngestionJob._parse_timestamp(""))
-
-    def test_parse_timestamp_invalid_string_returns_none(self):
-        self.assertIsNone(GitHubIngestionJob._parse_timestamp("not-a-date"))
-
-    def test_parse_timestamp_datetime_passthrough(self):
-        from datetime import datetime, timezone
-        dt = datetime(2024, 6, 1, tzinfo=timezone.utc)
-        self.assertEqual(GitHubIngestionJob._parse_timestamp(dt), dt)
 
     # ------------------------------------------------------------------
     # Integration: process_item
