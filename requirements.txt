@@ -34,7 +34,7 @@ requests==2.32.5
 jira==3.10.5
 
 # Notion connector
-llama-index-readers-notion==0.4.1
+notion-client==3.0.0
 
 # Environment management
 python-dotenv==1.2.1
