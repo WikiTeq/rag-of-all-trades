@@ -38,7 +38,7 @@ jira==3.10.5
 llama-index-readers-web==0.6.0
 
 # Notion connector
-llama-index-readers-notion==0.4.1
+notion-client==3.0.0
 
 # Environment management
 python-dotenv==1.2.1
