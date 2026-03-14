@@ -6,7 +6,8 @@ from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional
 
 # Third-party imports
-from llama_index.readers.notion import NotionPageReader
+from notion_client import Client
+from notion_client.errors import APIResponseError
 
 # Local imports
 from tasks.base import IngestionJob
@@ -14,15 +15,13 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 
 logger = logging.getLogger(__name__)
 
-NOTION_SEARCH_URL = "https://api.notion.com/v1/search"
-
 
 class NotionIngestionJob(IngestionJob):
     """Ingestion connector for Notion workspaces.
 
-    Uses the Notion Search API for page discovery (with trash filtering,
-    last_modified, title, and metadata extraction) and the LlamaIndex
-    NotionPageReader for content fetching.
+    Uses the official Notion SDK (notion-client 3.0.0) for all API interactions:
+    page discovery via Search API, content fetching via Blocks API,
+    database querying via DataSources API, and user resolution via Users API.
 
     Configuration (config.yaml):
         - config.integration_token: Notion integration token (required)
@@ -62,9 +61,7 @@ class NotionIngestionJob(IngestionJob):
         if self.request_delay < 0:
             raise ValueError("request_delay must be non-negative")
 
-        self._reader = NotionPageReader(
-            integration_token=self.integration_token
-        )
+        self._client = Client(auth=self.integration_token)
 
         load_mode = (
             self.LOAD_MODE_ALL
@@ -92,15 +89,14 @@ class NotionIngestionJob(IngestionJob):
             yield from self._selective_pages()
 
     def get_raw_content(self, item: IngestionItem) -> str:
-        """Fetch and return the full text content of a Notion page using
-        the LlamaIndex reader.
+        """Fetch and return the full text content of a Notion page by
+        recursively reading all blocks via the Blocks API.
 
-        The reader handles block recursion, retries, and rate limiting.
         An optional request_delay is applied after each page read.
         """
         page_id: str = item.source_ref
         try:
-            text = self._reader.read_page(page_id)
+            text = self._read_page(page_id)
         except Exception as e:
             logger.error(
                 f"[{self.source_name}] Failed to read page {page_id}: {e}"
@@ -151,21 +147,57 @@ class NotionIngestionJob(IngestionJob):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _read_page(self, page_id: str, num_tabs: int = 0) -> str:
+        """Recursively read all text blocks of a Notion page using the Blocks API.
+
+        Fetches children of the given block_id with pagination, extracts
+        rich_text content, and recurses into child blocks.
+        """
+        result_lines = []
+        cursor = None
+
+        while True:
+            kwargs: Dict[str, Any] = {"block_id": page_id, "page_size": 100}
+            if cursor:
+                kwargs["start_cursor"] = cursor
+
+            data = self._client.blocks.children.list(**kwargs)
+
+            for block in data.get("results", []):
+                block_type = block.get("type", "")
+                block_obj = block.get(block_type, {})
+                text_parts = []
+
+                if "rich_text" in block_obj:
+                    for rich_text in block_obj["rich_text"]:
+                        if "text" in rich_text:
+                            prefix = "\t" * num_tabs
+                            text_parts.append(prefix + rich_text["text"]["content"])
+
+                if block.get("has_children"):
+                    children_text = self._read_page(block["id"], num_tabs=num_tabs + 1)
+                    text_parts.append(children_text)
+
+                if text_parts:
+                    result_lines.append("\n".join(text_parts))
+
+            if not data.get("next_cursor"):
+                break
+            cursor = data["next_cursor"]
+
+        return "\n".join(result_lines)
+
     def _search_all_pages(self) -> Iterator[IngestionItem]:
         """Use the Notion Search API to yield all non-trashed pages."""
-        payload: Dict[str, Any] = {
+        kwargs: Dict[str, Any] = {
             "filter": {"value": "page", "property": "object"},
             "page_size": 100,
         }
         total = 0
         while True:
             try:
-                resp = self._reader._request_with_retry(
-                    "POST", NOTION_SEARCH_URL, headers=self._reader.headers, json=payload
-                )
-                resp.raise_for_status()
-                data = resp.json()
-            except Exception as e:
+                data = self._client.search(**kwargs)
+            except APIResponseError as e:
                 logger.error(
                     f"[{self.source_name}] Search API request failed: {e}"
                 )
@@ -179,7 +211,7 @@ class NotionIngestionJob(IngestionJob):
 
             if not data.get("has_more"):
                 break
-            payload["start_cursor"] = data["next_cursor"]
+            kwargs["start_cursor"] = data["next_cursor"]
 
         logger.info(
             f"[{self.source_name}] Total pages discovered via search: {total}"
@@ -189,45 +221,49 @@ class NotionIngestionJob(IngestionJob):
         """Yield items for explicitly configured page_ids and database_ids."""
         for page_id in self.page_ids:
             try:
-                resp = self._reader._request_with_retry(
-                    "GET",
-                    f"https://api.notion.com/v1/pages/{page_id}",
-                    headers=self._reader.headers
-                )
-                resp.raise_for_status()
-                item = self._page_to_item(resp.json())
+                page = self._client.pages.retrieve(page_id=page_id)
+                item = self._page_to_item(page)
                 if item:
                     yield item
-            except Exception as e:
+            except APIResponseError as e:
                 logger.error(
                     f"[{self.source_name}] Failed to fetch page {page_id}: {e}"
                 )
 
         for db_id in self.database_ids:
             try:
-                db_page_ids = self._reader.query_database(db_id)
+                db_page_ids = self._query_database(db_id)
                 logger.info(
                     f"[{self.source_name}] Database {db_id}: found {len(db_page_ids)} page(s)"
                 )
                 for pid in db_page_ids:
                     try:
-                        resp = self._reader._request_with_retry(
-                            "GET",
-                            f"https://api.notion.com/v1/pages/{pid}",
-                            headers=self._reader.headers
-                        )
-                        resp.raise_for_status()
-                        item = self._page_to_item(resp.json())
+                        page = self._client.pages.retrieve(page_id=pid)
+                        item = self._page_to_item(page)
                         if item:
                             yield item
-                    except Exception as e:
+                    except APIResponseError as e:
                         logger.error(
                             f"[{self.source_name}] Failed to fetch page {pid}: {e}"
                         )
-            except Exception as e:
+            except APIResponseError as e:
                 logger.error(
                     f"[{self.source_name}] Failed to query database {db_id}: {e}"
                 )
+
+    def _query_database(self, database_id: str) -> List[str]:
+        """Return all page IDs from a Notion database using the DataSources API."""
+        page_ids = []
+        kwargs: Dict[str, Any] = {"page_size": 100}
+        while True:
+            data = self._client.data_sources.query(database_id, **kwargs)
+            for result in data.get("results", []):
+                if result.get("object") == "page":
+                    page_ids.append(result["id"])
+            if not data.get("has_more"):
+                break
+            kwargs["start_cursor"] = data["next_cursor"]
+        return page_ids
 
     def _page_to_item(self, page: Dict[str, Any]) -> Optional[IngestionItem]:
         """Convert a Notion page object to an IngestionItem, or None if trashed."""
@@ -285,7 +321,7 @@ class NotionIngestionJob(IngestionJob):
         return item
 
     def _resolve_user_name(self, user_id: Optional[str]) -> Optional[str]:
-        """Resolve a Notion user ID to a display name via GET /v1/users/{user_id}.
+        """Resolve a Notion user ID to a display name via the Users API.
 
         Results are cached per connector instance to avoid redundant API calls.
         Returns None if the user_id is missing or the request fails (e.g. 403
@@ -296,14 +332,9 @@ class NotionIngestionJob(IngestionJob):
         if user_id in self._user_cache:
             return self._user_cache[user_id]
         try:
-            resp = self._reader._request_with_retry(
-                "GET",
-                f"https://api.notion.com/v1/users/{user_id}",
-                headers=self._reader.headers,
-            )
-            resp.raise_for_status()
-            name = resp.json().get("name")
-        except Exception as e:
+            user = self._client.users.retrieve(user_id=user_id)
+            name = user.get("name")
+        except APIResponseError as e:
             logger.warning(
                 f"[{self.source_name}] Could not resolve user {user_id}: {e}"
             )
