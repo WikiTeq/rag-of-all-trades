@@ -119,34 +119,34 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             self.assertEqual(len(items), 1)
             self.assertEqual(items[0].source_ref, (base / "root.txt").resolve())
 
-    def test_filter_is_translated_to_required_exts(self):
+    def test_required_exts_normalizes_extensions(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             job = DirectoryIngestionJob(
                 {
                     "name": "local",
-                    "config": {"path": temp_dir, "filter": "txt,md"},
+                    "config": {"path": temp_dir, "required_exts": "txt,md"},
                 }
             )
 
             self.assertEqual(job.connector_config.required_exts, [".md", ".txt"])
 
-    def test_list_items_filter_normalizes_dots_and_case(self):
+    def test_required_exts_normalizes_dots_and_case(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             job = DirectoryIngestionJob(
                 {
                     "name": "local",
-                    "config": {"path": temp_dir, "filter": ".TXT, .pdf"},
+                    "config": {"path": temp_dir, "required_exts": ".TXT, .pdf"},
                 }
             )
 
             self.assertEqual(job.connector_config.required_exts, [".pdf", ".txt"])
 
-    def test_filter_empty_string_normalizes_to_none(self):
+    def test_required_exts_empty_string_normalizes_to_none(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             job = DirectoryIngestionJob(
                 {
                     "name": "local",
-                    "config": {"path": temp_dir, "filter": ""},
+                    "config": {"path": temp_dir, "required_exts": ""},
                 }
             )
             self.assertIsNone(job.connector_config.required_exts)
