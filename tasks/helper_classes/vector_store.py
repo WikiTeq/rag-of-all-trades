@@ -1,6 +1,8 @@
 import gc
-from utils.llm_embedding import embed_model
+
 from utils.config import settings
+from utils.llm_embedding import embed_model
+
 
 class VectorStoreManager:
     def __init__(self):
@@ -11,8 +13,8 @@ class VectorStoreManager:
     def _init_if_needed(self):
         if self._initialized:
             return
-        from llama_index.vector_stores.postgres import PGVectorStore
         from llama_index.core import StorageContext
+        from llama_index.vector_stores.postgres import PGVectorStore
 
         postgres = settings.POSTGRES
         embedding = settings.EMBEDDING
@@ -43,7 +45,7 @@ class VectorStoreManager:
         from llama_index.core.node_parser import SentenceSplitter
 
         vector_store = settings.POSTGRES
-        
+
         splitter = SentenceSplitter(
             chunk_size=vector_store["chunk_size"],
             chunk_overlap=vector_store["chunk_overlap"],

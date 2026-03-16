@@ -1,15 +1,16 @@
 # Standard library imports
-import gc
 import hashlib
 import logging
 import re
 import time
+from collections.abc import Iterator
 from datetime import datetime
-from typing import Optional, Dict, Any, Iterator
+from typing import Any
+
+import html2text
 
 # Third-party imports
 import requests
-import html2text
 
 # Local imports
 from tasks.base import IngestionJob
@@ -17,15 +18,11 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 
 # Configure logging
 # TODO: Logging should not be done here and in s3, but in the main module
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
 class MediaWikiIngestionJob(IngestionJob):
-
     @property
     def source_type(self) -> str:
         return "mediawiki"
@@ -58,39 +55,37 @@ class MediaWikiIngestionJob(IngestionJob):
 
         # Request configuration
         self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': cfg.get('user_agent', 'rag-of-all-trades-connector-mediawiki/1.0')
-        })
+        self.session.headers.update({"User-Agent": cfg.get("user_agent", "rag-of-all-trades-connector-mediawiki/1.0")})
 
         # Rate limiting and performance settings
-        self.request_delay = cfg.get('request_delay', 0.1)  # seconds between requests
+        self.request_delay = cfg.get("request_delay", 0.1)  # seconds between requests
         if self.request_delay < 0:
             raise ValueError("request_delay must be non-negative")
 
-        self.page_limit = cfg.get('page_limit', 500)  # pages per API call
+        self.page_limit = cfg.get("page_limit", 500)  # pages per API call
         if self.page_limit <= 0:
             raise ValueError("page_limit must be positive")
 
-        self.batch_size = cfg.get('batch_size', 50)  # pages to process timestamps for at once
+        self.batch_size = cfg.get("batch_size", 50)  # pages to process timestamps for at once
         if self.batch_size <= 0:
             raise ValueError("batch_size must be positive")
 
-        self.max_retries = cfg.get('max_retries', 3)  # max retries for API requests
+        self.max_retries = cfg.get("max_retries", 3)  # max retries for API requests
         if self.max_retries < 0:
             raise ValueError("max_retries must be non-negative")
 
-        self.timeout = cfg.get('timeout', 30)  # HTTP request timeout in seconds
+        self.timeout = cfg.get("timeout", 30)  # HTTP request timeout in seconds
         if self.timeout <= 0:
             raise ValueError("timeout must be positive")
 
         # Content filtering
-        self.namespaces = cfg.get('namespaces')  # List of namespace IDs to include (None = all)
+        self.namespaces = cfg.get("namespaces")  # List of namespace IDs to include (None = all)
 
         logger.info(f"Initialized MediaWiki connector for {self.api_url}")
 
     def close(self):
         """Close the HTTP session to free up resources."""
-        if hasattr(self, 'session'):
+        if hasattr(self, "session"):
             self.session.close()
 
     def __enter__(self):
@@ -101,7 +96,7 @@ class MediaWikiIngestionJob(IngestionJob):
         """Context manager exit - ensures session is closed."""
         self.close()
 
-    def _make_api_request(self, params: Dict[str, Any], max_retries: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    def _make_api_request(self, params: dict[str, Any], max_retries: int | None = None) -> dict[str, Any] | None:
         """Make a request to the MediaWiki API with comprehensive error handling and retries.
 
         Args:
@@ -122,13 +117,13 @@ class MediaWikiIngestionJob(IngestionJob):
         for attempt in range(max_retries):
             try:
                 # Ensure JSON format for all MediaWiki API responses
-                params['format'] = 'json'
+                params["format"] = "json"
 
                 response = self.session.get(self.api_url, params=params, timeout=self.timeout)
 
                 # Handle rate limiting
                 if response.status_code == 429:
-                    retry_after = int(response.headers.get('Retry-After', 5))
+                    retry_after = int(response.headers.get("Retry-After", 5))
                     logger.warning(f"Rate limited. Waiting {retry_after} seconds...")
                     time.sleep(retry_after)
                     continue
@@ -139,7 +134,7 @@ class MediaWikiIngestionJob(IngestionJob):
             except requests.exceptions.RequestException as e:
                 logger.warning(f"API request failed (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
+                    time.sleep(2**attempt)  # Exponential backoff
                 else:
                     logger.error(f"API request failed after {max_retries} attempts")
                     return None
@@ -148,7 +143,7 @@ class MediaWikiIngestionJob(IngestionJob):
                 logger.error(f"Invalid JSON response: {e}")
                 return None
 
-    def _get_all_pages(self) -> Iterator[Dict[str, Any]]:
+    def _get_all_pages(self) -> Iterator[dict[str, Any]]:
         """Generator that yields all pages from the MediaWiki instance using pagination.
 
         Uses the MediaWiki API's allpages query with continuation tokens to handle
@@ -161,34 +156,33 @@ class MediaWikiIngestionJob(IngestionJob):
 
         while True:
             params = {
-                'action': 'query',
-                'list': 'allpages',
-                'aplimit': self.page_limit,
-                'apfilterredir': 'nonredirects',
-                **continue_params
+                "action": "query",
+                "list": "allpages",
+                "aplimit": self.page_limit,
+                "apfilterredir": "nonredirects",
+                **continue_params,
             }
 
             # Filter by namespaces if specified (0 = main namespace, 1 = talk, etc.)
             if self.namespaces is not None:
-                params['apnamespace'] = [str(ns) for ns in self.namespaces]
+                params["apnamespace"] = [str(ns) for ns in self.namespaces]
 
             data = self._make_api_request(params)
             if not data:
                 break
 
-            pages = data.get('query', {}).get('allpages', [])
-            for page in pages:
-                yield page
+            pages = data.get("query", {}).get("allpages", [])
+            yield from pages
 
             # Check for continuation
-            continue_info = data.get('continue')
+            continue_info = data.get("continue")
             if continue_info:
                 continue_params = continue_info
                 time.sleep(self.request_delay)  # Rate limiting
             else:
                 break
 
-    def _get_page_data(self, page_title: str, **api_params) -> Optional[Dict[str, Any]]:
+    def _get_page_data(self, page_title: str, **api_params) -> dict[str, Any] | None:
         """Helper method for making MediaWiki page queries with common response handling.
 
         Args:
@@ -198,17 +192,13 @@ class MediaWikiIngestionJob(IngestionJob):
         Returns:
             Page data dictionary from the API response, or None if page doesn't exist or request failed
         """
-        params = {
-            'action': 'query',
-            'titles': page_title,
-            **api_params
-        }
+        params = {"action": "query", "titles": page_title, **api_params}
 
         data = self._make_api_request(params)
         if not data:
             return None
 
-        pages = data.get('query', {}).get('pages', {})
+        pages = data.get("query", {}).get("pages", {})
         if not pages:
             return None
 
@@ -216,13 +206,13 @@ class MediaWikiIngestionJob(IngestionJob):
         page_data = next(iter(pages.values()))
 
         # Check if page exists (missing pages have pageid = -1 and missing = True)
-        if page_data.get('pageid') == -1 or page_data.get('missing') == True:
+        if page_data.get("pageid") == -1 or page_data.get("missing"):
             logger.warning(f"Page '{page_title}' is missing")
             return None
 
         return page_data
 
-    def _get_page_info(self, page_title: str) -> Optional[tuple[str, str]]:
+    def _get_page_info(self, page_title: str) -> tuple[str, str] | None:
         """Fetch the parsed content and canonical URL of a specific MediaWiki page.
 
         Fetches rendered HTML content instead of raw wikitext because:
@@ -237,40 +227,36 @@ class MediaWikiIngestionJob(IngestionJob):
             A tuple of (parsed_content, canonical_url), or None if page doesn't exist or fetch failed
         """
         # First get the canonical URL using the info API
-        url_data = self._get_page_data(
-            page_title,
-            prop='info',
-            inprop='url'
-        )
+        url_data = self._get_page_data(page_title, prop="info", inprop="url")
         if not url_data:
             return None
 
-        canonical_url = url_data.get('canonicalurl')
+        canonical_url = url_data.get("canonicalurl")
         if not canonical_url:
             logger.warning(f"No URL found for page '{page_title}'")
             return None
 
         # Now get the parsed content
         params = {
-            'action': 'parse',
-            'page': page_title,
-            'prop': 'text',
-            'disableeditsection': 'true',
-            'disabletoc': 'true',
-            'disablelimitreport': 'true',
-            'format': 'json'
+            "action": "parse",
+            "page": page_title,
+            "prop": "text",
+            "disableeditsection": "true",
+            "disabletoc": "true",
+            "disablelimitreport": "true",
+            "format": "json",
         }
 
         parsed_data = self._make_api_request(params)
         if not parsed_data:
             return None
 
-        parse_result = parsed_data.get('parse', {})
+        parse_result = parsed_data.get("parse", {})
         if not parse_result:
             logger.warning(f"No parse result for page '{page_title}'")
             return None
 
-        html_content = parse_result.get('text', {}).get('*', '')
+        html_content = parse_result.get("text", {}).get("*", "")
         if not html_content:
             logger.warning(f"No content in parse result for page '{page_title}'")
             return None
@@ -280,7 +266,7 @@ class MediaWikiIngestionJob(IngestionJob):
 
         return clean_content, canonical_url
 
-    def _get_page_url(self, page_title: str) -> Optional[str]:
+    def _get_page_url(self, page_title: str) -> str | None:
         """Get the canonical URL for a MediaWiki page.
 
         This is a convenience method that extracts just the URL from _get_page_info.
@@ -304,12 +290,12 @@ class MediaWikiIngestionJob(IngestionJob):
         try:
             # Configure html2text for clean MediaWiki content extraction
             h = html2text.HTML2Text()
-            h.ignore_links = True          # Remove link URLs, keep link text
-            h.ignore_images = True         # Remove image references
-            h.body_width = 0               # No line wrapping
-            h.ul_item_mark = '-'           # Use dashes for unordered lists
-            h.emphasis_mark = '*'          # Use * for emphasis instead of _
-            h.strong_mark = '**'           # Use ** for strong emphasis
+            h.ignore_links = True  # Remove link URLs, keep link text
+            h.ignore_images = True  # Remove image references
+            h.body_width = 0  # No line wrapping
+            h.ul_item_mark = "-"  # Use dashes for unordered lists
+            h.emphasis_mark = "*"  # Use * for emphasis instead of _
+            h.strong_mark = "**"  # Use ** for strong emphasis
 
             # Convert HTML to clean Markdown
             result = h.handle(html_content).strip()
@@ -319,12 +305,11 @@ class MediaWikiIngestionJob(IngestionJob):
         except Exception as e:
             logger.error(f"html2text conversion failed: {e}")
             # Fallback to basic text extraction
-            clean_text = re.sub(r'<[^>]+>', '', html_content)
-            clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+            clean_text = re.sub(r"<[^>]+>", "", html_content)
+            clean_text = re.sub(r"\s+", " ", clean_text).strip()
             return clean_text
 
-
-    def _get_pages_last_modified(self, page_titles: list[str]) -> Dict[str, Optional[datetime]]:
+    def _get_pages_last_modified(self, page_titles: list[str]) -> dict[str, datetime | None]:
         """Get last modified timestamps for multiple MediaWiki pages.
 
         Args:
@@ -339,13 +324,13 @@ class MediaWikiIngestionJob(IngestionJob):
             return {}
 
         # MediaWiki API can handle multiple titles in one query, separated by |
-        titles_param = '|'.join(page_titles)
+        titles_param = "|".join(page_titles)
 
         params = {
-            'action': 'query',
-            'titles': titles_param,
-            'prop': 'revisions',
-            'rvprop': 'timestamp'
+            "action": "query",
+            "titles": titles_param,
+            "prop": "revisions",
+            "rvprop": "timestamp",
         }
 
         data = self._make_api_request(params)
@@ -353,23 +338,23 @@ class MediaWikiIngestionJob(IngestionJob):
             # Return None for all pages if request failed
             return {title: None for title in page_titles}
 
-        pages = data.get('query', {}).get('pages', {})
+        pages = data.get("query", {}).get("pages", {})
 
         # Build title -> page data mapping for efficient lookup
-        title_to_page = {page_info.get('title'): page_info for page_info in pages.values()}
+        title_to_page = {page_info.get("title"): page_info for page_info in pages.values()}
 
         result = {}
         for title in page_titles:
             page_data = title_to_page.get(title)
 
-            if not page_data or 'pageid' not in page_data:
+            if not page_data or "pageid" not in page_data:
                 # Page doesn't exist or is missing
                 result[title] = None
                 continue
 
-            revisions = page_data.get('revisions', [])
+            revisions = page_data.get("revisions", [])
             if revisions:
-                timestamp_str = revisions[0].get('timestamp')
+                timestamp_str = revisions[0].get("timestamp")
                 if timestamp_str:
                     try:
                         # MediaWiki timestamps are in ISO 8601 format and parse directly
@@ -383,7 +368,6 @@ class MediaWikiIngestionJob(IngestionJob):
                 result[title] = None
 
         return result
-
 
     def list_items(self) -> Iterator[IngestionItem]:
         """Discover all pages in the MediaWiki instance and yield ingestion items.
@@ -401,7 +385,7 @@ class MediaWikiIngestionJob(IngestionJob):
         page_batch = []
 
         for page in self._get_all_pages():
-            page_title = page.get('title')
+            page_title = page.get("title")
             if not page_title:
                 continue
 
@@ -434,7 +418,7 @@ class MediaWikiIngestionJob(IngestionJob):
             yield IngestionItem(
                 id=f"mediawiki:{page_title}",
                 source_ref=page_title,
-                last_modified=last_modified
+                last_modified=last_modified,
             )
 
         # Rate limiting between batch requests
@@ -460,7 +444,7 @@ class MediaWikiIngestionJob(IngestionJob):
 
         content, url = page_info
         # Cache URL for use in get_document_metadata()
-        item._metadata_cache['page_url'] = url
+        item._metadata_cache["page_url"] = url
         return content
 
     def get_item_name(self, item: IngestionItem) -> str:
@@ -475,10 +459,10 @@ class MediaWikiIngestionJob(IngestionJob):
         page_title = item.source_ref
 
         # Replace problematic characters with underscores
-        safe_name = re.sub(r'[^\w\-_\.]', '_', page_title)
+        safe_name = re.sub(r"[^\w\-_\.]", "_", page_title)
 
         # Ensure it doesn't start/end with underscore and limit length
-        safe_name = safe_name.strip('_')
+        safe_name = safe_name.strip("_")
         safe_name = safe_name[:255]
 
         # Handle edge case where sanitization results in empty string
@@ -507,7 +491,14 @@ class MediaWikiIngestionJob(IngestionJob):
         # get_raw_content() will cache the URL in item._metadata_cache
         return super().process_item(item)
 
-    def get_document_metadata(self, item: IngestionItem, item_name: str, checksum: str, version: int, last_modified: datetime) -> Dict[str, Any]:
+    def get_document_metadata(
+        self,
+        item: IngestionItem,
+        item_name: str,
+        checksum: str,
+        version: int,
+        last_modified: datetime,
+    ) -> dict[str, Any]:
         """Generate document metadata with MediaWiki-specific page URL.
 
         Uses explicitly cached URL from process_item() to avoid coupling to base class internals.
@@ -526,7 +517,7 @@ class MediaWikiIngestionJob(IngestionJob):
         metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
 
         # Get URL from explicitly cached data
-        page_url = item._metadata_cache.get('page_url')
+        page_url = item._metadata_cache.get("page_url")
         if page_url:
             metadata["url"] = page_url
         else:
