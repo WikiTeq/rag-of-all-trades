@@ -1,2 +1,2 @@
-from .metadata import MetaData
-from .embedding import DataEmbeddings
+from .embedding import DataEmbeddings as DataEmbeddings
+from .metadata import MetaData as MetaData
