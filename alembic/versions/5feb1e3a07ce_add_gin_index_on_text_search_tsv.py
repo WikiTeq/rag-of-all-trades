@@ -10,16 +10,17 @@ Revises: 416bd1e5f60a
 Create Date: 2026-02-27
 
 """
-from typing import Sequence, Union
+
+from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
-
 revision: str = "5feb1e3a07ce"
-down_revision: Union[str, Sequence[str], None] = "416bd1e5f60a"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | Sequence[str] | None = "416bd1e5f60a"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

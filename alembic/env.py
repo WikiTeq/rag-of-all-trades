@@ -1,11 +1,10 @@
 from logging.config import fileConfig
 
 from sqlalchemy import engine_from_config, pool, text
-from alembic import context
 
+from alembic import context
 from utils.config import settings
 from utils.db import Base
-import models
 
 # Alembic Config object
 config = context.config
@@ -19,6 +18,7 @@ if config.config_file_name is not None:
 DATABASE_URL = settings.env.DATABASE_URL
 if DATABASE_URL:
     config.set_main_option("sqlalchemy.url", DATABASE_URL)
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
