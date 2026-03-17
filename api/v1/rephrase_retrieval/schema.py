@@ -1,20 +1,22 @@
 from pydantic import BaseModel
-from typing import List, Optional, Dict
 
-#Request Model
+
+# Request Model
 class QueryRequest(BaseModel):
     query: str
 
-#Source Reference Model
+
+# Source Reference Model
 class SourceReference(BaseModel):
-    source_name: Optional[str] = None
-    source_type: Optional[str] = None
-    url: Optional[str] = None
-    score: Optional[float] = None
-    title: Optional[str] = None
-    text: Optional[str] = None
-    extras: Optional[Dict] = None
+    source_name: str | None = None
+    source_type: str | None = None
+    url: str | None = None
+    score: float | None = None
+    title: str | None = None
+    text: str | None = None
+    extras: dict | None = None
+
 
 class QueryResponse(BaseModel):
     answer: str
-    references: List[SourceReference]
+    references: list[SourceReference]

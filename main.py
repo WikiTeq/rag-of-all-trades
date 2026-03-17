@@ -1,26 +1,25 @@
 import logging
-from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
 
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from llama_index.vector_stores.postgres import PGVectorStore
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
+
 from api.v1 import api_v1_router
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
-from utils.config import settings
 from celery_app import celery_app
+from utils.config import settings
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address)
+
 
 def validate_configuration():
     """Validate critical configuration on startup."""
@@ -63,11 +62,12 @@ def validate_configuration():
 
     logger.info("Configuration validation passed")
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan event handler for startup and shutdown."""
 
-    #Startup - Validate configuration first
+    # Startup - Validate configuration first
     validate_configuration()
 
     postgres = settings.POSTGRES
@@ -92,13 +92,13 @@ async def lifespan(app: FastAPI):
 
     # Initialize RAG engine
     app.state.rag_engine = RAGQueryEngine(app.state.vector_store)
-    logger.info(f"Vector store and RAG engine initialized")
+    logger.info("Vector store and RAG engine initialized")
 
     # Yield to FastAPI runtime
     yield
 
     # Shutdown
-    logger.info(f"Cleaning up resources... done.")
+    logger.info("Cleaning up resources... done.")
 
 
 # Create app instance
@@ -113,7 +113,7 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-#Middleware
+# Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.env.CORS_ORIGINS,
@@ -121,6 +121,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.get("/health")
 def health_check():
@@ -130,7 +131,7 @@ def health_check():
     try:
         response = celery_app.control.ping(timeout=1.0)
         celery_ok = bool(response)
-    except Exception as e:
+    except Exception:
         celery_ok = False
 
     return {
@@ -139,8 +140,10 @@ def health_check():
         "celery_healthy": celery_ok,
     }
 
+
 @app.get("/")
 async def read_root():
     return {"message": "Welcome to RAG Service Backend"}
+
 
 app.include_router(api_v1_router)

@@ -1,9 +1,11 @@
-from models.metadata import MetaData
-from models.embedding import DataEmbeddings
 from sqlalchemy import delete
+
+from models.embedding import DataEmbeddings
+from models.metadata import MetaData
 from utils.db import get_db_session
 
-#MetadataTracker
+
+# MetadataTracker
 class MetadataTracker:
     def __init__(self):
         pass

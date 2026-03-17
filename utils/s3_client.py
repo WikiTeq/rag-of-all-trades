@@ -1,6 +1,8 @@
 import boto3
 from botocore.exceptions import ClientError
+
 from utils.config import settings
+
 
 def get_s3_client(
     bucket: str = None,
@@ -8,7 +10,7 @@ def get_s3_client(
     access_key: str = None,
     secret_key: str = None,
     region: str = None,
-    use_ssl: bool = True
+    use_ssl: bool = True,
 ):
     """
     Return S3 client + bucket.
@@ -20,7 +22,7 @@ def get_s3_client(
             s3_sources = [s for s in settings.SOURCES if s["type"] == "s3"]
             if not s3_sources:
                 raise RuntimeError("No S3 sources configured in settings.")
-            
+
             source = s3_sources[0]
             cfg = source["config"]
             bucket = bucket or cfg.get("bucket_override")

@@ -1,6 +1,7 @@
-from sqlalchemy import Column, Integer, String, DateTime, JSON, func
-from sqlalchemy.sql import func
+from sqlalchemy import JSON, Column, DateTime, Integer, String, func
+
 from utils.db import Base
+
 
 class MetaData(Base):
     __tablename__ = "metadata"
