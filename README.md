@@ -125,7 +125,7 @@ sources:
     config:
       path: "/data/docs" # required path to directory
       recursive: true # optional, default true
-      filter: "txt,md,pdf" # optional, comma-separated extensions
+      required_exts: "txt,md,pdf" # optional, comma-separated extensions
       exclude_hidden: true # optional, default true
       exclude_empty: false # optional, default false
       num_files_limit: 1000 # optional, positive integer
