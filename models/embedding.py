@@ -1,9 +1,10 @@
 import sqlalchemy as sa
-from sqlalchemy import Column, BigInteger, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
-from sqlalchemy.dialects.postgresql import TSVECTOR
+from sqlalchemy import BigInteger, Column, String, Text
+from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
+
 from utils.db import Base
+
 
 class DataEmbeddings(Base):
     __tablename__ = "data_embeddings"

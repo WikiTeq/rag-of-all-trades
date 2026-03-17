@@ -22,9 +22,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
     def test_source_type(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir}}
-            )
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
             self.assertEqual(job.source_type, "directory")
 
     def test_init_requires_path(self):
@@ -58,9 +56,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
                 str(nested_dir / "child.md"),
             ]
 
-            job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir}}
-            )
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
 
             items = list(job.list_items())
 
@@ -87,9 +83,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             nested_dir = base / "nested"
             nested_dir.mkdir()
             (nested_dir / "child.md").write_text("child", encoding="utf-8")
-            self.mock_directory_reader.list_resources.return_value = [
-                str(base / "root.txt")
-            ]
+            self.mock_directory_reader.list_resources.return_value = [str(base / "root.txt")]
 
             job = DirectoryIngestionJob(
                 {
@@ -110,9 +104,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             (base / "root.txt").write_text("root", encoding="utf-8")
             self.mock_directory_reader.list_resources.return_value = ["root.txt"]
 
-            job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir}}
-            )
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
 
             items = list(job.list_items())
 
@@ -158,9 +150,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
             self.mock_directory_reader.load_resource.return_value = [Mock(text="Converted text")]
 
-            job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir}}
-            )
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
 
             item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
             result = job.get_raw_content(item)
@@ -178,9 +168,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
                 Mock(text="Part 2"),
             ]
 
-            job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir}}
-            )
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
 
             item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
             result = job.get_raw_content(item)
@@ -194,9 +182,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
             self.mock_directory_reader.load_resource.side_effect = ValueError("bad loader")
 
-            job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir}}
-            )
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
 
             item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
             with patch("tasks.directory_ingestion.logger.warning") as mock_warning:
@@ -215,9 +201,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             file_path.write_text("fallback text", encoding="utf-8")
             self.mock_directory_reader.load_resource.return_value = []
 
-            job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir}}
-            )
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
 
             item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
             result = job.get_raw_content(item)
@@ -228,9 +212,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             missing_path = Path(temp_dir) / "missing.txt"
             self.mock_directory_reader.load_resource.side_effect = ValueError("missing file")
-            job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir}}
-            )
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
 
             item = IngestionItem(id=f"file://{missing_path}", source_ref=missing_path)
             with patch("tasks.directory_ingestion.logger.warning") as mock_warning:
@@ -303,23 +285,17 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             file_path = nested_dir / "Angstrom ?.txt"
             file_path.write_text("x", encoding="utf-8")
 
-            job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir}}
-            )
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
             item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
 
             self.assertEqual(job.get_item_name(item), "A_folder_Angstrom_.txt")
 
     def test_get_item_name_fallback_to_bare_filename_when_path_outside_base(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir}}
-            )
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
             # Item whose path is outside the configured base (e.g. symlink escape)
             outside_path = Path(temp_dir).resolve().parent / "outside_dir" / "file.txt"
-            item = IngestionItem(
-                id=f"file://{outside_path}", source_ref=outside_path
-            )
+            item = IngestionItem(id=f"file://{outside_path}", source_ref=outside_path)
             # Falls back to bare filename when relative_to raises ValueError
             self.assertEqual(job.get_item_name(item), "file.txt")
 

@@ -16,9 +16,7 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
             },
         }
 
-    def _make_response(
-        self, status_code=200, json_data=None, raise_for_status=None
-    ):
+    def _make_response(self, status_code=200, json_data=None, raise_for_status=None):
         mock_resp = Mock()
         mock_resp.status_code = status_code
         if raise_for_status:
@@ -102,12 +100,8 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
         self.assertEqual(result, "Title only\nSnippet only")
 
     @patch("tasks.serpapi_ingestion.requests.get")
-    def test_get_raw_content_returns_empty_on_no_organic_results(
-        self, mock_get
-    ):
-        mock_get.return_value = self._make_response(
-            json_data={"organic_results": []}
-        )
+    def test_get_raw_content_returns_empty_on_no_organic_results(self, mock_get):
+        mock_get.return_value = self._make_response(json_data={"organic_results": []})
 
         job = SerpAPIIngestionJob(self.config)
         result = job.get_raw_content("Python news")
@@ -128,9 +122,7 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
 
     @patch("tasks.serpapi_ingestion.requests.get")
     def test_get_raw_content_returns_empty_on_network_error(self, mock_get):
-        mock_get.side_effect = requests.exceptions.ConnectionError(
-            "no route to host"
-        )
+        mock_get.side_effect = requests.exceptions.ConnectionError("no route to host")
 
         job = SerpAPIIngestionJob(self.config)
         result = job.get_raw_content("Python news")
@@ -139,9 +131,7 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
 
     @patch("tasks.serpapi_ingestion.requests.get")
     def test_get_raw_content_passes_correct_params(self, mock_get):
-        mock_get.return_value = self._make_response(
-            json_data={"organic_results": []}
-        )
+        mock_get.return_value = self._make_response(json_data={"organic_results": []})
 
         job = SerpAPIIngestionJob(self.config)
         job.get_raw_content("Python news")

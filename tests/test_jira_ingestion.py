@@ -119,9 +119,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.assertEqual(job.source_type, "jira")
 
     def test_basic_auth_creates_jira_client_with_basic_auth(self):
-        self._make_job(
-            auth_type="basic", email="u@example.com", api_token="tok"
-        )
+        self._make_job(auth_type="basic", email="u@example.com", api_token="tok")
         self.mock_jira_class.assert_called_once_with(
             server="https://jira.example.com",
             basic_auth=("u@example.com", "tok"),
@@ -140,9 +138,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         self._make_job(server_url="https://jira.example.com/")
         call_kwargs = self.mock_jira_class.call_args
         # For basic auth the server kwarg is used
-        self.assertEqual(
-            call_kwargs.kwargs["server"], "https://jira.example.com"
-        )
+        self.assertEqual(call_kwargs.kwargs["server"], "https://jira.example.com")
 
     def test_missing_server_url_raises(self):
         with self.assertRaises(ValueError):
@@ -228,9 +224,7 @@ class TestJiraIngestionJob(unittest.TestCase):
 
     def test_list_items_yields_ingestion_items(self):
         issue1 = _make_issue(key="TEST-1")
-        issue2 = _make_issue(
-            key="TEST-2", updated="2024-07-01T00:00:00.000+0000"
-        )
+        issue2 = _make_issue(key="TEST-2", updated="2024-07-01T00:00:00.000+0000")
         self.mock_jira.search_issues.return_value = [issue1, issue2]
 
         job = self._make_job()
@@ -278,9 +272,7 @@ class TestJiraIngestionJob(unittest.TestCase):
 
         self.assertEqual(len(items), 101)
         self.assertEqual(self.mock_jira.search_issues.call_count, 2)
-        second_call_kwargs = self.mock_jira.search_issues.call_args_list[
-            1
-        ].kwargs
+        second_call_kwargs = self.mock_jira.search_issues.call_args_list[1].kwargs
         self.assertEqual(second_call_kwargs["startAt"], 100)
 
     def test_list_items_empty_result(self):
@@ -338,9 +330,7 @@ class TestJiraIngestionJob(unittest.TestCase):
     def test_get_raw_content_returns_markdown_with_summary_and_description(
         self,
     ):
-        issue = _make_issue(
-            summary="My Issue", description="Some description text"
-        )
+        issue = _make_issue(summary="My Issue", description="Some description text")
         item = IngestionItem(id="jira:TEST-1", source_ref=issue)
 
         # MarkItDown passes text through (simulate)
@@ -509,9 +499,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         # Jira-specific fields
         self.assertEqual(metadata["id"], "10001")
         self.assertEqual(metadata["title"], "My Issue")
-        self.assertEqual(
-            metadata["url"], "https://jira.example.com/browse/TEST-1"
-        )
+        self.assertEqual(metadata["url"], "https://jira.example.com/browse/TEST-1")
         self.assertEqual(metadata["assignee"], "Alice")
         self.assertEqual(metadata["reporter"], "Bob")
         self.assertEqual(metadata["status"], "In Progress")
@@ -644,9 +632,7 @@ class TestJiraIngestionJob(unittest.TestCase):
                             "content": [
                                 {
                                     "type": "paragraph",
-                                    "content": [
-                                        {"type": "text", "text": "Item one"}
-                                    ],
+                                    "content": [{"type": "text", "text": "Item one"}],
                                 }
                             ],
                         }
@@ -663,9 +649,7 @@ class TestJiraIngestionJob(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_parse_jira_timestamp_valid(self):
-        result = JiraIngestionJob._parse_jira_timestamp(
-            "2024-06-15T10:30:00.000+0000"
-        )
+        result = JiraIngestionJob._parse_jira_timestamp("2024-06-15T10:30:00.000+0000")
         self.assertIsNotNone(result)
         self.assertEqual(result.year, 2024)
         self.assertEqual(result.month, 6)
@@ -682,9 +666,7 @@ class TestJiraIngestionJob(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_process_item_calls_vector_store_and_metadata_tracker(self):
-        issue = _make_issue(
-            key="TEST-99", summary="Full flow", description="desc"
-        )
+        issue = _make_issue(key="TEST-99", summary="Full flow", description="desc")
         item = IngestionItem(
             id="jira:TEST-99",
             source_ref=issue,
@@ -699,12 +681,8 @@ class TestJiraIngestionJob(unittest.TestCase):
         job.vector_manager.insert_documents = Mock()
 
         with (
-            patch.object(
-                job.metadata_tracker, "get_latest_record", return_value=None
-            ),
-            patch.object(
-                job.metadata_tracker, "record_metadata"
-            ) as mock_record,
+            patch.object(job.metadata_tracker, "get_latest_record", return_value=None),
+            patch.object(job.metadata_tracker, "record_metadata") as mock_record,
             patch.object(job.metadata_tracker, "delete_previous_embeddings"),
         ):
             result = job.process_item(item)
@@ -724,9 +702,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         job = self._make_job()
         job._seen_add = Mock(return_value=False)  # simulate already seen
 
-        with patch.object(
-            job.metadata_tracker, "get_latest_record", return_value=None
-        ):
+        with patch.object(job.metadata_tracker, "get_latest_record", return_value=None):
             with patch.object(job.metadata_tracker, "record_metadata"):
                 job.vector_manager.insert_documents = Mock()
                 result = job.process_item(item)

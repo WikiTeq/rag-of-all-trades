@@ -1,16 +1,15 @@
-from typing import List, Optional, Dict, Any
-from llama_index.core import VectorStoreIndex
-from llama_index.core.vector_stores.types import VectorStore
-from llama_index.core.schema import NodeWithScore
+from typing import Any
 
+from llama_index.core import Settings, VectorStoreIndex
+from llama_index.core.schema import NodeWithScore
 from llama_index.core.vector_stores.types import (
+    FilterCondition,
+    FilterOperator,
     MetadataFilter,
     MetadataFilters,
-    FilterOperator,
-    FilterCondition,
+    VectorStore,
 )
 
-from llama_index.core import Settings
 from utils.llm_embedding import embed_model, llm
 
 Settings.llm = llm
@@ -22,45 +21,26 @@ class RAGQueryEngine:
         self.vector_store = vector_store
         self._index_cache = None  # Cache the index to avoid recreating it
 
-    #Convert metadata dict → LlamaIndex MetadataFilters
-    def _build_filter_object(
-        self,
-        metadata: Optional[Dict[str, Any]]
-    ) -> Optional[MetadataFilters]:
-
+    # Convert metadata dict → LlamaIndex MetadataFilters
+    def _build_filter_object(self, metadata: dict[str, Any] | None) -> MetadataFilters | None:
         if not metadata:
             return None
 
-        filters: List[MetadataFilter] = []
+        filters: list[MetadataFilter] = []
 
         for key, value in metadata.items():
             if isinstance(value, list):
                 # multiple values -> IN operator
-                filters.append(
-                    MetadataFilter(
-                        key=key,
-                        value=value,
-                        operator=FilterOperator.IN
-                    )
-                )
+                filters.append(MetadataFilter(key=key, value=value, operator=FilterOperator.IN))
             else:
                 # single value -> EQ
-                filters.append(
-                    MetadataFilter(
-                        key=key,
-                        value=value,
-                        operator=FilterOperator.EQ
-                    )
-                )
+                filters.append(MetadataFilter(key=key, value=value, operator=FilterOperator.EQ))
 
-        return MetadataFilters(
-            filters=filters,
-            condition=FilterCondition.AND
-        )
-    
+        return MetadataFilters(filters=filters, condition=FilterCondition.AND)
+
     # Create cleaned reference objects
     @staticmethod
-    def build_references(nodes: List[NodeWithScore]):
+    def build_references(nodes: list[NodeWithScore]):
         refs = []
         for n in nodes:
             md = n.node.metadata or {}
@@ -93,9 +73,8 @@ class RAGQueryEngine:
         self,
         query: str,
         top_k: int = 5,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> List[NodeWithScore]:
-
+        metadata: dict[str, Any] | None = None,
+    ) -> list[NodeWithScore]:
         # Use cached index to avoid recreating on every query
         if self._index_cache is None:
             self._index_cache = VectorStoreIndex.from_vector_store(self.vector_store)

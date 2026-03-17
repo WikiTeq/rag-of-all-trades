@@ -1,8 +1,9 @@
 # Standard library imports
 import logging
 import re
+from collections.abc import Iterator
 from datetime import datetime
-from typing import Any, Dict, Iterator, Optional
+from typing import Any
 
 # Third-party imports
 from jira import JIRA
@@ -57,9 +58,7 @@ class JiraIngestionJob(IngestionJob):
 
         self.auth_type = cfg.get("auth_type", "").lower()
         if self.auth_type not in ("basic", "token"):
-            raise ValueError(
-                "auth_type must be 'basic' or 'token' in Jira connector config"
-            )
+            raise ValueError("auth_type must be 'basic' or 'token' in Jira connector config")
 
         self.api_token = cfg.get("api_token", "").strip()
         if not self.api_token:
@@ -68,9 +67,7 @@ class JiraIngestionJob(IngestionJob):
         if self.auth_type == "basic":
             self.email = cfg.get("email", "").strip()
             if not self.email:
-                raise ValueError(
-                    "email is required when auth_type is 'basic' in Jira connector config"
-                )
+                raise ValueError("email is required when auth_type is 'basic' in Jira connector config")
         else:
             self.email = None
 
@@ -120,13 +117,9 @@ class JiraIngestionJob(IngestionJob):
         Paginates automatically until max_results is reached or all matching
         issues have been returned.
         """
-        logger.info(
-            f"[{self.source_name}] Listing issues with JQL: {self.jql!r}"
-        )
+        logger.info(f"[{self.source_name}] Listing issues with JQL: {self.jql!r}")
 
-        page_size = min(
-            100, self.max_results
-        )  # Jira Cloud caps at 100 per request
+        page_size = min(100, self.max_results)  # Jira Cloud caps at 100 per request
         start_at = 0
         fetched = 0
 
@@ -140,18 +133,14 @@ class JiraIngestionJob(IngestionJob):
                     fields="summary,description,status,assignee,reporter,labels,project,priority,issuetype,updated,created,comment",
                 )
             except Exception as e:
-                logger.error(
-                    f"[{self.source_name}] Failed to search issues: {e}"
-                )
+                logger.error(f"[{self.source_name}] Failed to search issues: {e}")
                 break
 
             if not issues:
                 break
 
             for issue in issues:
-                updated_at = self._parse_jira_timestamp(
-                    getattr(issue.fields, "updated", None)
-                )
+                updated_at = self._parse_jira_timestamp(getattr(issue.fields, "updated", None))
                 yield IngestionItem(
                     id=f"jira:{issue.key}",
                     source_ref=issue,
@@ -214,14 +203,12 @@ class JiraIngestionJob(IngestionJob):
         checksum: str,
         version: int,
         last_modified: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build metadata dict with all required Jira-specific fields."""
         issue = item.source_ref
         fields = issue.fields
 
-        metadata = super().get_document_metadata(
-            item, item_name, checksum, version, last_modified
-        )
+        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
 
         # Extend with Jira-specific fields
         metadata.update(
@@ -229,12 +216,8 @@ class JiraIngestionJob(IngestionJob):
                 "url": item._metadata_cache.get("issue_url", ""),
                 "title": getattr(fields, "summary", "") or "",
                 "id": issue.id,
-                "assignee": self._safe_display_name(
-                    getattr(fields, "assignee", None)
-                ),
-                "reporter": self._safe_display_name(
-                    getattr(fields, "reporter", None)
-                ),
+                "assignee": self._safe_display_name(getattr(fields, "assignee", None)),
+                "reporter": self._safe_display_name(getattr(fields, "reporter", None)),
                 "status": self._safe_get(fields, "status", "name") or "",
                 "labels": list(getattr(fields, "labels", []) or []),
                 "project": self._safe_get(fields, "project", "name") or "",
@@ -303,9 +286,7 @@ class JiraIngestionJob(IngestionJob):
         try:
             comments = self._jira.comments(issue)
         except Exception as e:
-            logger.warning(
-                f"[{self.source_name}] Failed to fetch comments for {issue.key}: {e}"
-            )
+            logger.warning(f"[{self.source_name}] Failed to fetch comments for {issue.key}: {e}")
             return ""
 
         if not comments:
@@ -331,7 +312,7 @@ class JiraIngestionJob(IngestionJob):
         return getattr(obj, "displayName", "") or ""
 
     @staticmethod
-    def _safe_get(fields: Any, attr: str, sub_attr: str) -> Optional[str]:
+    def _safe_get(fields: Any, attr: str, sub_attr: str) -> str | None:
         """Safely navigate two levels of attribute access."""
         obj = getattr(fields, attr, None)
         if obj is None:
@@ -339,7 +320,7 @@ class JiraIngestionJob(IngestionJob):
         return getattr(obj, sub_attr, None)
 
     @staticmethod
-    def _parse_jira_timestamp(value: Optional[str]) -> Optional[datetime]:
+    def _parse_jira_timestamp(value: str | None) -> datetime | None:
         """Parse a Jira ISO-8601 timestamp string into a datetime object."""
         if not value:
             return None
