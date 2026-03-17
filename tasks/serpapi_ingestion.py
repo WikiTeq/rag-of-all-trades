@@ -5,9 +5,7 @@ import requests
 from tasks.base import IngestionJob
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -28,9 +26,7 @@ class SerpAPIIngestionJob(IngestionJob):
             queries = [q.strip() for q in queries.split(",") if q.strip()]
 
         if not queries:
-            raise ValueError(
-                f"[{config.get('name')}] SerpAPI connector requires at least one query"
-            )
+            raise ValueError(f"[{config.get('name')}] SerpAPI connector requires at least one query")
 
         self.search_queries = queries
 
@@ -54,16 +50,8 @@ class SerpAPIIngestionJob(IngestionJob):
 
             # SerpAPI returns a rich JSON response; we extract only titles and snippets
             # from organic_results as a lightweight plain-text representation
-            titles = [
-                r.get("title")
-                for r in data.get("organic_results", [])
-                if r.get("title")
-            ]
-            snippets = [
-                r.get("snippet")
-                for r in data.get("organic_results", [])
-                if r.get("snippet")
-            ]
+            titles = [r.get("title") for r in data.get("organic_results", []) if r.get("title")]
+            snippets = [r.get("snippet") for r in data.get("organic_results", []) if r.get("snippet")]
 
             text_content = "\n".join(titles + snippets).strip()
             return text_content

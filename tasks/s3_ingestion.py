@@ -1,21 +1,20 @@
 import io
-import re
 import logging
+import re
 import unicodedata
+
 from markitdown import MarkItDown
+
 from tasks.base import IngestionJob
-from utils.s3_client import get_s3_client
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.s3_client import get_s3_client
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+
 class S3IngestionJob(IngestionJob):
-    
     @property
     def source_type(self) -> str:
         return "s3"

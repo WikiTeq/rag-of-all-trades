@@ -8,7 +8,7 @@ from utils.config import settings
 
 DATABASE_URL = settings.env.DATABASE_URL
 
-#Dynamic pool sizing based on Celery concurrency
+# Dynamic pool sizing based on Celery concurrency
 CELERY_CONCURRENCY = settings.env.CELERY_CONCURRENCY
 
 MAX_TOTAL_CONNECTIONS = 90  # Leave room for webconnections
@@ -22,17 +22,18 @@ max_overflow = max(0, per_worker_limit - pool_size)
 engine = create_engine(
     DATABASE_URL,
     poolclass=QueuePool,
-    pool_size=pool_size,       # Number of connections to maintain
-    max_overflow=max_overflow, # Additional connections allowed under load
-    pool_pre_ping=True,        # Verify connections before using them
-    pool_recycle=3600,         # Recycle connections after 1 hour
-    pool_timeout=30,           # Wait up to 30s for available connection
-    echo=False,                # Set to True for SQL query logging in dev
+    pool_size=pool_size,  # Number of connections to maintain
+    max_overflow=max_overflow,  # Additional connections allowed under load
+    pool_pre_ping=True,  # Verify connections before using them
+    pool_recycle=3600,  # Recycle connections after 1 hour
+    pool_timeout=30,  # Wait up to 30s for available connection
+    echo=False,  # Set to True for SQL query logging in dev
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
+
 
 @contextmanager
 def get_db_session():

@@ -1,16 +1,19 @@
-from abc import ABC, abstractmethod
-from collections import OrderedDict
-from collections.abc import Iterable
 import gc
 import hashlib
 import logging
-from typing import Dict, Any
+from abc import ABC, abstractmethod
+from collections import OrderedDict
+from collections.abc import Iterable
+from typing import Any
+
 from llama_index.core import Document
+
+from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.helper_classes.metadata_tracker import MetadataTracker
 from tasks.helper_classes.vector_store import VectorStoreManager
-from tasks.helper_classes.ingestion_item import IngestionItem
 
 logger = logging.getLogger(__name__)
+
 
 class IngestionJob(ABC):
     """Abstract base class for all ingestion jobs that process content from various sources.
@@ -80,7 +83,14 @@ class IngestionJob(ABC):
         """
         pass
 
-    def get_document_metadata(self, item: IngestionItem, item_name: str, checksum: str, version: int, last_modified) -> Dict[str, Any]:
+    def get_document_metadata(
+        self,
+        item: IngestionItem,
+        item_name: str,
+        checksum: str,
+        version: int,
+        last_modified,
+    ) -> dict[str, Any]:
         """Generate metadata dictionary for the document to be stored in the vector database.
 
         This method can be overridden by subclasses to add source-specific metadata
@@ -179,9 +189,9 @@ class IngestionJob(ABC):
             version = (latest.version + 1) if latest else 1
 
             docs = Document(
-                    text=raw_content,
-                    metadata=self.get_document_metadata(item, item_name, new_checksum, version, last_modified)
-                )
+                text=raw_content,
+                metadata=self.get_document_metadata(item, item_name, new_checksum, version, last_modified),
+            )
 
             self.vector_manager.insert_documents([docs])
 
@@ -191,7 +201,7 @@ class IngestionJob(ABC):
                 version,
                 1,
                 last_modified,
-                extra_metadata={"source_name": self.source_name}
+                extra_metadata={"source_name": self.source_name},
             )
 
             logger.info(f"Successfully ingested: {item_name} (version {version})")
@@ -216,7 +226,6 @@ class IngestionJob(ABC):
         """
         total = 0
         skipped = 0
-        errors = 0
 
         logger.info(f"[{self.source_name}] Starting ingestion job")
 

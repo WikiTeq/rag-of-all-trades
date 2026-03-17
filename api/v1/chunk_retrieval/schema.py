@@ -1,10 +1,12 @@
+from typing import Any
+
 from pydantic import BaseModel, field_validator
-from typing import List, Optional, Dict, Any
+
 
 class QueryRequest(BaseModel):
     query: str
     top_k: int = 20
-    metadata_filters: Optional[Dict[str, Any]] = None
+    metadata_filters: dict[str, Any] | None = None
 
     # Validator for top_k
     @field_validator("top_k")
@@ -14,15 +16,17 @@ class QueryRequest(BaseModel):
             raise ValueError("top_k must be between 1 and 100")
         return value
 
+
 class SourceReference(BaseModel):
-    source_name: Optional[str] = None
-    source_type: Optional[str] = None
-    url: Optional[str] = None
-    score: Optional[float] = None
-    title: Optional[str] = None
-    text: Optional[str] = None
-    extras: Optional[Dict] = None
+    source_name: str | None = None
+    source_type: str | None = None
+    url: str | None = None
+    score: float | None = None
+    title: str | None = None
+    text: str | None = None
+    extras: dict | None = None
+
 
 class QueryResponse(BaseModel):
-    references: List[SourceReference]
-    raw: Optional[List[str]] = None
+    references: list[SourceReference]
+    raw: list[str] | None = None

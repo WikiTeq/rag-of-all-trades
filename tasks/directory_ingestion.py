@@ -1,9 +1,9 @@
 import logging
 import re
 import unicodedata
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable, Optional
 
 from llama_index.core import SimpleDirectoryReader
 from pydantic import BaseModel, field_validator
@@ -12,10 +12,7 @@ from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -26,9 +23,9 @@ class DirectoryConnectorConfig(BaseModel):
     recursive: bool = True
     exclude_hidden: bool = True
     exclude_empty: bool = False
-    num_files_limit: Optional[int] = None
+    num_files_limit: int | None = None
     encoding: str = "utf-8"
-    required_exts: Optional[list[str]] = None
+    required_exts: list[str] | None = None
 
     model_config = {"extra": "ignore"}
 
@@ -129,9 +126,7 @@ class DirectoryIngestionJob(IngestionJob):
             try:
                 path.relative_to(base)
             except ValueError:
-                logger.warning(
-                    "Skipping path outside configured directory: %s", path
-                )
+                logger.warning("Skipping path outside configured directory: %s", path)
                 continue
             yield path
 
@@ -162,9 +157,7 @@ class DirectoryIngestionJob(IngestionJob):
         try:
             docs = self._load_documents_for_path(file_path)
         except Exception as exc:
-            logger.warning(
-                "[%s] SimpleDirectoryReader failed: %s", file_path, exc, exc_info=True
-            )
+            logger.warning("[%s] SimpleDirectoryReader failed: %s", file_path, exc, exc_info=True)
             return ""
 
         merged = "\n\n".join((doc.text or "").strip() for doc in docs if (doc.text or "").strip())

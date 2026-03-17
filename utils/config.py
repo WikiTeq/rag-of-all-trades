@@ -1,9 +1,9 @@
 import os
 from pathlib import Path
+
 import yaml
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
-from typing import List
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = BASE_DIR / ".env"
@@ -23,7 +23,7 @@ class EnvSettings(BaseSettings):
     OPENROUTER_API_KEY: str
     OPENROUTER_API_BASE: str
 
-    CELERY_CONCURRENCY: int = 2  #Default fallback
+    CELERY_CONCURRENCY: int = 2  # Default fallback
     MAX_TASK_CHILD: int = 50
     MAX_MEMORY_PER_CHILD: int = 300000
 
@@ -31,7 +31,7 @@ class EnvSettings(BaseSettings):
     ORT_DISABLE_GPU: int = 1
     ORT_DYLD_DISABLE_GPU: int = 1
 
-    CORS_ORIGINS: List[str] = []
+    CORS_ORIGINS: list[str] = []
 
     ENABLE_RATE_LIMIT: bool = True
     CHUNK_RATE_LIMIT: str = "30/minute"
@@ -44,15 +44,11 @@ class EnvSettings(BaseSettings):
             return [x.strip() for x in v.split(",") if x.strip()]
         return v
 
-    model_config = SettingsConfigDict(
-        env_file=ENV_PATH,
-        case_sensitive=True,
-        extra="allow"
-    )
+    model_config = SettingsConfigDict(env_file=ENV_PATH, case_sensitive=True, extra="allow")
 
 
 def load_yaml_with_env(path):
-    with open(path, "r") as f:
+    with open(path) as f:
         raw_yaml = f.read()
     # interpolate ${VAR} with os.environ
     for key, value in os.environ.items():
@@ -90,7 +86,7 @@ class Settings:
         return {
             "provider": self.yaml.get("embedding", {}).get("provider"),
             "model_config": self.yaml.get("embedding", {}).get("model_config"),
-            "dim": self.yaml.get("embedding", {}).get("embedding_dim")
+            "dim": self.yaml.get("embedding", {}).get("embedding_dim"),
         }
 
     @property
@@ -121,21 +117,17 @@ class Settings:
                         schedule_seconds = 3600
 
                     # Merge common chunk settings from embedding
-                    sources.append({
-                        "type": src_type,
-                        "name": f"{name}_{bucket}",
-                        "config": {**config, "buckets": [bucket],
-                                "bucket_override": bucket},
-                        "schedule": schedule_seconds
-                    })
+                    sources.append(
+                        {
+                            "type": src_type,
+                            "name": f"{name}_{bucket}",
+                            "config": {**config, "buckets": [bucket], "bucket_override": bucket},
+                            "schedule": schedule_seconds,
+                        }
+                    )
             else:
                 schedule_seconds = int(schedules[0]) if schedules else 3600
-                sources.append({
-                    "type": src_type,
-                    "name": name,
-                    "config": config,
-                    "schedule": schedule_seconds
-                })
+                sources.append({"type": src_type, "name": name, "config": config, "schedule": schedule_seconds})
         return sources
 
     @property
@@ -144,8 +136,8 @@ class Settings:
             "api_key": self.env.OPENROUTER_API_KEY,
             "base_url": self.env.OPENROUTER_API_BASE,
             "provider": self.yaml.get("inference", {}).get("provider"),
-            "llm_model": self.yaml.get("inference", {}).get("model_config")
+            "llm_model": self.yaml.get("inference", {}).get("model_config"),
         }
 
-settings = Settings()
 
+settings = Settings()

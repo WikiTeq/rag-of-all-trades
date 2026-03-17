@@ -512,6 +512,48 @@ TODO
 
 TODO
 
+## 🔧 Development
+
+### Pre-commit hooks
+
+This project uses [prek](https://github.com/j178/prek) (a fast, drop-in alternative to `pre-commit`) to enforce
+formatting and linting on every commit.
+
+**Install prek** (once, globally):
+
+```bash
+# Using pip
+pip install prek
+
+# Or using the standalone installer (Linux/macOS)
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/j178/prek/releases/latest/download/prek-installer.sh | sh
+```
+
+**Install the hooks** (once, per clone):
+
+```bash
+prek install
+```
+
+From that point on, every `git commit` will automatically run:
+
+| Hook | What it does |
+|---|---|
+| `trailing-whitespace` | Removes trailing whitespace |
+| `end-of-file-fixer` | Ensures files end with a newline |
+| `check-yaml` | Validates YAML syntax |
+| `check-merge-conflict` | Detects unresolved merge conflict markers |
+| `ruff` (lint) | Lints Python with auto-fix (pycodestyle, pyflakes, isort, pyupgrade) |
+| `ruff-format` | Formats Python code (replaces black) |
+
+**Run hooks manually** (without committing):
+
+```bash
+prek run --all-files
+```
+
+Ruff configuration is in [pyproject.toml](pyproject.toml) under `[tool.ruff]`.
+
 ## ✨ Contributions
 
 Contributions, suggestions, bug reports, and fixes are welcome!

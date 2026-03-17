@@ -19,8 +19,7 @@ class DummyIngestionJob(IngestionJob):
         return "dummy"
 
     def list_items(self):
-        for item in self._items:
-            yield item
+        yield from self._items
 
     def get_raw_content(self, item):
         return self._content_by_id.get(item.id, "")
