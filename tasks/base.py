@@ -72,14 +72,14 @@ class IngestionJob(ABC):
             converted = result.text_content or ""
             if converted.strip():
                 return converted
-            logger.debug("MarkItDown produced empty result; using fallback text")
+            logger.warning("MarkItDown produced empty result; using fallback text")
             return fallback_text
         except Exception as exc:
             logger.warning("MarkItDown conversion failed: %s; falling back", exc)
             return fallback_text
 
     def convert_text_to_markdown(self, text: str) -> str:
-        """Convert a plain-text or Jira-wiki string to Markdown using MarkItDown.
+        """Convert a plain-text string to Markdown using MarkItDown.
 
         Falls back to returning the original text unchanged when conversion
         fails or produces an empty result.
@@ -92,13 +92,7 @@ class IngestionJob(ABC):
         """
         if not text or not text.strip():
             return text
-        try:
-            result = self._get_markitdown().convert_stream(io.BytesIO(text.encode("utf-8")))
-            converted = result.text_content or ""
-            return converted.strip() if converted.strip() else text
-        except Exception as exc:
-            logger.warning("MarkItDown text conversion failed: %s; returning original", exc)
-            return text
+        return self.convert_bytes_to_markdown(text.encode("utf-8"), fallback_text=text)
 
     @property
     @abstractmethod
