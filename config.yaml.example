@@ -92,6 +92,19 @@ sources:
   #    max_comments: 10          # optional, default 10
   #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
+  #- type: "fireflies"
+  #  name: "fireflies1"
+  #  config:
+  #    api_key: "${FIREFLIES_API_KEY}"
+  #    filter_keyword: ""            # optional, filter transcripts by title keyword
+  #    filter_fromDate: ""           # optional, ISO 8601 e.g. 2024-01-01T00:00:00.000Z
+  #    filter_toDate: ""             # optional, ISO 8601
+  #    filter_hostEmail: ""          # optional, filter by host email
+  #    filter_organizerEmail: ""     # optional, filter by organizer email
+  #    filter_channel_id: ""         # optional, filter by channel ID
+  #    max_items: 500                # optional, default 500
+  #    schedules: "60"
+
 embedding:
   provider: openrouter
   model_config: sentence-transformers/all-mpnet-base-v2
