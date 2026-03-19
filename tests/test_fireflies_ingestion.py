@@ -1,8 +1,8 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-from tasks.fireflies_ingestion import FirefliesIngestionJob, _build_transcript_from_sentences, _format_timestamp
+from tasks.fireflies_ingestion import FirefliesIngestionJob, _format_timestamp
 from tasks.helper_classes.ingestion_item import IngestionItem
 
 # ---------------------------------------------------------------------------
@@ -10,7 +10,7 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 # ---------------------------------------------------------------------------
 
 TRANSCRIPT_DATE_MS = 1704067200000  # 2024-01-01T00:00:00Z
-TRANSCRIPT_DATE_DT = datetime.fromtimestamp(TRANSCRIPT_DATE_MS / 1000, tz=timezone.utc)
+TRANSCRIPT_DATE_DT = datetime.fromtimestamp(TRANSCRIPT_DATE_MS / 1000, tz=UTC)
 
 
 def _make_config(**overrides):
@@ -48,7 +48,8 @@ def _make_transcript(
         "video_url": video_url,
         "meeting_link": meeting_link,
         "speakers": speakers or [{"id": "1", "name": "Alice"}, {"id": "2", "name": "Bob"}],
-        "summary": summary or {
+        "summary": summary
+        or {
             "overview": "Daily standup meeting covering sprint progress.",
             "outline": "",
             "notes": "Action items discussed.",
@@ -56,7 +57,8 @@ def _make_transcript(
             "gist": "Sprint update",
             "action_items": "Review PR #42",
         },
-        "sentences": sentences or [
+        "sentences": sentences
+        or [
             {"text": "Hello everyone.", "speaker_name": "Alice", "start_time": 0},
             {"text": "Let's get started.", "speaker_name": "Alice", "start_time": 3000},
             {"text": "Sure, ready.", "speaker_name": "Bob", "start_time": 7000},
@@ -97,6 +99,15 @@ class TestFirefliesIngestionInit(unittest.TestCase):
         self.assertEqual(job.filters["fromDate"], "2024-01-01T00:00:00.000Z")
         self.assertEqual(job.filters["hostEmail"], "host@example.com")
         self.assertEqual(job.filters["channelId"], "ch1")
+
+    def test_organizers_from_string(self):
+        job = _make_job(filter_organizers="a@example.com, b@example.com")
+        self.assertEqual(job.filters["organizers"], ["a@example.com", "b@example.com"])
+
+    def test_organizers_from_list(self):
+        config = _make_config(filter_organizers=["a@example.com", "b@example.com"])
+        job = _make_job(config=config)
+        self.assertEqual(job.filters["organizers"], ["a@example.com", "b@example.com"])
 
 
 class TestFirefliesListItems(unittest.TestCase):
@@ -180,14 +191,16 @@ class TestFirefliesGetRawContent(unittest.TestCase):
 
     def test_uses_outline_when_long_enough(self):
         long_outline = "x" * 300
-        t = _make_transcript(summary={
-            "overview": "Overview text",
-            "outline": long_outline,
-            "notes": "",
-            "keywords": None,
-            "gist": None,
-            "action_items": None,
-        })
+        t = _make_transcript(
+            summary={
+                "overview": "Overview text",
+                "outline": long_outline,
+                "notes": "",
+                "keywords": None,
+                "gist": None,
+                "action_items": None,
+            }
+        )
         job = _make_job()
         content = job.get_raw_content(self._item_with(t))
 
@@ -196,14 +209,16 @@ class TestFirefliesGetRawContent(unittest.TestCase):
         self.assertNotIn("## Transcript", content)
 
     def test_falls_back_to_sentences_when_outline_short(self):
-        t = _make_transcript(summary={
-            "overview": "",
-            "outline": "Short",
-            "notes": "",
-            "keywords": None,
-            "gist": None,
-            "action_items": None,
-        })
+        t = _make_transcript(
+            summary={
+                "overview": "",
+                "outline": "Short",
+                "notes": "",
+                "keywords": None,
+                "gist": None,
+                "action_items": None,
+            }
+        )
         job = _make_job()
         content = job.get_raw_content(self._item_with(t))
 
@@ -243,8 +258,19 @@ class TestFirefliesGetDocumentMetadata(unittest.TestCase):
 
         meta = job.get_document_metadata(item, "fireflies_abc123", "checksum123", 1, TRANSCRIPT_DATE_DT)
 
-        for field in ("title", "host_email", "organizer_email", "participants", "transcript_url",
-                      "audio_url", "duration", "meeting_link", "speakers", "gist", "action_items"):
+        for field in (
+            "title",
+            "host_email",
+            "organizer_email",
+            "participants",
+            "transcript_url",
+            "audio_url",
+            "duration",
+            "meeting_link",
+            "speakers",
+            "gist",
+            "action_items",
+        ):
             self.assertIn(field, meta, f"Missing field: {field}")
 
         self.assertEqual(meta["source"], "fireflies")
@@ -261,26 +287,34 @@ class TestFirefliesGetDocumentMetadata(unittest.TestCase):
         self.assertNotIn("video_url", meta)
 
 
-class TestHelpers(unittest.TestCase):
-    def test_format_timestamp_seconds(self):
-        self.assertEqual(_format_timestamp(90000), "01:30")
+class TestFormatTimestamp(unittest.TestCase):
+    def test_seconds(self):
+        self.assertEqual(_format_timestamp(90), "01:30")
 
-    def test_format_timestamp_hours(self):
-        self.assertEqual(_format_timestamp(3661000), "01:01:01")
+    def test_hours(self):
+        self.assertEqual(_format_timestamp(3661), "01:01:01")
 
-    def test_build_transcript_groups_by_speaker(self):
+    def test_float_input(self):
+        self.assertEqual(_format_timestamp(90.72), "01:30")
+
+
+class TestBuildTranscriptFromSentences(unittest.TestCase):
+    def setUp(self):
+        self.job = _make_job()
+
+    def test_groups_by_speaker(self):
         sentences = [
             {"text": "Hello.", "speaker_name": "Alice", "start_time": 0},
             {"text": "World.", "speaker_name": "Alice", "start_time": 1000},
             {"text": "Hi.", "speaker_name": "Bob", "start_time": 5000},
         ]
-        result = _build_transcript_from_sentences(sentences)
+        result = self.job._build_transcript_from_sentences(sentences)
         self.assertIn("**Alice:** Hello. World.", result)
         self.assertIn("**Bob:** Hi.", result)
 
-    def test_build_transcript_unknown_speaker(self):
+    def test_unknown_speaker(self):
         sentences = [{"text": "Test.", "speaker_name": None, "start_time": 0}]
-        result = _build_transcript_from_sentences(sentences)
+        result = self.job._build_transcript_from_sentences(sentences)
         self.assertIn("Unknown Speaker", result)
 
 
