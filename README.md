@@ -261,9 +261,9 @@ sources:
       filter_fromDate: ""           # optional, ISO 8601 e.g. 2024-01-01T00:00:00.000Z
       filter_toDate: ""             # optional, ISO 8601
       filter_hostEmail: ""          # optional, filter by host email
-      filter_organizerEmail: ""     # optional, filter by organizer email
+      filter_organizers: ""         # optional, filter by organizer email(s), comma-separated
       filter_channel_id: ""         # optional, filter by channel ID
-      max_items: 500                # optional, default 500
+      max_items: 100                # optional, default 100
       schedules: "3600"
 ```
 
@@ -292,9 +292,9 @@ sources:
       filter_fromDate: ""           # optional, ISO 8601 e.g. 2024-01-01T00:00:00.000Z
       filter_toDate: ""             # optional, ISO 8601
       filter_hostEmail: ""          # optional, filter by host email
-      filter_organizerEmail: ""     # optional, filter by organizer email
+      filter_organizers: ""           # optional, filter by organizer email(s), comma-separated
       filter_channel_id: ""         # optional, filter by channel ID
-      max_items: 500                # optional, default 500
+      max_items: 100                # optional, default 100
       schedules: "60"
 ```
 
