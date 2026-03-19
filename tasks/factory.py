@@ -8,6 +8,7 @@ from tasks.jira_ingestion import JiraIngestionJob
 from tasks.mediawiki_ingestion import MediaWikiIngestionJob
 from tasks.notion_ingestion import NotionIngestionJob
 from tasks.onedrive_ingestion import OneDriveIngestionJob
+from tasks.outlook_ingestion import OutlookIngestionJob
 from tasks.pipedrive_ingestion import PipedriveIngestionJob
 from tasks.s3_ingestion import S3IngestionJob
 from tasks.serpapi_ingestion import SerpAPIIngestionJob
@@ -48,3 +49,4 @@ IngestionJobFactory.register("github", GitHubIngestionJob)
 IngestionJobFactory.register("notion", NotionIngestionJob)
 IngestionJobFactory.register("dropbox", DropboxIngestionJob)
 IngestionJobFactory.register("confluence", ConfluenceIngestionJob)
+IngestionJobFactory.register("outlook", OutlookIngestionJob)
