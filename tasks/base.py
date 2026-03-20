@@ -189,10 +189,10 @@ class IngestionJob(ABC):
         """
         try:
             pre_checksum = self.get_item_checksum(item)
+            raw_content = None
 
-            if pre_checksum is not None:
+            if pre_checksum:
                 # Fast path: resolve checksum without fetching content
-                item_name = self.get_item_name(item)
                 new_checksum = pre_checksum
             else:
                 # Standard path: fetch content and compute MD5
@@ -201,7 +201,8 @@ class IngestionJob(ABC):
                     logger.warning(f"Skipping empty content for item: {item.id}")
                     return 0
                 new_checksum = hashlib.md5(raw_content.encode("utf-8")).hexdigest()
-                item_name = self.get_item_name(item)
+
+            item_name = self.get_item_name(item)
 
             # Unified dedup checks
             latest = self.metadata_tracker.get_latest_record(item_name)
@@ -214,12 +215,13 @@ class IngestionJob(ABC):
 
             # Fetch content for the fast path only after dedup checks pass —
             # avoids the expensive API call when the item is unchanged or already seen.
-            if pre_checksum is not None:
+            if raw_content is None:
                 raw_content = self.get_raw_content(item)
                 if not raw_content.strip():
                     logger.warning(f"Skipping empty content for item: {item.id}")
                     return 0
 
+            # delete previous embeddings if updated
             if latest:
                 logger.info(f"Updating item {item_name} from version {latest.version}")
                 self.metadata_tracker.delete_previous_embeddings(item_name)

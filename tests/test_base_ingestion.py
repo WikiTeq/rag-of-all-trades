@@ -219,7 +219,7 @@ class TestIngestionJob(unittest.TestCase):
         job.vector_manager.insert_documents.assert_not_called()
 
     @patch("tasks.base.Document")
-    def test_process_item_fetches_when_pre_checksum_differs(self, mock_document):
+    def test_process_item_stores_when_pre_checksum_differs(self, mock_document):
         """Pre-checksum differs from DB → content fetched, stored checksum is pre-checksum."""
         content = "new content"
         last_modified = datetime(2024, 6, 1)
@@ -248,8 +248,8 @@ class TestIngestionJob(unittest.TestCase):
         _, kwargs = mock_document.call_args
         self.assertEqual(kwargs["metadata"]["checksum"], "rev-42")
 
-    def test_process_item_skips_when_pre_checksum_seen_this_run(self):
-        """Pre-checksum already seen this run → get_raw_content is never called."""
+    def test_process_item_skips_when_seen_add_returns_false(self):
+        """_seen_add returns False (duplicate checksum this run) → item skipped, content never fetched."""
         item = IngestionItem(id="item-1", source_ref="src")
         job = DummyIngestionJob(self.config, items=[item], content_by_id={"item-1": "content"})
         job.metadata_tracker = Mock()
