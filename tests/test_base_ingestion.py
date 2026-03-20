@@ -152,6 +152,78 @@ class TestIngestionJob(unittest.TestCase):
         self.assertEqual(kwargs["metadata"]["version"], 3)
         self.assertEqual(kwargs["metadata"]["source"], "dummy")
 
+    def test_get_item_checksum_default_returns_none(self):
+        job = DummyIngestionJob(self.config)
+        item = IngestionItem(id="item-1", source_ref="src")
+        self.assertIsNone(job.get_item_checksum(item))
+
+    def test_process_item_skips_when_pre_checksum_matches(self):
+        """Pre-checksum matches DB record → get_raw_content is never called."""
+        item = IngestionItem(id="item-1", source_ref="src")
+        job = DummyIngestionJob(self.config, items=[item], content_by_id={"item-1": "content"})
+        job.metadata_tracker = Mock()
+        job.vector_manager = Mock()
+        job.metadata_tracker.get_latest_record.return_value = Mock(checksum="rev-42", version=1)
+
+        with (
+            patch.object(job, "get_item_checksum", return_value="rev-42"),
+            patch.object(job, "get_raw_content") as mock_fetch,
+        ):
+            result = job.process_item(item)
+
+        self.assertEqual(result, 0)
+        mock_fetch.assert_not_called()
+        job.vector_manager.insert_documents.assert_not_called()
+
+    @patch("tasks.base.Document")
+    def test_process_item_fetches_when_pre_checksum_differs(self, mock_document):
+        """Pre-checksum differs from DB → content fetched, stored checksum is pre-checksum."""
+        content = "new content"
+        last_modified = datetime(2024, 6, 1)
+        item = IngestionItem(id="item-1", source_ref="src", last_modified=last_modified)
+        job = DummyIngestionJob(self.config, items=[item], content_by_id={"item-1": content})
+        job.metadata_tracker = Mock()
+        job.vector_manager = Mock()
+        job.metadata_tracker.get_latest_record.return_value = Mock(checksum="rev-41", version=1)
+
+        with (
+            patch.object(job, "get_item_checksum", return_value="rev-42"),
+            patch.object(job, "_seen_add", return_value=True),
+        ):
+            result = job.process_item(item)
+
+        self.assertEqual(result, 1)
+        job.vector_manager.insert_documents.assert_called_once()
+        job.metadata_tracker.record_metadata.assert_called_once_with(
+            "item-1",
+            "rev-42",  # stored checksum is the pre-computed one, not MD5
+            2,
+            1,
+            last_modified,
+            extra_metadata={"source_name": "test-source"},
+        )
+        _, kwargs = mock_document.call_args
+        self.assertEqual(kwargs["metadata"]["checksum"], "rev-42")
+
+    def test_process_item_skips_when_pre_checksum_seen_this_run(self):
+        """Pre-checksum already seen this run → get_raw_content is never called."""
+        item = IngestionItem(id="item-1", source_ref="src")
+        job = DummyIngestionJob(self.config, items=[item], content_by_id={"item-1": "content"})
+        job.metadata_tracker = Mock()
+        job.vector_manager = Mock()
+        job.metadata_tracker.get_latest_record.return_value = Mock(checksum="rev-old", version=1)
+
+        with (
+            patch.object(job, "get_item_checksum", return_value="rev-42"),
+            patch.object(job, "_seen_add", return_value=False),
+            patch.object(job, "get_raw_content") as mock_fetch,
+        ):
+            result = job.process_item(item)
+
+        self.assertEqual(result, 0)
+        mock_fetch.assert_not_called()
+        job.vector_manager.insert_documents.assert_not_called()
+
     def test_run_reports_totals(self):
         item1 = IngestionItem(id="item-1", source_ref="src")
         item2 = IngestionItem(id="item-2", source_ref="src")
