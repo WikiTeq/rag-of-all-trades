@@ -206,9 +206,11 @@ class IngestionJob(ABC):
             }
 
             extra = self.get_extra_metadata(item, raw_content, metadata)
-            for k, v in extra.items():
-                if k not in RESERVED_METADATA_KEYS:
-                    metadata[k] = v
+            filtered_extra = {
+                k: v for k, v in extra.items()
+                if k not in RESERVED_METADATA_KEYS
+            }
+            metadata.update(filtered_extra)
 
             docs = Document(text=raw_content, metadata=metadata)
 
