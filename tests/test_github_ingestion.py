@@ -1,10 +1,10 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from llama_index.readers.github import GithubRepositoryReader, GitHubRepositoryIssuesReader
-from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.github_ingestion import GitHubIngestionJob
+from llama_index.readers.github import GitHubRepositoryIssuesReader, GithubRepositoryReader
 
+from tasks.github_ingestion import GitHubIngestionJob
+from tasks.helper_classes.ingestion_item import IngestionItem
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -93,12 +93,8 @@ class TestGitHubIngestionJob(unittest.TestCase):
         self.mock_repo_reader = Mock()
         self.mock_issues_reader = Mock()
 
-        self._repo_reader_patcher = patch.object(
-            GithubRepositoryReader, "__init__", return_value=None
-        )
-        self._issues_reader_patcher = patch.object(
-            GitHubRepositoryIssuesReader, "__init__", return_value=None
-        )
+        self._repo_reader_patcher = patch.object(GithubRepositoryReader, "__init__", return_value=None)
+        self._issues_reader_patcher = patch.object(GitHubRepositoryIssuesReader, "__init__", return_value=None)
         self._repo_reader_patcher.start()
         self._issues_reader_patcher.start()
 
@@ -162,24 +158,18 @@ class TestGitHubIngestionJob(unittest.TestCase):
 
     def test_missing_owner_raises(self):
         with self.assertRaises(ValueError):
-            GitHubIngestionJob(
-                {"name": "x", "config": {"owner": "", "repo": "r", "personal_token": "t"}}
-            )
+            GitHubIngestionJob({"name": "x", "config": {"owner": "", "repo": "r", "personal_token": "t"}})
 
     def test_missing_repo_raises(self):
         with self.assertRaises(ValueError):
-            GitHubIngestionJob(
-                {"name": "x", "config": {"owner": "o", "repo": "", "personal_token": "t"}}
-            )
+            GitHubIngestionJob({"name": "x", "config": {"owner": "o", "repo": "", "personal_token": "t"}})
 
     def test_branch_and_commit_sha_mutually_exclusive(self):
         with self.assertRaises(ValueError):
             self._make_job(branch="main", commit_sha="abc123")
 
     def test_defaults_to_main_when_no_branch_or_commit(self):
-        job = GitHubIngestionJob(
-            {"name": "x", "config": {"owner": "o", "repo": "r", "personal_token": "t"}}
-        )
+        job = GitHubIngestionJob({"name": "x", "config": {"owner": "o", "repo": "r", "personal_token": "t"}})
         self.assertEqual(job.branch, "main")
         self.assertIsNone(job.commit_sha)
 
@@ -432,9 +422,7 @@ class TestGitHubIngestionJob(unittest.TestCase):
         doc = _make_issue_doc(number="42", state="open", labels=["bug"])
         item = IngestionItem(id="github:myorg/myrepo:issue:42", source_ref=doc)
         job = self._make_job(owner="myorg", repo="myrepo", include_issues=True)
-        metadata = job.get_document_metadata(
-            item=item, item_name="42", checksum="xyz", version=1, last_modified=None
-        )
+        metadata = job.get_document_metadata(item=item, item_name="42", checksum="xyz", version=1, last_modified=None)
         self.assertEqual(metadata["item_type"], "issue")
         self.assertEqual(metadata["issue_number"], "42")
         self.assertEqual(metadata["state"], "open")
@@ -447,9 +435,7 @@ class TestGitHubIngestionJob(unittest.TestCase):
         doc.metadata["closed_at"] = "2024-01-15T10:00:00Z"
         item = IngestionItem(id="github:myorg/myrepo:issue:7", source_ref=doc)
         job = self._make_job(owner="myorg", repo="myrepo", include_issues=True)
-        metadata = job.get_document_metadata(
-            item=item, item_name="7", checksum="xyz", version=1, last_modified=None
-        )
+        metadata = job.get_document_metadata(item=item, item_name="7", checksum="xyz", version=1, last_modified=None)
         self.assertEqual(metadata["assignee"], "octocat")
         self.assertEqual(metadata["closed_at"], "2024-01-15T10:00:00Z")
         self.assertEqual(metadata["state"], "closed")
@@ -459,9 +445,7 @@ class TestGitHubIngestionJob(unittest.TestCase):
         for field in ("state", "labels", "assignee", "closed_at"):
             doc2.metadata.pop(field, None)
         item2 = IngestionItem(id="github:myorg/myrepo:issue:8", source_ref=doc2)
-        metadata2 = job.get_document_metadata(
-            item=item2, item_name="8", checksum="xyz", version=1, last_modified=None
-        )
+        metadata2 = job.get_document_metadata(item=item2, item_name="8", checksum="xyz", version=1, last_modified=None)
         for field in ("state", "labels", "assignee", "closed_at"):
             self.assertNotIn(field, metadata2)
 
