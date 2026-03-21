@@ -1,5 +1,4 @@
 # Standard library imports
-import asyncio
 import logging
 import re
 from collections.abc import Iterator
@@ -341,7 +340,8 @@ class GitHubIngestionJob(IngestionJob):
         if not self.branch:
             return None
         try:
-            branch_response = asyncio.run(
+            loop = self._repo_reader._loop
+            branch_response = loop.run_until_complete(
                 self._github_client.request(
                     "getBranch",
                     "GET",
@@ -351,7 +351,7 @@ class GitHubIngestionJob(IngestionJob):
                 )
             )
             commit_sha = branch_response.json()["commit"]["sha"]
-            commit_response = asyncio.run(
+            commit_response = loop.run_until_complete(
                 self._github_client.request(
                     "getCommit",
                     "GET",
