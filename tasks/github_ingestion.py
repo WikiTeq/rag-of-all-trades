@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from typing import Any
 
 # Third-party imports
+from llama_index.core.async_utils import asyncio_run
 from llama_index.readers.github import (
     GitHubAppAuth,
     GithubClient,
@@ -340,8 +341,7 @@ class GitHubIngestionJob(IngestionJob):
         if not self.branch:
             return None
         try:
-            loop = self._repo_reader._loop
-            branch_response = loop.run_until_complete(
+            branch_response = asyncio_run(
                 self._github_client.request(
                     "getBranch",
                     "GET",
@@ -351,7 +351,7 @@ class GitHubIngestionJob(IngestionJob):
                 )
             )
             commit_sha = branch_response.json()["commit"]["sha"]
-            commit_response = loop.run_until_complete(
+            commit_response = asyncio_run(
                 self._github_client.request(
                     "getCommit",
                     "GET",
