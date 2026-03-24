@@ -6,11 +6,13 @@ import time
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 import html2text
 
 # Third-party imports
 import requests
+from requests.adapters import HTTPAdapter
 
 # Local imports
 from tasks.base import IngestionJob
@@ -20,6 +22,35 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 # TODO: Logging should not be done here and in s3, but in the main module
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+
+class HostOverrideAdapter(HTTPAdapter):
+    """HTTP adapter that resolves a specific hostname to a given IP address.
+
+    Works like curl's --resolve flag: the TCP connection goes to the override IP,
+    but TLS SNI and certificate validation still use the original hostname.
+    Compatible with requests 2.x / urllib3 2.x.
+    """
+
+    def __init__(self, dest_ip: str, dest_hostname: str, **kwargs):
+        self._dest_ip = dest_ip
+        self._dest_hostname = dest_hostname
+        super().__init__(**kwargs)
+
+    def init_poolmanager(self, *args, **kwargs):
+        """Configure the pool manager to use the original hostname for TLS SNI/cert."""
+        kwargs["server_hostname"] = self._dest_hostname
+        super().init_poolmanager(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        """Swap hostname -> IP in the URL so the socket connects to the override IP."""
+        parsed = urlparse(request.url)
+        # Preserve original Host header for the server
+        request.headers.setdefault("Host", parsed.hostname)
+        # Rewrite URL to connect to the override IP
+        new_netloc = parsed.netloc.replace(parsed.hostname, self._dest_ip)
+        request.url = parsed._replace(netloc=new_netloc).geturl()
+        return super().send(request, **kwargs)
 
 
 class MediaWikiIngestionJob(IngestionJob):
@@ -40,6 +71,9 @@ class MediaWikiIngestionJob(IngestionJob):
                 - config.max_retries: Maximum API request retries (optional, default 3, must be >= 0)
                 - config.timeout: HTTP request timeout in seconds (optional, default 30, must be > 0)
                 - config.namespaces: List of namespace IDs to include (optional, None = all namespaces)
+                - config.verify_ssl: Whether to verify SSL certificates (optional, default True)
+                - config.resolve_to_ip: IP address to resolve the API hostname to (optional)
+                - config.custom_headers: Dict of extra HTTP headers to send (optional)
 
         Raises:
             ValueError: If api_url is not provided or numeric config values are invalid
@@ -56,6 +90,33 @@ class MediaWikiIngestionJob(IngestionJob):
         # Request configuration
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": cfg.get("user_agent", "rag-of-all-trades-connector-mediawiki/1.0")})
+
+        # --- Optional: SSL verification bypass ---
+        self.verify_ssl = cfg.get("verify_ssl", True)
+        if not self.verify_ssl:
+            self.session.verify = False
+            # Suppress noisy InsecureRequestWarning when verification is intentionally off
+            import urllib3
+
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            logger.warning("SSL certificate verification is disabled")
+
+        # --- Optional: custom DNS resolution (IP override) ---
+        # Works like curl --resolve: TCP connects to the given IP while TLS SNI
+        # and certificate validation still use the original hostname.
+        resolve_to_ip = cfg.get("resolve_to_ip")
+        if resolve_to_ip:
+            parsed_api = urlparse(self.api_url)
+            scheme = parsed_api.scheme or "https"
+            prefix = f"{scheme}://{parsed_api.hostname}"
+            adapter = HostOverrideAdapter(dest_ip=resolve_to_ip, dest_hostname=parsed_api.hostname)
+            self.session.mount(prefix, adapter)
+            logger.info(f"DNS override: {parsed_api.hostname} -> {resolve_to_ip}")
+
+        # --- Optional: custom HTTP headers ---
+        custom_headers = cfg.get("custom_headers")
+        if custom_headers and isinstance(custom_headers, dict):
+            self.session.headers.update(custom_headers)
 
         # Rate limiting and performance settings
         self.request_delay = cfg.get("request_delay", 0.1)  # seconds between requests
