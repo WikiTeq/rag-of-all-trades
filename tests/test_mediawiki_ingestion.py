@@ -3,6 +3,7 @@ from datetime import datetime
 from unittest.mock import Mock, patch
 
 import requests
+from requests.adapters import HTTPAdapter
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.mediawiki_ingestion import MediaWikiIngestionJob
@@ -237,6 +238,139 @@ class TestMediaWikiIngestionJob(unittest.TestCase):
                     "config": {"api_url": "https://example.com", "timeout": 0},
                 }
             )
+
+    @patch("tasks.mediawiki_ingestion.requests.Session")
+    def test_initialization_verify_ssl_disabled(self, mock_session_class):
+        """Test that verify_ssl=False disables SSL certificate verification."""
+        mock_session = self._create_mock_session(mock_session_class)
+
+        config = {
+            "name": "test_wiki",
+            "config": {
+                "api_url": "https://example.com/w/api.php",
+                "verify_ssl": False,
+            },
+        }
+        job = MediaWikiIngestionJob(config)
+
+        self.assertFalse(job.verify_ssl)
+        self.assertFalse(mock_session.verify)
+
+    @patch("tasks.mediawiki_ingestion.requests.Session")
+    def test_initialization_verify_ssl_default_true(self, mock_session_class):
+        """Test that SSL verification is enabled by default."""
+        self._create_mock_session(mock_session_class)
+
+        job = MediaWikiIngestionJob(self.config)
+        self.assertTrue(job.verify_ssl)
+
+    @patch("tasks.mediawiki_ingestion.requests.Session")
+    def test_initialization_resolve_to_ip(self, mock_session_class):
+        """Test that resolve_to_ip mounts a HostOverrideAdapter on the session."""
+        mock_session = self._create_mock_session(mock_session_class)
+
+        config = {
+            "name": "test_wiki",
+            "config": {
+                "api_url": "https://wiki.example.com/w/api.php",
+                "resolve_to_ip": "10.0.0.1",
+            },
+        }
+        job = MediaWikiIngestionJob(config)
+
+        # Verify mount was called with the correct scheme+host prefix
+        mock_session.mount.assert_called_once()
+        call_args = mock_session.mount.call_args
+        self.assertEqual(call_args[0][0], "https://wiki.example.com")
+        # The mounted adapter should be a HostOverrideAdapter
+        adapter = call_args[0][1]
+        from tasks.mediawiki_ingestion import HostOverrideAdapter
+
+        self.assertIsInstance(adapter, HostOverrideAdapter)
+        self.assertEqual(adapter._dest_ip, "10.0.0.1")
+        self.assertEqual(adapter._dest_hostname, "wiki.example.com")
+
+    @patch("tasks.mediawiki_ingestion.requests.Session")
+    def test_initialization_custom_headers(self, mock_session_class):
+        """Test that custom_headers are added to the session."""
+        mock_session = self._create_mock_session(mock_session_class)
+        mock_session.headers = {}
+
+        config = {
+            "name": "test_wiki",
+            "config": {
+                "api_url": "https://example.com/w/api.php",
+                "custom_headers": {
+                    "Authorization": "Bearer token123",
+                    "X-Custom": "value",
+                },
+            },
+        }
+        job = MediaWikiIngestionJob(config)
+
+        # Headers should contain the custom values
+        self.assertEqual(mock_session.headers["Authorization"], "Bearer token123")
+        self.assertEqual(mock_session.headers["X-Custom"], "value")
+
+    @patch("tasks.mediawiki_ingestion.requests.Session")
+    def test_initialization_custom_headers_ignored_when_not_dict(self, mock_session_class):
+        """Test that non-dict custom_headers are ignored."""
+        mock_session = self._create_mock_session(mock_session_class)
+
+        config = {
+            "name": "test_wiki",
+            "config": {
+                "api_url": "https://example.com/w/api.php",
+                "custom_headers": "not-a-dict",
+            },
+        }
+        # Should not raise
+        job = MediaWikiIngestionJob(config)
+        self.assertIsNotNone(job)
+
+    def test_host_override_adapter_rewrites_url(self):
+        """Test that HostOverrideAdapter replaces hostname with IP in URL."""
+        from tasks.mediawiki_ingestion import HostOverrideAdapter
+
+        adapter = HostOverrideAdapter(dest_ip="10.0.0.1", dest_hostname="wiki.example.com")
+
+        mock_request = Mock()
+        mock_request.url = "https://wiki.example.com/w/api.php?action=query"
+        mock_request.headers = {}
+
+        with patch.object(HTTPAdapter, "send", return_value=Mock()) as mock_super_send:
+            adapter.send(mock_request)
+
+            # URL should now point to the IP
+            self.assertIn("10.0.0.1", mock_request.url)
+            self.assertNotIn("wiki.example.com", mock_request.url)
+            # Host header should be preserved as the original hostname
+            self.assertEqual(mock_request.headers["Host"], "wiki.example.com")
+
+    def test_host_override_adapter_preserves_existing_host_header(self):
+        """Test that HostOverrideAdapter does not overwrite an existing Host header."""
+        from tasks.mediawiki_ingestion import HostOverrideAdapter
+
+        adapter = HostOverrideAdapter(dest_ip="10.0.0.1", dest_hostname="wiki.example.com")
+
+        mock_request = Mock()
+        mock_request.url = "https://wiki.example.com/w/api.php"
+        mock_request.headers = {"Host": "custom-host.example.com"}
+
+        with patch.object(HTTPAdapter, "send", return_value=Mock()):
+            adapter.send(mock_request)
+            # Should keep the existing Host header, not overwrite it
+            self.assertEqual(mock_request.headers["Host"], "custom-host.example.com")
+
+    def test_host_override_adapter_init_poolmanager(self):
+        """Test that init_poolmanager passes server_hostname for TLS SNI."""
+        from tasks.mediawiki_ingestion import HostOverrideAdapter
+
+        adapter = HostOverrideAdapter(dest_ip="10.0.0.1", dest_hostname="wiki.example.com")
+
+        with patch.object(HTTPAdapter, "init_poolmanager") as mock_super_init:
+            adapter.init_poolmanager(1, 10)
+            mock_super_init.assert_called_once_with(1, 10, server_hostname="wiki.example.com")
 
     @patch("tasks.mediawiki_ingestion.requests.Session")
     def test_make_api_request_network_error(self, mock_session_class):
