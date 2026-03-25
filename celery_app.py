@@ -1,9 +1,12 @@
 import logging
 
 from celery import Celery
-from celery.signals import worker_process_init, worker_process_shutdown
+from celery.schedules import schedule as celery_schedule
+from celery.signals import beat_init, worker_process_init, worker_process_shutdown
 from celery_singleton import Singleton
+from redbeat import RedBeatSchedulerEntry
 
+from models.connector_instance import ConnectorInstance
 from utils.config import settings
 from utils.db import engine
 
@@ -48,38 +51,45 @@ def shutdown_worker(**kwargs):
     engine.dispose()
 
 
-def create_task_for_source(source_config):
-    account_name = source_config["name"]
-    bucket_name = source_config["config"].get("bucket_override")
+@celery_app.task(name="run_ingestion", base=Singleton, unique_on=["instance_id"], ignore_result=True)
+def run_ingestion(instance_id: int):
+    from tasks.factory import IngestionJobFactory
+    from utils.db import get_db_session
+    from utils.encryption import decrypt_secret
 
-    if bucket_name:
-        task_name = f"{source_config['type']}_ingest_{account_name}_{bucket_name}"
-    else:
-        task_name = f"{source_config['type']}_ingest_{account_name}"
+    with get_db_session() as db:
+        inst = db.get(ConnectorInstance, instance_id)
+        if not inst or not inst.enabled:
+            return
+        config = inst.to_config()
+        inst_type = inst.type  # capture inside session — DetachedInstanceError if read after close
+        secrets = decrypt_secret(inst.secret) if inst.secret else {}
 
-    @celery_app.task(name=task_name, base=Singleton, ignore_result=True, bind=True)
-    def run_source(self, pipeline_config=source_config):
-        from tasks.factory import IngestionJobFactory
-
-        bucket_override = pipeline_config["config"].get("bucket_override")
-        log_name = f"{pipeline_config['name']}_{bucket_override}" if bucket_override else pipeline_config["name"]
-        logger.info(f"Starting ingestion for {log_name}")
-
-        job = IngestionJobFactory.create(pipeline_config["type"], pipeline_config)
-        return job.run()
-
-    # Register task in Beat schedule
-    celery_app.conf.beat_schedule[task_name] = {
-        "task": task_name,
-        "schedule": source_config.get("schedule"),
-        "args": (),
-    }
+    # inst is detached here — use captured inst_type, not inst.type
+    config["secrets"] = secrets
+    logger.info("Starting ingestion for %s/%s", inst_type, config["name"])
+    job = IngestionJobFactory.create(inst_type, config)
+    job.run()
 
 
-# Register all sources
-try:
-    for source in settings.SOURCES:
-        create_task_for_source(source)
-except Exception:
-    logger.exception("Failed during source task registration")
-    raise
+@celery_app.task(name="sync_connector_schedules", ignore_result=True)
+def sync_connector_schedules():
+    from utils.scheduler import sync_to_beat_schedule
+
+    sync_to_beat_schedule()
+
+
+@beat_init.connect
+def on_beat_init(**kwargs):
+    from utils.scheduler import sync_to_beat_schedule
+
+    # Register the periodic sync task in RedBeat (every 60 s)
+    entry = RedBeatSchedulerEntry(
+        "sync_connector_schedules",
+        "sync_connector_schedules",
+        celery_schedule(run_every=60),
+        app=celery_app,
+    )
+    entry.save()
+
+    sync_to_beat_schedule()
