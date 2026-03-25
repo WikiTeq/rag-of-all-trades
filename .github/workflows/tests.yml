@@ -1,0 +1,27 @@
+name: Tests
+on:
+  workflow_call:
+
+jobs:
+  unittest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Dummy env for tests
+        run: cp .env.example .env
+
+      - name: Dummy config for tests
+        run: cp config.yaml.example config.yaml
+
+      - name: Run tests
+        run: python -m unittest discover -s tests -p "test_*.py" -v

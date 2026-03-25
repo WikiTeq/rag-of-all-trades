@@ -1,9 +1,6 @@
 name: Docker build and push
 on:
-  push:
-    branches:
-      - main
-  pull_request:
+  workflow_call:
 
 env:
   IMAGE_NAME: rag-of-all-trades
@@ -14,7 +11,6 @@ concurrency: ${{ github.workflow }}-${{ github.ref }}
 jobs:
   build:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'pull_request'
     outputs:
       tags: ${{ steps.meta.outputs.tags }}
       digest: ${{ steps.build.outputs.digest }}
