@@ -1,3 +1,4 @@
+import gc
 import hashlib
 import logging
 from abc import ABC, abstractmethod
@@ -258,6 +259,9 @@ class IngestionJob(ABC):
             )
 
             logger.info(f"Successfully ingested: {item_name} (version {version})")
+
+            gc.collect()
+
             return 1
 
         except Exception:
