@@ -1,9 +1,12 @@
 import logging
 
 from celery import Celery
-from celery.signals import worker_process_init, worker_process_shutdown
+from celery.schedules import schedule as celery_schedule
+from celery.signals import beat_init, worker_process_init, worker_process_shutdown
 from celery_singleton import Singleton
+from redbeat import RedBeatSchedulerEntry
 
+from models.connector_instance import ConnectorInstance
 from utils.config import settings
 from utils.db import engine
 
@@ -78,10 +81,45 @@ def create_task_for_source(source_config):
     }
 
 
-# Register all sources
-try:
-    for source in settings.SOURCES:
-        create_task_for_source(source)
-except Exception:
-    logger.exception("Failed during source task registration")
-    raise
+@celery_app.task(name="run_ingestion", base=Singleton, unique_on=["instance_id"], ignore_result=True)
+def run_ingestion(instance_id: int):
+    from tasks.factory import IngestionJobFactory
+    from utils.db import get_db_session
+    from utils.encryption import decrypt_secret
+
+    with get_db_session() as db:
+        inst = db.get(ConnectorInstance, instance_id)
+        if not inst or not inst.enabled:
+            return
+        config = inst.to_config()
+        inst_type = inst.type  # capture inside session — DetachedInstanceError if read after close
+        secrets = decrypt_secret(inst.secret) if inst.secret else {}
+
+    # inst is detached here — use captured inst_type, not inst.type
+    config["secrets"] = secrets
+    logger.info("Starting ingestion for %s/%s", inst_type, config["name"])
+    job = IngestionJobFactory.create(inst_type, config)
+    job.run()
+
+
+@celery_app.task(name="sync_connector_schedules", ignore_result=True)
+def sync_connector_schedules():
+    from utils.scheduler import sync_to_beat_schedule
+
+    sync_to_beat_schedule()
+
+
+@beat_init.connect
+def on_beat_init(**kwargs):
+    from utils.scheduler import sync_to_beat_schedule
+
+    # Register the periodic sync task in RedBeat (every 60 s)
+    entry = RedBeatSchedulerEntry(
+        "sync_connector_schedules",
+        "sync_connector_schedules",
+        celery_schedule(run_every=60),
+        app=celery_app,
+    )
+    entry.save()
+
+    sync_to_beat_schedule()

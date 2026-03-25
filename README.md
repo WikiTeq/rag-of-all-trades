@@ -53,7 +53,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Create a `.env` file based on the `.env.example` file.
   * The defaults are good enough, you just need to put your OpenRouter key into `OPENROUTER_API_KEY`
 * If you use OpenAI or a different OpenAI-compatible endpoint, also update the `OPENROUTER_API_BASE` variable
-* By default, a single S3 connector is configured; specify your S3 bucket credentials in the `S3_ACCOUNT1_` variables
+* Generate an encryption key for connector secrets: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and set `CONNECTOR_ENCRYPTION_KEY` in `.env`
 * Create a `config.yaml` file based on the `config.yaml.example` file
   * The defaults are good enough with `openai/gpt-oss-120b:free` used for inference and `sentence-transformers/all-mpnet-base-v2` for embeddings.
   * If you would like to use different models, update the `embedding` and `inference` sections accordingly.
@@ -106,8 +106,16 @@ This starts the inspector in Docker and prints a URL with pre-filled connection 
 ## Connectors
 
 The service supports multiple data sources, including multiple data sources of the same type, each with its own
-ingestion schedule. The connectors to enable are defined via `config.yaml`, and their secrets are defined
-in the `.env` file.
+ingestion schedule. Connector instances are stored in the database (`connector_instances` table) and managed
+at runtime — no Celery restart needed to add, remove, or reschedule connectors.
+
+To migrate existing connectors from `config.yaml` to the database, run the migration script once before
+deploying:
+
+```bash
+python scripts/migrate_sources_to_db.py
+alembic upgrade head
+```
 
 ### S3 Connector
 
@@ -341,15 +349,6 @@ The following parameters are supported by all connector types:
 > Environment variables (`${...}`) in the config file are evaluated at runtime.
 
 ```yaml
-sources: # holds the list of sources to ingest from (Connectors)
-
-  - type: # type of the connector (s3, directory, mediawiki, serpapi, jira, etc.)
-    name: # arbitrary name for the connector, will be stored in metadata
-    config:
-      # connector specific configuration
-      schedules: "${S3_ACCOUNT1_SCHEDULES}"
-      request_delay: 0  # optional, delay in seconds between items (default: 0)
-
 # configures models and dimensions for embeddings
 embedding:
   provider: openrouter # `openrouter`/`openai` or `local` for local HuggingFace embeddings
