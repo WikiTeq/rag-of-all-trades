@@ -28,7 +28,7 @@ class TestDropboxIngestionInit(unittest.TestCase):
     """Tests for constructor argument parsing."""
 
     def setUp(self):
-        self.dropbox_patcher = patch("tasks.dropbox_ingestion.dropbox.Dropbox")
+        self.dropbox_patcher = patch("tasks.dropbox_ingestion.Dropbox")
         self.md_patcher = patch("tasks.dropbox_ingestion.MarkItDown")
         self.mock_dropbox_cls = self.dropbox_patcher.start()
         self.md_patcher.start()
@@ -94,7 +94,7 @@ class TestDropboxIngestionInit(unittest.TestCase):
 class TestDropboxExtensionFilter(unittest.TestCase):
 
     def setUp(self):
-        with patch("tasks.dropbox_ingestion.dropbox.Dropbox"), \
+        with patch("tasks.dropbox_ingestion.Dropbox"), \
              patch("tasks.dropbox_ingestion.MarkItDown"):
             self.job_include = DropboxIngestionJob(_make_config({"include_extensions": "md,docx"}))
             self.job_exclude = DropboxIngestionJob(_make_config({"exclude_extensions": "png,jpg"}))
@@ -123,7 +123,7 @@ class TestDropboxExtensionFilter(unittest.TestCase):
 class TestDropboxDirectoryFilter(unittest.TestCase):
 
     def setUp(self):
-        with patch("tasks.dropbox_ingestion.dropbox.Dropbox"), \
+        with patch("tasks.dropbox_ingestion.Dropbox"), \
              patch("tasks.dropbox_ingestion.MarkItDown"):
             self.job_include = DropboxIngestionJob(
                 _make_config({"include_directories": "source,test"})
@@ -160,7 +160,7 @@ class TestDropboxListItems(unittest.TestCase):
         return result
 
     def setUp(self):
-        self.dropbox_patcher = patch("tasks.dropbox_ingestion.dropbox.Dropbox")
+        self.dropbox_patcher = patch("tasks.dropbox_ingestion.Dropbox")
         self.md_patcher = patch("tasks.dropbox_ingestion.MarkItDown")
         self.mock_dropbox_cls = self.dropbox_patcher.start()
         self.md_patcher.start()
@@ -276,7 +276,7 @@ class TestDropboxListItems(unittest.TestCase):
 class TestDropboxGetRawContent(unittest.TestCase):
 
     def setUp(self):
-        self.dropbox_patcher = patch("tasks.dropbox_ingestion.dropbox.Dropbox")
+        self.dropbox_patcher = patch("tasks.dropbox_ingestion.Dropbox")
         self.md_patcher = patch("tasks.dropbox_ingestion.MarkItDown")
         self.mock_dropbox_cls = self.dropbox_patcher.start()
         self.mock_md_cls = self.md_patcher.start()
@@ -343,7 +343,7 @@ class TestDropboxGetRawContent(unittest.TestCase):
 class TestDropboxGetItemName(unittest.TestCase):
 
     def setUp(self):
-        with patch("tasks.dropbox_ingestion.dropbox.Dropbox"), \
+        with patch("tasks.dropbox_ingestion.Dropbox"), \
              patch("tasks.dropbox_ingestion.MarkItDown"):
             self.job = DropboxIngestionJob(_make_config())
 
@@ -371,6 +371,27 @@ class TestDropboxGetItemName(unittest.TestCase):
         # A path that sanitizes to empty should return fallback
         name = self.job._sanitize_path("")
         self.assertEqual(name, "dropbox_file")
+
+
+class TestDropboxGetDocumentMetadata(unittest.TestCase):
+
+    def setUp(self):
+        with patch("tasks.dropbox_ingestion.Dropbox"), \
+             patch("tasks.dropbox_ingestion.MarkItDown"):
+            self.job = DropboxIngestionJob(_make_config())
+
+    def test_metadata_includes_base_fields(self):
+        item = IngestionItem(id="id:1", source_ref="/Docs/file.md")
+        meta = self.job.get_document_metadata(item, "Docs_file.md", "abc123", 1, None)
+        self.assertEqual(meta["source"], "dropbox")
+        self.assertEqual(meta["key"], "Docs_file.md")
+        self.assertEqual(meta["checksum"], "abc123")
+        self.assertEqual(meta["version"], 1)
+
+    def test_metadata_includes_file_path(self):
+        item = IngestionItem(id="id:2", source_ref="/Engineering/notes.md")
+        meta = self.job.get_document_metadata(item, "Engineering_notes.md", "def456", 1, None)
+        self.assertEqual(meta["file_path"], "/Engineering/notes.md")
 
 
 if __name__ == "__main__":

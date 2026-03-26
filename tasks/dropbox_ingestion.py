@@ -3,11 +3,11 @@ import logging
 import unicodedata
 import re
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Optional
 
-import dropbox
+from dropbox import Dropbox
 from dropbox.exceptions import AuthError, ApiError
-from dropbox.files import FileMetadata, FolderMetadata, ListFolderResult
+from dropbox.files import FileMetadata, ListFolderResult
 from markitdown import MarkItDown
 
 from tasks.base import IngestionJob
@@ -70,7 +70,7 @@ class DropboxIngestionJob(IngestionJob):
                 "Dropbox connector: 'include_directories' and 'exclude_directories' are mutually exclusive"
             )
 
-        self.dbx = dropbox.Dropbox(access_token)
+        self.dbx = Dropbox(access_token)
         self.md = MarkItDown()
 
     # ------------------------------------------------------------------
@@ -115,14 +115,9 @@ class DropboxIngestionJob(IngestionJob):
         while True:
             for entry in result.entries:
                 if isinstance(entry, FileMetadata):
-                    # Apply directory filter based on the parent folder path
                     parent = entry.path_lower.rsplit("/", 1)[0] or "/"
-                    parent_name = parent.rsplit("/", 1)[-1]
-                    if self.include_directories is not None and parent_name not in self.include_directories:
+                    if not self._directory_allowed(parent):
                         continue
-                    if self.exclude_directories is not None and parent_name in self.exclude_directories:
-                        continue
-                    # Apply extension filter
                     if not self._extension_allowed(entry.path_lower):
                         continue
                     yield entry
@@ -210,3 +205,21 @@ class DropboxIngestionJob(IngestionJob):
 
     def get_item_name(self, item: IngestionItem) -> str:
         return self._sanitize_path(item.source_ref)
+    
+
+    # ------------------------------------------------------------------
+    # Metadata
+    # ------------------------------------------------------------------
+
+    def get_document_metadata(
+        self,
+        item: IngestionItem,
+        item_name: str,
+        checksum: str,
+        version: int,
+        last_modified: Any,
+    ) -> dict[str, Any]:
+        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
+        metadata["file_path"] = item.source_ref
+        return metadata
+
