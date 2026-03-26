@@ -1,7 +1,9 @@
 # Standard library imports
 import logging
 import re
-from typing import Any, Dict, Iterator, List, Optional
+from collections.abc import Iterator
+from datetime import datetime, timezone
+from typing import Any
 
 # Third-party imports
 from llama_index.readers.confluence import ConfluenceReader
@@ -50,7 +52,6 @@ class ConfluenceIngestionJob(IngestionJob):
         - config.page_status: Filter by page status, e.g. "current" (space_key mode only)
         - config.include_children: Also load descendant pages (page_ids mode only, default false)
         - config.max_pages: Maximum pages to load (default 50)
-        - config.schedules: Celery schedule in seconds (optional)
     """
 
     @property
@@ -66,18 +67,14 @@ class ConfluenceIngestionJob(IngestionJob):
         if not self.base_url:
             raise ValueError("base_url is required in Confluence connector config")
 
-        self.api_token: Optional[str] = cfg.get("api_token", "").strip() or None
-        self.username: Optional[str] = cfg.get("username", "").strip() or None
-        self.password: Optional[str] = cfg.get("password", "").strip() or None
+        self.api_token: str | None = cfg.get("api_token", "").strip() or None
+        self.username: str | None = cfg.get("username", "").strip() or None
+        self.password: str | None = cfg.get("password", "").strip() or None
 
         if not self.api_token and not self.password:
-            raise ValueError(
-                "Confluence connector config requires either api_token or username+password"
-            )
+            raise ValueError("Confluence connector config requires either api_token or username+password")
         if self.api_token and self.password:
-            raise ValueError(
-                "api_token and password are mutually exclusive in Confluence connector config"
-            )
+            raise ValueError("api_token and password are mutually exclusive in Confluence connector config")
 
         self.cloud: bool = bool(cfg.get("cloud", True))
 
@@ -89,14 +86,14 @@ class ConfluenceIngestionJob(IngestionJob):
             )
         self._mode = active_modes[0]
 
-        self.space_key: Optional[str] = cfg.get("space_key") or None
+        self.space_key: str | None = cfg.get("space_key") or None
         raw_page_ids = cfg.get("page_ids")
-        self.page_ids: Optional[List[str]] = self.parse_page_ids(raw_page_ids)
-        self.page_label: Optional[str] = cfg.get("page_label") or None
-        self.cql: Optional[str] = cfg.get("cql") or None
-        self.folder_id: Optional[str] = str(cfg["folder_id"]) if cfg.get("folder_id") else None
+        self.page_ids: list[str] | None = self.parse_page_ids(raw_page_ids)
+        self.page_label: str | None = cfg.get("page_label") or None
+        self.cql: str | None = cfg.get("cql") or None
+        self.folder_id: str | None = str(cfg["folder_id"]) if cfg.get("folder_id") else None
 
-        self.page_status: Optional[str] = cfg.get("page_status") or None
+        self.page_status: str | None = cfg.get("page_status") or None
         self.include_children: bool = bool(cfg.get("include_children", False))
         self.max_pages: int = int(cfg.get("max_pages", 50))
         if self.max_pages <= 0:
@@ -150,11 +147,9 @@ class ConfluenceIngestionJob(IngestionJob):
         checksum: str,
         version: int,
         last_modified: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         doc = item.source_ref
-        metadata = super().get_document_metadata(
-            item, item_name, checksum, version, last_modified
-        )
+        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
         metadata.update(
             {
                 "url": doc.metadata.get("url", "") or "",
@@ -225,7 +220,7 @@ class ConfluenceIngestionJob(IngestionJob):
         return kwargs
 
     @staticmethod
-    def parse_page_ids(value: Any) -> Optional[List[str]]:
+    def parse_page_ids(value: Any) -> list[str] | None:
         """Normalize page_ids to a list of strings, or None."""
         if not value:
             return None
