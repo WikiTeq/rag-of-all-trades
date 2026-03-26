@@ -122,10 +122,11 @@ class ConfluenceIngestionJob(IngestionJob):
 
         for doc in documents:
             page_id = doc.metadata.get("page_id") or doc.metadata.get("id", "")
+            last_modified = self._fetch_last_modified(page_id)
             yield IngestionItem(
                 id=f"confluence:{page_id}",
                 source_ref=doc,
-                last_modified=None,  # ConfluenceReader does not expose last_modified
+                last_modified=last_modified,
             )
 
     def get_raw_content(self, item: IngestionItem) -> str:
@@ -163,6 +164,22 @@ class ConfluenceIngestionJob(IngestionJob):
             }
         )
         return metadata
+
+    def _fetch_last_modified(self, page_id: str) -> datetime:
+        """Fetch the last-modified timestamp for a page via the Confluence REST API.
+
+        Uses the already-authenticated client inside the reader so no extra credentials
+        are needed. Falls back to the current UTC time if the call fails or the field
+        is absent (ConfluenceReader does not include version info in its expand params).
+        """
+        try:
+            page = self._reader.confluence.get_page_by_id(page_id, expand="version")
+            when_str = page.get("version", {}).get("when")
+            if when_str:
+                return datetime.fromisoformat(when_str.replace("Z", "+00:00"))
+        except Exception as e:
+            logger.warning(f"[{self.source_name}] Could not fetch version.when for page {page_id}: {e}")
+        return datetime.now(timezone.utc)
 
     def _build_reader(self) -> ConfluenceReader:
         """Construct an authenticated ConfluenceReader.
