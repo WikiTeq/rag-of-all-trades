@@ -518,4 +518,4 @@ Ruff configuration is in [pyproject.toml](pyproject.toml) under `[tool.ruff]`.
 
 ## ✨ Contributions
 
-Contributions, suggestions, bug reports, and fixes are welcome!
+Contributions, suggestions, bug reports, and fixes are very welcome!
