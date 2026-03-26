@@ -364,17 +364,6 @@ class TestTrelloGetDocumentMetadata(unittest.TestCase):
 
 
 class TestTrelloHelpers(unittest.TestCase):
-    def test_parse_card_date_valid(self):
-        result = TrelloIngestionJob._parse_card_date("2024-06-01T12:00:00.000Z")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.year, 2024)
-
-    def test_parse_card_date_none(self):
-        self.assertIsNone(TrelloIngestionJob._parse_card_date(None))
-
-    def test_parse_card_date_invalid(self):
-        self.assertIsNone(TrelloIngestionJob._parse_card_date("not-a-date"))
-
     def test_id_to_creation_date(self):
         # 507f1f77 = 1350922103 Unix timestamp = 2012-10-22
         result = TrelloIngestionJob._id_to_creation_date("507f1f77bcf86cd799439011")

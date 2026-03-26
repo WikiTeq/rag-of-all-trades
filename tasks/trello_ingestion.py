@@ -84,7 +84,7 @@ class TrelloIngestionJob(IngestionJob):
         if self.max_comments <= 0:
             raise ValueError("max_comments must be positive")
 
-        self._client = _TrelloClient(api_key=self.api_key, api_secret=self.api_token)
+        self._client = _TrelloClient(api_key=self.api_key, token=self.api_token)
 
         logger.info(
             f"Initialized Trello connector "
@@ -114,7 +114,7 @@ class TrelloIngestionJob(IngestionJob):
                 if card.closed:
                     continue
 
-                last_modified = self._parse_card_date(getattr(card, "dateLastActivity", None))
+                last_modified = card.dateLastActivity
                 trello_list = lists_by_id.get(card.list_id)
 
                 item = IngestionItem(
@@ -239,16 +239,6 @@ class TrelloIngestionJob(IngestionJob):
             lines.append(f"**{author}** ({date}):\n{text}")
 
         return "\n\n".join(lines)
-
-    @staticmethod
-    def _parse_card_date(value: str | None) -> datetime | None:
-        """Parse a Trello ISO-8601 timestamp string into a datetime object."""
-        if not value:
-            return None
-        try:
-            return datetime.fromisoformat(value.replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            return None
 
     @staticmethod
     def _id_to_creation_date(card_id: str) -> datetime | None:
