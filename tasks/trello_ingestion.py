@@ -1,7 +1,8 @@
 import logging
 import re
-from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, List, Optional
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from typing import Any
 
 from trello import TrelloClient
 
@@ -16,15 +17,22 @@ class _TrelloClient(TrelloClient):
     always sends ``data='{}'`` (an empty JSON body) even on GET requests.
     CloudFront treats GET requests with a non-empty body as malformed and returns 403.
     Overriding ``fetch_json`` to pass ``post_args=None`` for GET requests prevents this.
+
+    Upstream issue: https://github.com/sarumont/py-trello/issues/373
+    Fix merged but not yet released in py-trello==0.20.1 (PR #374).
+    Remove this subclass once a fixed version is released and pinned.
     """
 
-    def fetch_json(self, uri_path, http_method="GET", headers=None,
-                   query_params=None, post_args=None, files=None):
+    def fetch_json(self, uri_path, http_method="GET", headers=None, query_params=None, post_args=None, files=None):
         if http_method == "GET":
             post_args = None
         return super().fetch_json(
-            uri_path, http_method=http_method, headers=headers,
-            query_params=query_params, post_args=post_args, files=files,
+            uri_path,
+            http_method=http_method,
+            headers=headers,
+            query_params=query_params,
+            post_args=post_args,
+            files=files,
         )
 
 
@@ -62,19 +70,13 @@ class TrelloIngestionJob(IngestionJob):
 
         self.api_token = cfg.get("api_token", "").strip()
         if not self.api_token:
-            raise ValueError(
-                "api_token is required in Trello connector config"
-            )
+            raise ValueError("api_token is required in Trello connector config")
 
         raw_board_ids = cfg.get("board_ids", "")
         if isinstance(raw_board_ids, list):
-            self.board_ids: List[str] = [
-                b.strip() for b in raw_board_ids if str(b).strip()
-            ]
+            self.board_ids: list[str] = [b.strip() for b in raw_board_ids if str(b).strip()]
         elif raw_board_ids:
-            self.board_ids = [
-                b.strip() for b in str(raw_board_ids).split(",") if b.strip()
-            ]
+            self.board_ids = [b.strip() for b in str(raw_board_ids).split(",") if b.strip()]
         else:
             self.board_ids = []
 
@@ -98,9 +100,7 @@ class TrelloIngestionJob(IngestionJob):
     def list_items(self) -> Iterator[IngestionItem]:
         """Yield one IngestionItem per Trello card across configured boards."""
         boards = self._get_boards()
-        logger.info(
-            f"[{self.source_name}] Fetching cards from {len(boards)} board(s)"
-        )
+        logger.info(f"[{self.source_name}] Fetching cards from {len(boards)} board(s)")
 
         total = 0
         for board in boards:
@@ -108,18 +108,14 @@ class TrelloIngestionJob(IngestionJob):
                 lists_by_id = {lst.id: lst for lst in board.list_lists()}
                 cards = board.get_cards()
             except Exception as e:
-                logger.error(
-                    f"[{self.source_name}] Failed to fetch cards from board {board.id!r}: {e}"
-                )
+                logger.error(f"[{self.source_name}] Failed to fetch cards from board {board.id!r}: {e}")
                 continue
 
             for card in cards:
                 if card.closed:
                     continue
 
-                last_modified = self._parse_card_date(
-                    getattr(card, "dateLastActivity", None)
-                )
+                last_modified = self._parse_card_date(getattr(card, "dateLastActivity", None))
                 trello_list = lists_by_id.get(card.list_id)
 
                 item = IngestionItem(
@@ -136,7 +132,7 @@ class TrelloIngestionJob(IngestionJob):
         """Build Markdown content from a Trello card."""
         board, card, trello_list = item.source_ref
 
-        parts: List[str] = []
+        parts: list[str] = []
 
         # Title
         parts.append(f"# {card.name}\n")
@@ -181,13 +177,11 @@ class TrelloIngestionJob(IngestionJob):
         checksum: str,
         version: int,
         last_modified: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build metadata dict with Trello-specific fields."""
         board, card, trello_list = item.source_ref
 
-        metadata = super().get_document_metadata(
-            item, item_name, checksum, version, last_modified
-        )
+        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
 
         label_names = [lbl.name for lbl in (card.labels or []) if lbl.name]
         creation_date = self._id_to_creation_date(card.id)
@@ -200,11 +194,7 @@ class TrelloIngestionJob(IngestionJob):
                 "board_name": board.name,
                 "url": card.url,
                 "labels": label_names,
-                "due_date": str(
-                    getattr(card, "due_date", None)
-                    or getattr(card, "due", None)
-                    or ""
-                ),
+                "due_date": str(getattr(card, "due_date", None) or getattr(card, "due", None) or ""),
                 "creation_date": str(creation_date) if creation_date else "",
                 "list_id": trello_list.id if trello_list else "",
                 "list_name": trello_list.name if trello_list else "",
@@ -220,9 +210,7 @@ class TrelloIngestionJob(IngestionJob):
                 try:
                     boards.append(self._client.get_board(board_id))
                 except Exception as e:
-                    logger.error(
-                        f"[{self.source_name}] Failed to fetch board {board_id!r}: {e}"
-                    )
+                    logger.error(f"[{self.source_name}] Failed to fetch board {board_id!r}: {e}")
             return boards
         try:
             return self._client.list_boards()
@@ -235,9 +223,7 @@ class TrelloIngestionJob(IngestionJob):
         try:
             actions = card.fetch_actions(action_filter="commentCard")
         except Exception as e:
-            logger.warning(
-                f"[{self.source_name}] Failed to fetch comments for card {card.id}: {e}"
-            )
+            logger.warning(f"[{self.source_name}] Failed to fetch comments for card {card.id}: {e}")
             return ""
 
         if not actions:
@@ -245,12 +231,10 @@ class TrelloIngestionJob(IngestionJob):
 
         # Actions are returned newest-first from the Trello API
         top = actions[: self.max_comments]
-        lines: List[str] = ["## Comments"]
+        lines: list[str] = ["## Comments"]
         for action in top:
             member_creator = action.get("memberCreator", {})
-            author = member_creator.get("fullName") or member_creator.get(
-                "username", "Unknown"
-            )
+            author = member_creator.get("fullName") or member_creator.get("username", "Unknown")
             date = action.get("date", "")
             text = action.get("data", {}).get("text", "")
             lines.append(f"**{author}** ({date}):\n{text}")
@@ -258,7 +242,7 @@ class TrelloIngestionJob(IngestionJob):
         return "\n\n".join(lines)
 
     @staticmethod
-    def _parse_card_date(value: Optional[str]) -> Optional[datetime]:
+    def _parse_card_date(value: str | None) -> datetime | None:
         """Parse a Trello ISO-8601 timestamp string into a datetime object."""
         if not value:
             return None
@@ -268,10 +252,10 @@ class TrelloIngestionJob(IngestionJob):
             return None
 
     @staticmethod
-    def _id_to_creation_date(card_id: str) -> Optional[datetime]:
+    def _id_to_creation_date(card_id: str) -> datetime | None:
         """Derive the card creation date from its Trello object ID (first 8 hex chars = Unix timestamp)."""
         try:
             ts = int(card_id[:8], 16)
-            return datetime.fromtimestamp(ts, tz=timezone.utc)
+            return datetime.fromtimestamp(ts, tz=UTC)
         except (ValueError, TypeError):
             return None
