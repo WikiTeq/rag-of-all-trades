@@ -1,5 +1,5 @@
 import unittest
-from datetime import timezone
+from datetime import UTC
 from unittest.mock import Mock, patch
 
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -81,7 +81,6 @@ def _make_job(config=None, **kwargs):
 
 
 class TestTrelloIngestionInit(unittest.TestCase):
-
     def test_init_success(self):
         job = _make_job()
         self.assertEqual(job.api_key, "test_api_key")
@@ -118,8 +117,7 @@ class TestTrelloIngestionInit(unittest.TestCase):
     def test_invalid_max_comments_raises(self):
         with patch("tasks.trello_ingestion._TrelloClient"):
             with self.assertRaises(ValueError):
-                TrelloIngestionJob(_make_config(max_comments=0)["config"]
-                                   or _make_config(max_comments=0))
+                TrelloIngestionJob(_make_config(max_comments=0))
 
     def test_source_type(self):
         job = _make_job()
@@ -127,7 +125,6 @@ class TestTrelloIngestionInit(unittest.TestCase):
 
 
 class TestTrelloGetBoards(unittest.TestCase):
-
     def test_returns_all_boards_when_no_ids_configured(self):
         job = _make_job()
         b1 = _make_board("b1", "Board 1")
@@ -160,7 +157,6 @@ class TestTrelloGetBoards(unittest.TestCase):
 
 
 class TestTrelloListItems(unittest.TestCase):
-
     def test_yields_cards_from_board(self):
         job = _make_job()
         lst = _make_list("list1", "To Do")
@@ -191,10 +187,10 @@ class TestTrelloListItems(unittest.TestCase):
         job._client.list_boards.return_value = [board]
 
         items = list(job.list_items())
-        b, c, l = items[0].source_ref
+        b, c, trello_list = items[0].source_ref
         self.assertIs(b, board)
         self.assertIs(c, card)
-        self.assertIs(l, lst)
+        self.assertIs(trello_list, lst)
 
     def test_list_ref_is_none_when_list_not_found(self):
         job = _make_job()
@@ -226,7 +222,6 @@ class TestTrelloListItems(unittest.TestCase):
 
 
 class TestTrelloGetRawContent(unittest.TestCase):
-
     def _make_item(self, card=None, board=None, trello_list=None):
         card = card or _make_card()
         board = board or _make_board()
@@ -288,10 +283,8 @@ class TestTrelloGetRawContent(unittest.TestCase):
         job = _make_job(load_comments=True, max_comments=2)
         card = _make_card()
         card.fetch_actions.return_value = [
-            {"memberCreator": {"fullName": "Alice"}, "date": "2024-06-01",
-             "data": {"text": "First comment"}},
-            {"memberCreator": {"fullName": "Bob"}, "date": "2024-05-01",
-             "data": {"text": "Second comment"}},
+            {"memberCreator": {"fullName": "Alice"}, "date": "2024-06-01", "data": {"text": "First comment"}},
+            {"memberCreator": {"fullName": "Bob"}, "date": "2024-05-01", "data": {"text": "Second comment"}},
         ]
         item = self._make_item(card)
         content = job.get_raw_content(item)
@@ -302,10 +295,8 @@ class TestTrelloGetRawContent(unittest.TestCase):
         job = _make_job(load_comments=True, max_comments=1)
         card = _make_card()
         card.fetch_actions.return_value = [
-            {"memberCreator": {"fullName": "Alice"}, "date": "2024-06-01",
-             "data": {"text": "First"}},
-            {"memberCreator": {"fullName": "Bob"}, "date": "2024-05-01",
-             "data": {"text": "Second"}},
+            {"memberCreator": {"fullName": "Alice"}, "date": "2024-06-01", "data": {"text": "First"}},
+            {"memberCreator": {"fullName": "Bob"}, "date": "2024-05-01", "data": {"text": "Second"}},
         ]
         item = self._make_item(card)
         content = job.get_raw_content(item)
@@ -314,7 +305,6 @@ class TestTrelloGetRawContent(unittest.TestCase):
 
 
 class TestTrelloGetItemName(unittest.TestCase):
-
     def test_returns_safe_name(self):
         job = _make_job()
         card = _make_card(card_id="507f1f77bcf86cd799439011")
@@ -334,7 +324,6 @@ class TestTrelloGetItemName(unittest.TestCase):
 
 
 class TestTrelloGetDocumentMetadata(unittest.TestCase):
-
     def test_metadata_contains_required_fields(self):
         job = _make_job()
         lst = _make_list("list1", "Done")
@@ -375,7 +364,6 @@ class TestTrelloGetDocumentMetadata(unittest.TestCase):
 
 
 class TestTrelloHelpers(unittest.TestCase):
-
     def test_parse_card_date_valid(self):
         result = TrelloIngestionJob._parse_card_date("2024-06-01T12:00:00.000Z")
         self.assertIsNotNone(result)
@@ -392,7 +380,7 @@ class TestTrelloHelpers(unittest.TestCase):
         result = TrelloIngestionJob._id_to_creation_date("507f1f77bcf86cd799439011")
         self.assertIsNotNone(result)
         self.assertEqual(result.year, 2012)
-        self.assertEqual(result.tzinfo, timezone.utc)
+        self.assertEqual(result.tzinfo, UTC)
 
     def test_id_to_creation_date_invalid(self):
         self.assertIsNone(TrelloIngestionJob._id_to_creation_date("zzzzzzzz"))

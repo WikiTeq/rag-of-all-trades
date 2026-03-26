@@ -52,7 +52,6 @@ class TrelloIngestionJob(IngestionJob):
           (optional; if omitted, all accessible boards are ingested)
         - config.load_comments: Whether to include card comments (optional, default False)
         - config.max_comments: Maximum comments per card, newest first (optional, default 10)
-        - config.schedules: Celery schedule in seconds (optional)
     """
 
     @property
