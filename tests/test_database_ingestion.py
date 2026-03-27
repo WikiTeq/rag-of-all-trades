@@ -9,7 +9,7 @@ BASE_CONFIG = {
     "name": "testdb",
     "config": {
         "type": "postgres",
-        "connection_string": "postgresql+psycopg://user:pass@localhost/db",
+        "connection_string": "postgresql+psycopg2://user:pass@localhost/db",
         "query": "SELECT id, title, updated_at, content FROM books",
     },
 }
@@ -21,13 +21,8 @@ SAMPLE_ROWS = [
 
 
 def _make_job(config=None):
-    cfg = config or BASE_CONFIG
-    with patch.object(DatabaseIngestionJob, "_fetch_rows", return_value=[]):
-        # patch _fetch_rows so __init__ doesn't open a real connection
-        pass
-    # DatabaseReader is instantiated in __init__ — patch it
     with patch("tasks.database_ingestion.DatabaseReader"):
-        return DatabaseIngestionJob(cfg)
+        return DatabaseIngestionJob(config or BASE_CONFIG)
 
 
 class TestDatabaseIngestionJobInit(unittest.TestCase):
@@ -37,7 +32,7 @@ class TestDatabaseIngestionJobInit(unittest.TestCase):
             "name": "testdb",
             "config": {
                 "type": "postgres",
-                "connection_string": "postgresql+psycopg://user:pass@localhost/db",
+                "connection_string": "postgresql+psycopg2://user:pass@localhost/db",
                 "query": "SELECT id, title, updated_at, content FROM books",
                 **(overrides or {}),
             },
@@ -49,15 +44,13 @@ class TestDatabaseIngestionJobInit(unittest.TestCase):
         self.assertEqual(self._job().source_type, "database")
 
     def test_valid_postgres(self):
-        job = self._job({"type": "postgres"})
-        self.assertEqual(job.db_type, "postgres")
+        self.assertEqual(self._job({"type": "postgres"}).db_type, "postgres")
 
     def test_valid_mysql(self):
-        job = self._job({"type": "mysql"})
-        self.assertEqual(job.db_type, "mysql")
+        self.assertEqual(self._job({"type": "mysql"}).db_type, "mysql")
 
     def test_invalid_type_raises(self):
-        with self.assertRaises(ValueError, msg="type must be postgres or mysql"):
+        with self.assertRaises(ValueError):
             self._job({"type": "mssql"})
 
     def test_missing_type_raises(self):
@@ -65,28 +58,34 @@ class TestDatabaseIngestionJobInit(unittest.TestCase):
             self._job({"type": ""})
 
     def test_missing_connection_string_raises(self):
-        config = {
-            "name": "testdb",
-            "config": {
-                "type": "postgres",
-                "query": "SELECT 1",
-            },
-        }
         with patch("tasks.database_ingestion.DatabaseReader"):
             with self.assertRaises(ValueError):
-                DatabaseIngestionJob(config)
+                DatabaseIngestionJob({"name": "x", "config": {"type": "postgres", "query": "SELECT 1"}})
 
     def test_missing_query_raises(self):
-        config = {
-            "name": "testdb",
-            "config": {
-                "type": "postgres",
-                "connection_string": "postgresql+psycopg://user:pass@localhost/db",
-            },
-        }
         with patch("tasks.database_ingestion.DatabaseReader"):
             with self.assertRaises(ValueError):
-                DatabaseIngestionJob(config)
+                DatabaseIngestionJob({"name": "x", "config": {"type": "postgres", "connection_string": "postgresql+psycopg2://x/y"}})
+
+    def test_non_select_query_raises(self):
+        with self.assertRaises(ValueError):
+            self._job({"query": "INSERT INTO books VALUES (1)"})
+
+    def test_update_query_raises(self):
+        with self.assertRaises(ValueError):
+            self._job({"query": "UPDATE books SET title='x'"})
+
+    def test_delete_query_raises(self):
+        with self.assertRaises(ValueError):
+            self._job({"query": "DELETE FROM books"})
+
+    def test_ddl_query_raises(self):
+        with self.assertRaises(ValueError):
+            self._job({"query": "DROP TABLE books"})
+
+    def test_select_with_leading_comment_allowed(self):
+        job = self._job({"query": "/* comment */ SELECT id, title, updated_at, content FROM books"})
+        self.assertIn("SELECT", job.query)
 
     def test_metadata_columns_from_string(self):
         job = self._job({"metadata_columns": "author, year, "})
@@ -97,28 +96,19 @@ class TestDatabaseIngestionJobInit(unittest.TestCase):
         self.assertEqual(job.metadata_columns, ["author", "year"])
 
     def test_metadata_columns_empty(self):
-        job = self._job()
-        self.assertEqual(job.metadata_columns, [])
-
-    def test_required_columns_default(self):
-        job = self._job()
-        self.assertEqual(job.required_columns, set())
-
-    def test_required_columns_custom(self):
-        job = self._job({"required_columns": "id,body,created_at"})
-        self.assertEqual(job.required_columns, {"id", "body", "created_at"})
+        self.assertEqual(self._job().metadata_columns, [])
 
 
 class TestDatabaseIngestionJobListItems(unittest.TestCase):
 
-    def _job(self, rows=None, metadata_columns=""):
+    def _job(self, rows=None, overrides=None):
         config = {
             "name": "testdb",
             "config": {
                 "type": "postgres",
-                "connection_string": "postgresql+psycopg://user:pass@localhost/db",
+                "connection_string": "postgresql+psycopg2://user:pass@localhost/db",
                 "query": "SELECT id, title, updated_at, content FROM books",
-                "metadata_columns": metadata_columns,
+                **(overrides or {}),
             },
         }
         with patch("tasks.database_ingestion.DatabaseReader"):
@@ -126,67 +116,49 @@ class TestDatabaseIngestionJobListItems(unittest.TestCase):
         job._fetch_rows = MagicMock(return_value=rows if rows is not None else SAMPLE_ROWS)
         return job
 
-    def test_list_items_yields_correct_count(self):
-        job = self._job()
-        items = list(job.list_items())
-        self.assertEqual(len(items), 2)
+    def test_yields_correct_count(self):
+        self.assertEqual(len(list(self._job().list_items())), 2)
 
-    def test_list_items_id_format(self):
-        job = self._job()
-        items = list(job.list_items())
+    def test_id_format(self):
+        items = list(self._job().list_items())
         self.assertEqual(items[0].id, "database:testdb:1")
         self.assertEqual(items[1].id, "database:testdb:2")
 
-    def test_list_items_source_ref_is_row(self):
-        job = self._job()
-        items = list(job.list_items())
+    def test_source_ref_is_full_row(self):
+        items = list(self._job().list_items())
         self.assertEqual(items[0].source_ref["title"], "Book One")
 
-    def test_list_items_last_modified_parsed(self):
-        job = self._job()
-        items = list(job.list_items())
+    def test_last_modified_parsed(self):
+        items = list(self._job().list_items())
         self.assertIsInstance(items[0].last_modified, datetime)
         self.assertEqual(items[0].last_modified.year, 2024)
 
-    def test_list_items_empty_result(self):
-        job = self._job(rows=[])
-        items = list(job.list_items())
-        self.assertEqual(items, [])
+    def test_empty_result(self):
+        self.assertEqual(list(self._job(rows=[]).list_items()), [])
 
-    def test_list_items_missing_required_column_raises(self):
-        bad_rows = [{"id": 1, "title": "X", "updated_at": None}]  # missing 'content'
-        config = {
-            "name": "testdb",
-            "config": {
-                "type": "postgres",
-                "connection_string": "postgresql+psycopg://user:pass@localhost/db",
-                "query": "SELECT id, title, updated_at, content FROM books",
-                "required_columns": "id,title,updated_at,content",
-            },
-        }
-        with patch("tasks.database_ingestion.DatabaseReader"):
-            job = DatabaseIngestionJob(config)
-        job._fetch_rows = MagicMock(return_value=bad_rows)
+    def test_missing_required_column_raises(self):
+        bad_rows = [{"id": 1, "title": "X", "updated_at": None}]  # missing content
+        job = self._job(rows=bad_rows)
         with self.assertRaises(ValueError, msg="missing required columns"):
             list(job.list_items())
 
-    def test_list_items_fetch_error_logs_and_returns_empty(self):
+    def test_fetch_error_raises(self):
         job = self._job()
         job._fetch_rows = MagicMock(side_effect=Exception("connection failed"))
-        items = list(job.list_items())
-        self.assertEqual(items, [])
+        with self.assertRaises(Exception):
+            list(job.list_items())
 
 
 class TestDatabaseIngestionJobContent(unittest.TestCase):
 
-    def _job(self):
+    def _job(self, metadata_columns=""):
         config = {
             "name": "testdb",
             "config": {
                 "type": "postgres",
-                "connection_string": "postgresql+psycopg://user:pass@localhost/db",
+                "connection_string": "postgresql+psycopg2://user:pass@localhost/db",
                 "query": "SELECT id, title, updated_at, content FROM books",
-                "metadata_columns": "author,year",
+                "metadata_columns": metadata_columns,
             },
         }
         with patch("tasks.database_ingestion.DatabaseReader"):
@@ -227,8 +199,7 @@ class TestDatabaseIngestionJobContent(unittest.TestCase):
             id="database:testdb:99",
             source_ref={"id": 99, "title": "", "updated_at": None, "content": ""},
         )
-        name = job.get_item_name(item)
-        self.assertIn("testdb", name)
+        self.assertIn("testdb", job.get_item_name(item))
 
     def test_get_document_metadata_base_fields(self):
         job = self._job()
@@ -240,7 +211,7 @@ class TestDatabaseIngestionJobContent(unittest.TestCase):
         self.assertEqual(meta["db_type"], "postgres")
 
     def test_get_document_metadata_extra_columns(self):
-        job = self._job()
+        job = self._job(metadata_columns="author,year")
         item = self._item(SAMPLE_ROWS[0])
         with patch.object(job.__class__.__bases__[0], "get_document_metadata", return_value={}):
             meta = job.get_document_metadata(item, "book_one", "abc123", 1, None)
@@ -248,8 +219,8 @@ class TestDatabaseIngestionJobContent(unittest.TestCase):
         self.assertEqual(meta["year"], 2020)
 
     def test_get_document_metadata_skips_missing_extra_columns(self):
-        job = self._job()
-        row = {"id": 1, "title": "T", "updated_at": None, "content": "C"}  # no author/year
+        job = self._job(metadata_columns="author,year")
+        row = {"id": 1, "title": "T", "updated_at": None, "content": "C"}
         item = self._item(row)
         with patch.object(job.__class__.__bases__[0], "get_document_metadata", return_value={}):
             meta = job.get_document_metadata(item, "t", "abc", 1, None)
