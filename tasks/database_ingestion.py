@@ -1,17 +1,20 @@
 """Database ingestion connector for MySQL and PostgreSQL.
 
-Uses LlamaIndex DatabaseReader (SQLAlchemy-based) to execute a pre-configured
-SQL SELECT query and ingest rows as documents into the vector store.
+Uses SQLAlchemy to execute a pre-configured SQL SELECT query and ingest each
+row as a document into the vector store.
 
-By convention the query should return the following columns:
-    - id:         Unique identifier for the row (used as document ID)
-    - title:      Human-readable title / name of the item
+The query MUST return the following columns (use SQL AS aliases if needed):
+    - id:         Unique row identifier
+    - title:      Human-readable name of the item
     - updated_at: Last modification timestamp (ISO-8601 string or datetime)
-    - content:    Main text content to embed
+    - content:    Main text body to embed
 
-These column names are the default convention and can be overridden via
-``required_columns`` in config if the source schema uses different names.
 Any additional columns listed in ``metadata_columns`` are stored as metadata.
+
+Example:
+    SELECT employee_id AS id, full_name AS title, updated_at, bio AS content,
+           department AS department
+    FROM employees
 """
 
 import logging
@@ -27,25 +30,26 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 
 logger = logging.getLogger(__name__)
 
+REQUIRED_COLUMNS = {"id", "title", "updated_at", "content"}
+
 
 class DatabaseIngestionJob(IngestionJob):
     """Ingestion connector for MySQL and PostgreSQL databases.
 
     Executes a pre-configured SQL SELECT query and ingests each row as a
-    document. By convention the query should return: id, title, updated_at,
-    content. Any extra columns listed in ``metadata_columns`` are stored in
-    the document metadata alongside the base fields.
+    document. The query must return id, title, updated_at, and content columns
+    (use SQL AS aliases to map your schema). Any extra columns listed in
+    ``metadata_columns`` are stored in document metadata.
 
     Configuration (config.yaml):
         - config.type:              Database type: "postgres" or "mysql" (required)
-        - config.connection_string: SQLAlchemy connection string (required)
-        - config.query:             SQL SELECT statement (required); should return
-                                    the columns listed in required_columns
-        - config.required_columns:  Comma-separated column names the query must
-                                    return (optional; if omitted, no validation is performed)
-        - config.metadata_columns:  Comma-separated list of extra columns to
-                                    include in metadata (optional)
-        - config.schedules:         Celery schedule in seconds (optional)
+        - config.connection_string: SQLAlchemy connection string (required);
+                                    use a read-only DB account
+        - config.query:             SQL SELECT statement (required); must return
+                                    id, title, updated_at, content columns;
+                                    non-SELECT statements are rejected at startup
+        - config.metadata_columns:  Comma-separated extra columns to store as
+                                    metadata (optional)
     """
 
     @property
@@ -72,9 +76,7 @@ class DatabaseIngestionJob(IngestionJob):
         self.query = cfg.get("query", "").strip()
         if not self.query:
             raise ValueError("query is required in database connector config")
-
-        required_cfg = self._parse_list(cfg.get("required_columns", ""))
-        self.required_columns: set[str] = set(required_cfg)
+        self._validate_select_query(self.query)
 
         self.metadata_columns: List[str] = self._parse_list(
             cfg.get("metadata_columns", "")
@@ -89,42 +91,37 @@ class DatabaseIngestionJob(IngestionJob):
         )
 
     def list_items(self) -> Iterator[IngestionItem]:
-        """Execute the configured SQL query and yield one IngestionItem per row.
-
-        Each row dict is stored as ``source_ref`` so that ``get_raw_content``
-        and ``get_document_metadata`` can access all columns without re-querying.
-        """
+        """Execute the configured SQL query and yield one IngestionItem per row."""
         logger.info(f"[{self.source_name}] Executing query: {self.query!r}")
 
         try:
             rows = self._fetch_rows()
         except Exception as e:
-            logger.error(f"[{self.source_name}] Failed to execute query: {e}")
-            return
+            logger.exception(f"[{self.source_name}] Failed to execute query: {e}")
+            raise
 
-        if self.required_columns and rows:
-            missing = self.required_columns - set(rows[0].keys())
+        if rows:
+            missing = REQUIRED_COLUMNS - set(rows[0].keys())
             if missing:
                 raise ValueError(
                     f"Query result is missing required columns: {sorted(missing)}. "
-                    f"Required: {sorted(self.required_columns)}"
+                    f"The query must return: {sorted(REQUIRED_COLUMNS)}. "
+                    f"Use SQL AS aliases to map your schema."
                 )
 
         count = 0
         for row in rows:
-            row_id = str(row.get("id", count))
-            updated_at = self._parse_timestamp(row.get("updated_at"))
             yield IngestionItem(
-                id=f"database:{self.source_name}:{row_id}",
+                id=f"database:{self.source_name}:{row['id']}",
                 source_ref=row,
-                last_modified=updated_at,
+                last_modified=self._parse_timestamp(row.get("updated_at")),
             )
             count += 1
 
         logger.info(f"[{self.source_name}] Found {count} row(s)")
 
     def get_raw_content(self, item: IngestionItem) -> str:
-        """Return the ``content`` column value for the row."""
+        """Return the content column value for the row."""
         row = item.source_ref
         return str(row.get("content", "") or "")
 
@@ -175,6 +172,18 @@ class DatabaseIngestionJob(IngestionJob):
             result = conn.execute(text(self.query))
             keys = list(result.keys())
             return [dict(zip(keys, row)) for row in result.fetchall()]
+
+    @staticmethod
+    def _validate_select_query(query: str) -> None:
+        """Reject any query that is not a SELECT statement."""
+        stripped = re.sub(r"/\*.*?\*/", " ", query, flags=re.DOTALL)
+        stripped = re.sub(r"--[^\n]*", " ", stripped)
+        first_token = stripped.split()[0].upper() if stripped.split() else ""
+        if first_token != "SELECT":
+            raise ValueError(
+                "config.query must be a SELECT statement. "
+                "Use read-only database credentials to enforce this at the DB level."
+            )
 
     @staticmethod
     def _parse_timestamp(value: Any) -> Optional[datetime]:
