@@ -93,7 +93,7 @@ def _make_issue(
 class TestJiraIngestionJob(unittest.TestCase):
     def setUp(self):
         self.jira_patcher = patch("tasks.jira_ingestion.JIRA")
-        self.markitdown_patcher = patch("tasks.jira_ingestion.MarkItDown")
+        self.markitdown_patcher = patch("tasks.base.MarkItDown")
         self.mock_jira_class = self.jira_patcher.start()
         self.mock_md_class = self.markitdown_patcher.start()
 
@@ -545,104 +545,6 @@ class TestJiraIngestionJob(unittest.TestCase):
         )
 
         self.assertEqual(metadata["url"], "")
-
-    # ------------------------------------------------------------------
-    # _to_markdown helpers
-    # ------------------------------------------------------------------
-
-    def test_to_markdown_falls_back_on_empty_conversion(self):
-        md_result = Mock()
-        md_result.text_content = "   "
-        self.mock_md.convert_stream.return_value = md_result
-
-        job = self._make_job()
-        result = job._to_markdown("original text")
-
-        self.assertEqual(result, "original text")
-
-    def test_to_markdown_falls_back_on_conversion_error(self):
-        self.mock_md.convert_stream.side_effect = ValueError("bad")
-
-        job = self._make_job()
-        result = job._to_markdown("original text")
-
-        self.assertEqual(result, "original text")
-
-    def test_to_markdown_returns_empty_for_blank_input(self):
-        job = self._make_job()
-        self.assertEqual(job._to_markdown(""), "")
-        self.assertEqual(job._to_markdown("   "), "")
-
-    def test_to_markdown_handles_adf_dict(self):
-        adf = {
-            "type": "doc",
-            "content": [
-                {
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": "Hello ADF"}],
-                }
-            ],
-        }
-        job = self._make_job()
-        result = job._to_markdown(adf)
-        self.assertIn("Hello ADF", result)
-
-    # ------------------------------------------------------------------
-    # _extract_adf_text
-    # ------------------------------------------------------------------
-
-    def test_extract_adf_text_simple_paragraph(self):
-        adf = {
-            "type": "doc",
-            "content": [
-                {
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": "Simple text"}],
-                }
-            ],
-        }
-        job = self._make_job()
-        result = job._extract_adf_text(adf)
-        self.assertIn("Simple text", result)
-
-    def test_extract_adf_text_heading(self):
-        adf = {
-            "type": "doc",
-            "content": [
-                {
-                    "type": "heading",
-                    "attrs": {"level": 2},
-                    "content": [{"type": "text", "text": "Section Title"}],
-                }
-            ],
-        }
-        job = self._make_job()
-        result = job._extract_adf_text(adf)
-        self.assertIn("## Section Title", result)
-
-    def test_extract_adf_text_nested(self):
-        adf = {
-            "type": "doc",
-            "content": [
-                {
-                    "type": "bulletList",
-                    "content": [
-                        {
-                            "type": "listItem",
-                            "content": [
-                                {
-                                    "type": "paragraph",
-                                    "content": [{"type": "text", "text": "Item one"}],
-                                }
-                            ],
-                        }
-                    ],
-                }
-            ],
-        }
-        job = self._make_job()
-        result = job._extract_adf_text(adf)
-        self.assertIn("Item one", result)
 
     # ------------------------------------------------------------------
     # _parse_jira_timestamp

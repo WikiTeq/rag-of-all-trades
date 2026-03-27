@@ -12,22 +12,15 @@ class TestS3IngestionJob(unittest.TestCase):
 
     def setUp(self):
         self.mock_s3 = Mock()
-        self.mock_md = Mock()
         self.get_s3_client_patcher = patch(
             "tasks.s3_ingestion.get_s3_client",
             return_value=(self.mock_s3, None),
         )
-        self.markitdown_patcher = patch(
-            "tasks.s3_ingestion.MarkItDown",
-            return_value=self.mock_md,
-        )
         self.get_s3_client_patcher.start()
-        self.markitdown_patcher.start()
         self.config = {"name": "test", "config": {"buckets": ["bucket-a"]}}
 
     def tearDown(self):
         self.get_s3_client_patcher.stop()
-        self.markitdown_patcher.stop()
 
     def test_source_type(self):
         job = S3IngestionJob(self.config)
@@ -84,10 +77,9 @@ class TestS3IngestionJob(unittest.TestCase):
 
     def test_get_raw_content_uses_markdown_conversion(self):
         self.mock_s3.get_object.return_value = {"Body": io.BytesIO(b"raw bytes")}
-        conversion_result = Mock(text_content="Converted text")
-        self.mock_md.convert_stream.return_value = conversion_result
 
         job = S3IngestionJob(self.config)
+        job.convert_bytes_to_markdown = Mock(return_value="Converted text")
         item = IngestionItem(
             id="s3://bucket-a/file1.txt",
             source_ref=("bucket-a", "file1.txt"),
@@ -95,34 +87,7 @@ class TestS3IngestionJob(unittest.TestCase):
         result = job.get_raw_content(item)
 
         self.assertEqual(result, "Converted text")
-        self.mock_md.convert_stream.assert_called_once()
-
-    def test_get_raw_content_falls_back_on_empty_conversion(self):
-        self.mock_s3.get_object.return_value = {"Body": io.BytesIO(b"raw text")}
-        conversion_result = Mock(text_content="   ")
-        self.mock_md.convert_stream.return_value = conversion_result
-
-        job = S3IngestionJob(self.config)
-        item = IngestionItem(
-            id="s3://bucket-a/file1.txt",
-            source_ref=("bucket-a", "file1.txt"),
-        )
-        result = job.get_raw_content(item)
-
-        self.assertEqual(result, "raw text")
-
-    def test_get_raw_content_falls_back_on_conversion_error(self):
-        self.mock_s3.get_object.return_value = {"Body": io.BytesIO(b"raw text")}
-        self.mock_md.convert_stream.side_effect = ValueError("bad markdown")
-
-        job = S3IngestionJob(self.config)
-        item = IngestionItem(
-            id="s3://bucket-a/file1.txt",
-            source_ref=("bucket-a", "file1.txt"),
-        )
-        result = job.get_raw_content(item)
-
-        self.assertEqual(result, "raw text")
+        job.convert_bytes_to_markdown.assert_called_once_with(b"raw bytes", fallback_text="raw bytes")
 
     def test_get_raw_content_returns_empty_on_s3_error(self):
         self.mock_s3.get_object.side_effect = Exception("boom")
