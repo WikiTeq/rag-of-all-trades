@@ -1,5 +1,6 @@
 import logging
 import re
+from datetime import UTC, datetime
 from typing import Any, Dict, Iterator, List, Optional
 
 from llama_index.readers.web import BeautifulSoupWebReader
@@ -8,8 +9,23 @@ from llama_index.readers.web.sitemap.base import SitemapReader
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+class _CatchAllExtractorMap(dict):
+    """A dict that returns the same extractor for any hostname key.
+
+    BeautifulSoupWebReader looks up extractors via website_extractor.get(hostname).
+    This ensures our title extractor is used for every URL regardless of hostname.
+    """
+
+    def __init__(self, extractor):
+        super().__init__()
+        self._extractor = extractor
+
+    def get(self, key, default=None):
+        return self._extractor
 
 class WebIngestionJob(IngestionJob):
     """Ingestion connector for web pages.
@@ -25,7 +41,6 @@ class WebIngestionJob(IngestionJob):
         - config.include_prefix: only include sitemap URLs containing this string
           (only for sitemap_url mode)
         - config.html_to_text: convert HTML to plain text (default True)
-        - config.schedules: Celery schedule in seconds (optional)
     """
 
     @property
@@ -56,6 +71,8 @@ class WebIngestionJob(IngestionJob):
         )
         self.html_to_text: bool = bool(cfg.get("html_to_text", True))
 
+        self._reader = BeautifulSoupWebReader(website_extractor=_CatchAllExtractorMap(self._title_extractor))
+
         if self.sitemap_url:
             logger.info(
                 f"Initialized Web connector (mode=sitemap, url={self.sitemap_url!r}, "
@@ -66,6 +83,11 @@ class WebIngestionJob(IngestionJob):
                 f"Initialized Web connector (mode=urls, count={len(self.urls)}, "
                 f"html_to_text={self.html_to_text})"
             )
+
+    def _title_extractor(self, soup, **_):
+        title_tag = soup.find("title")
+        title = title_tag.getText().strip() if title_tag else ""
+        return soup.getText(), {"title": title}
 
     def list_items(self) -> Iterator[IngestionItem]:
         """Yield one IngestionItem per discovered URL."""
@@ -82,7 +104,7 @@ class WebIngestionJob(IngestionJob):
             yield IngestionItem(
                 id=f"web:{url}",
                 source_ref=url,
-                last_modified=None,
+                last_modified=datetime.now(UTC),
             )
 
     def get_raw_content(self, item: IngestionItem) -> str:
@@ -90,8 +112,7 @@ class WebIngestionJob(IngestionJob):
         url: str = item.source_ref
         item._metadata_cache["url"] = url
 
-        reader = BeautifulSoupWebReader()
-        docs = reader.load_data(urls=[url])
+        docs = self._reader.load_data(urls=[url])
         if not docs:
             return ""
         item._metadata_cache["title"] = (
