@@ -1,7 +1,8 @@
 import logging
 import re
+from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any
 
 from llama_index.readers.web import BeautifulSoupWebReader
 from llama_index.readers.web.sitemap.base import SitemapReader
@@ -9,9 +10,9 @@ from llama_index.readers.web.sitemap.base import SitemapReader
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
-
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
 
 class _CatchAllExtractorMap(dict):
     """A dict that returns the same extractor for any hostname key.
@@ -26,6 +27,7 @@ class _CatchAllExtractorMap(dict):
 
     def get(self, key, default=None):
         return self._extractor
+
 
 class WebIngestionJob(IngestionJob):
     """Ingestion connector for web pages.
@@ -52,23 +54,15 @@ class WebIngestionJob(IngestionJob):
 
         cfg = config.get("config", {})
 
-        self.urls: List[str] = cfg.get("urls") or []
-        self.sitemap_url: Optional[str] = (
-            cfg.get("sitemap_url", "").strip() or None
-        )
+        self.urls: list[str] = cfg.get("urls") or []
+        self.sitemap_url: str | None = cfg.get("sitemap_url", "").strip() or None
 
         if not self.urls and not self.sitemap_url:
-            raise ValueError(
-                "Either 'urls' or 'sitemap_url' must be set in web connector config"
-            )
+            raise ValueError("Either 'urls' or 'sitemap_url' must be set in web connector config")
         if self.urls and self.sitemap_url:
-            raise ValueError(
-                "'urls' and 'sitemap_url' are mutually exclusive in web connector config"
-            )
+            raise ValueError("'urls' and 'sitemap_url' are mutually exclusive in web connector config")
 
-        self.include_prefix: Optional[str] = (
-            cfg.get("include_prefix", "").strip() or None
-        )
+        self.include_prefix: str | None = cfg.get("include_prefix", "").strip() or None
         self.html_to_text: bool = bool(cfg.get("html_to_text", True))
 
         self._reader = BeautifulSoupWebReader(website_extractor=_CatchAllExtractorMap(self._title_extractor))
@@ -80,8 +74,7 @@ class WebIngestionJob(IngestionJob):
             )
         else:
             logger.info(
-                f"Initialized Web connector (mode=urls, count={len(self.urls)}, "
-                f"html_to_text={self.html_to_text})"
+                f"Initialized Web connector (mode=urls, count={len(self.urls)}, html_to_text={self.html_to_text})"
             )
 
     def _title_extractor(self, soup, **_):
@@ -115,9 +108,7 @@ class WebIngestionJob(IngestionJob):
         docs = self._reader.load_data(urls=[url])
         if not docs:
             return ""
-        item._metadata_cache["title"] = (
-            docs[0].metadata.get("title", "") or url
-        )
+        item._metadata_cache["title"] = docs[0].metadata.get("title", "") or url
         return docs[0].text or ""
 
     def get_item_name(self, item: IngestionItem) -> str:
@@ -133,10 +124,8 @@ class WebIngestionJob(IngestionJob):
         checksum: str,
         version: int,
         last_modified: Any,
-    ) -> Dict[str, Any]:
-        metadata = super().get_document_metadata(
-            item, item_name, checksum, version, last_modified
-        )
+    ) -> dict[str, Any]:
+        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
         metadata.update(
             {
                 "url": item._metadata_cache.get("url", ""),
@@ -145,7 +134,7 @@ class WebIngestionJob(IngestionJob):
         )
         return metadata
 
-    def _discover_sitemap_urls(self) -> List[str]:
+    def _discover_sitemap_urls(self) -> list[str]:
         """Parse the configured sitemap and return matching URLs."""
         reader = SitemapReader(html_to_text=self.html_to_text)
         # SitemapReader.load_data returns Documents; we need just the URLs.
