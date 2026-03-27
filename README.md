@@ -15,6 +15,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Ingestion from MediaWiki with Wiki-to-Markdown conversion via [html2text](https://github.com/Alir3z4/html2text)
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
+* Database ingestion from MySQL and PostgreSQL via arbitrary SQL SELECT queries
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -25,6 +26,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * MediaWiki
 * SerpAPI
 * Jira
+* Database (MySQL + PostgreSQL)
 
 ## Embeddings support
 
@@ -240,6 +242,78 @@ JIRA1_SCHEDULES=3600
 # JIRA1_SERVER_URL=https://jira.your-company.com
 # JIRA1_API_TOKEN=your-personal-access-token
 # (set auth_type: "token" in config.yaml; email is not needed)
+```
+
+### Database Connector
+
+The Database connector ingests rows from MySQL or PostgreSQL databases by executing a pre-configured SQL
+SELECT query. Each row becomes a document in the vector store.
+
+**Required columns** — the query **must** return these four columns:
+
+| Column | Description |
+|---|---|
+| `id` | Unique row identifier (used as document ID) |
+| `title` | Human-readable name of the item |
+| `updated_at` | Last modification timestamp (ISO-8601 string or datetime) |
+| `content` | Main text body to embed |
+
+Additional columns can be stored in document metadata via `metadata_columns`.
+
+Supports both **PostgreSQL** (via `psycopg` / `psycopg2`) and **MySQL** (via `pymysql`) using standard
+SQLAlchemy connection strings.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "database"
+    name: "postgres1"
+    config:
+      type: "postgres"                              # "postgres" or "mysql"
+      connection_string: "${DB_POSTGRES1_CONNECTION_STRING}"
+      # Required columns: id, title, updated_at, content
+      query: "SELECT id, title, updated_at, content, author, year FROM books LIMIT 100"
+      metadata_columns: "author,year"               # optional: extra columns in metadata
+      schedules: "${DB_POSTGRES1_SCHEDULES}"
+
+  - type: "database"
+    name: "mysql1"
+    config:
+      type: "mysql"
+      connection_string: "${DB_MYSQL1_CONNECTION_STRING}"
+      query: "SELECT id, title, updated_at, content FROM articles"
+      schedules: "${DB_MYSQL1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+# PostgreSQL
+DB_POSTGRES1_CONNECTION_STRING=postgresql+psycopg2://user:pass@localhost/mydb
+DB_POSTGRES1_SCHEDULES=3600
+
+# MySQL
+DB_MYSQL1_CONNECTION_STRING=mysql+pymysql://user:pass@localhost/mydb
+DB_MYSQL1_SCHEDULES=3600
+```
+
+If you want ready-made sample databases for local testing, `docker compose` now also starts:
+
+* `sample_postgres` on port `5434` with tables `customers`, `subscriptions`, and `support_tickets`
+* `sample_mysql` on port `3307` with tables `employees`, `products`, and `sales_orders`
+
+They are seeded from:
+
+* `docker/sample-databases/postgres/init/01_seed.sql`
+* `docker/sample-databases/mysql/init/01_seed.sql`
+
+The datasets are intentionally different so you can test ingestion against two distinct schemas. Example
+connection strings inside the Docker network:
+
+```dotenv
+DB_POSTGRES1_CONNECTION_STRING=postgresql+psycopg2://${SAMPLE_POSTGRES_USER}:${SAMPLE_POSTGRES_PASSWORD}@sample_postgres/${SAMPLE_POSTGRES_DB}
+DB_MYSQL1_CONNECTION_STRING=mysql+pymysql://${SAMPLE_MYSQL_USER}:${SAMPLE_MYSQL_PASSWORD}@sample_mysql/${SAMPLE_MYSQL_DB}
 ```
 
 ## Reference of the `config.yaml`

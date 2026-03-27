@@ -67,6 +67,27 @@ sources:
   #    load_comments: false      # optional, default false
   #    max_comments: 10          # optional, default 10
 
+  #- type: "database"
+  #  name: "postgres_subscriptions"
+  #  config:
+  #    type: "postgres"                                                         # "postgres" or "mysql"
+  #    connection_string: "${DB_POSTGRES1_CONNECTION_STRING}"                   # SQLAlchemy connection string (use read-only credentials)
+  #    # The query MUST return: id, title, updated_at, content
+  #    # Use SQL AS aliases to map your schema to these required column names
+  #    query: "SELECT id, title, updated_at, content, plan_name, status FROM subscriptions"
+  #    metadata_columns: "plan_name,status"                                    # optional: extra columns stored as metadata
+  #    schedules: "${DB_POSTGRES1_SCHEDULES}"
+
+  #- type: "database"
+  #  name: "mysql_products"
+  #  config:
+  #    type: "mysql"                                                            # "postgres" or "mysql"
+  #    connection_string: "${DB_MYSQL1_CONNECTION_STRING}"                      # SQLAlchemy connection string (use read-only credentials)
+  #    # The query MUST return: id, title, updated_at, content
+  #    query: "SELECT id, title, updated_at, content, category, unit_price FROM products"
+  #    metadata_columns: "category,unit_price"                                 # optional: extra columns stored as metadata
+  #    schedules: "${DB_MYSQL1_SCHEDULES}"
+
 embedding:
   provider: openrouter
   model_config: sentence-transformers/all-mpnet-base-v2
