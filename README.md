@@ -290,12 +290,30 @@ sources:
 # .env
 
 # PostgreSQL
-DB_POSTGRES1_CONNECTION_STRING=postgresql+psycopg://user:pass@localhost/mydb
+DB_POSTGRES1_CONNECTION_STRING=postgresql+psycopg2://user:pass@localhost/mydb
 DB_POSTGRES1_SCHEDULES=3600
 
 # MySQL
 DB_MYSQL1_CONNECTION_STRING=mysql+pymysql://user:pass@localhost/mydb
 DB_MYSQL1_SCHEDULES=3600
+```
+
+If you want ready-made sample databases for local testing, `docker compose` now also starts:
+
+* `sample_postgres` on port `5434` with tables `customers`, `subscriptions`, and `support_tickets`
+* `sample_mysql` on port `3307` with tables `employees`, `products`, and `sales_orders`
+
+They are seeded from:
+
+* `docker/sample-databases/postgres/init/01_seed.sql`
+* `docker/sample-databases/mysql/init/01_seed.sql`
+
+The datasets are intentionally different so you can test ingestion against two distinct schemas. Example
+connection strings inside the Docker network:
+
+```dotenv
+DB_POSTGRES1_CONNECTION_STRING=postgresql+psycopg2://${SAMPLE_POSTGRES_USER}:${SAMPLE_POSTGRES_PASSWORD}@sample_postgres/${SAMPLE_POSTGRES_DB}
+DB_MYSQL1_CONNECTION_STRING=mysql+pymysql://${SAMPLE_MYSQL_USER}:${SAMPLE_MYSQL_PASSWORD}@sample_mysql/${SAMPLE_MYSQL_DB}
 ```
 
 ## Reference of the `config.yaml`
