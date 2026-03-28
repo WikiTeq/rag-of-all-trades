@@ -197,6 +197,46 @@ SERPAPI1_QUERIES=aaa
 SERPAPI1_SCHEDULES=3600
 ````
 
+### Web Connector
+
+The Web connector ingests content from web pages using the LlamaIndex `BeautifulSoupWebReader` (URLs mode) or `SitemapReader` (sitemap mode). The two modes are mutually exclusive.
+
+**URLs mode** — scrape a fixed list of pages:
+
+```yaml
+- type: web
+  name: web1
+  config:
+    urls:
+      - https://example.com/page1
+      - https://example.com/page2
+    html_to_text: true   # optional, default true
+    schedules: "${WEB1_SCHEDULES}"
+```
+
+**Sitemap mode** — discover and scrape URLs from a sitemap.xml:
+
+```yaml
+- type: web
+  name: web2
+  config:
+    sitemap_url: https://example.com/sitemap.xml
+    include_prefix: "/wiki/"   # optional: only ingest URLs containing this string
+    html_to_text: true         # optional, default true
+    schedules: "${WEB2_SCHEDULES}"
+```
+
+> **Note:** `exclude_prefix` and sitemap index (`<sitemapindex>`) are not supported in this iteration — the underlying `SitemapReader` only supports include-style filtering and flat sitemaps.
+
+**.env variables:**
+
+```dotenv
+WEB1_SCHEDULES=60
+WEB2_SCHEDULES=60
+```
+
+No other credentials are required for public web pages.
+
 ### Jira Connector
 
 The Jira connector ingests issues from Jira Cloud or on-premise (Server/Data Center) instances using a
