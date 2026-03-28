@@ -1,6 +1,6 @@
 import logging
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,19 +14,45 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
-class _CatchAllExtractorMap(dict):
-    """A dict that returns the same extractor for any hostname key.
+Extractor = Callable[..., tuple[str, dict[str, Any]]]
 
-    BeautifulSoupWebReader looks up extractors via website_extractor.get(hostname).
-    This ensures our title extractor is used for every URL regardless of hostname.
+
+class CatchAllWebsiteExtractor(Mapping[str, Extractor]):
+    """Map every hostname to the same default extractor.
+
+    ``BeautifulSoupWebReader`` treats ``website_extractor`` as a hostname->callable
+    mapping. This implementation makes the catch-all behavior explicit while still
+    allowing future host-specific overrides if we ever need them.
     """
 
-    def __init__(self, extractor):
-        super().__init__()
-        self._extractor = extractor
+    def __init__(
+        self,
+        default_extractor: Extractor,
+        overrides: dict[str, Extractor] | None = None,
+    ):
+        self._default = default_extractor
+        self._overrides = overrides or {}
 
-    def get(self, key, default=None):
-        return self._extractor
+    def __bool__(self):
+        return True
+
+    def __contains__(self, key):
+        return isinstance(key, str)
+
+    def __getitem__(self, key):
+        return self._overrides.get(key, self._default)
+
+    def __iter__(self):
+        return iter(self._overrides)
+
+    def __len__(self):
+        return len(self._overrides)
+
+
+def _title_extractor(soup, **_):
+    title_tag = soup.find("title")
+    title = title_tag.getText().strip() if title_tag else ""
+    return soup.getText(), {"title": title}
 
 
 class WebIngestionJob(IngestionJob):
@@ -65,7 +91,8 @@ class WebIngestionJob(IngestionJob):
         self.include_prefix: str | None = cfg.get("include_prefix", "").strip() or None
         self.html_to_text: bool = bool(cfg.get("html_to_text", True))
 
-        self._reader = BeautifulSoupWebReader(website_extractor=_CatchAllExtractorMap(self._title_extractor))
+        self.website_extractor = CatchAllWebsiteExtractor(_title_extractor)
+        self._reader = BeautifulSoupWebReader(website_extractor=self.website_extractor)
 
         if self.sitemap_url:
             logger.info(
@@ -76,11 +103,6 @@ class WebIngestionJob(IngestionJob):
             logger.info(
                 f"Initialized Web connector (mode=urls, count={len(self.urls)}, html_to_text={self.html_to_text})"
             )
-
-    def _title_extractor(self, soup, **_):
-        title_tag = soup.find("title")
-        title = title_tag.getText().strip() if title_tag else ""
-        return soup.getText(), {"title": title}
 
     def list_items(self) -> Iterator[IngestionItem]:
         """Yield one IngestionItem per discovered URL."""

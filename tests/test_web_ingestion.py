@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 from llama_index.core.schema import Document
 
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.web_ingestion import WebIngestionJob
+from tasks.web_ingestion import WebIngestionJob, _title_extractor
 
 
 def _make_job(mock_bs_reader=None, mock_sitemap_reader=None, **cfg_overrides):
@@ -14,13 +14,9 @@ def _make_job(mock_bs_reader=None, mock_sitemap_reader=None, **cfg_overrides):
     }
     patches = []
     if mock_bs_reader is not None:
-        patches.append(
-            patch("tasks.web_ingestion.BeautifulSoupWebReader", return_value=mock_bs_reader)
-        )
+        patches.append(patch("tasks.web_ingestion.BeautifulSoupWebReader", return_value=mock_bs_reader))
     if mock_sitemap_reader is not None:
-        patches.append(
-            patch("tasks.web_ingestion.SitemapReader", return_value=mock_sitemap_reader)
-        )
+        patches.append(patch("tasks.web_ingestion.SitemapReader", return_value=mock_sitemap_reader))
     for p in patches:
         p.start()
     job = WebIngestionJob(cfg)
@@ -56,13 +52,23 @@ class TestWebIngestionInit(unittest.TestCase):
 
     def test_both_set_raises(self):
         with self.assertRaises(ValueError):
-            WebIngestionJob({
-                "name": "web1",
-                "config": {
-                    "urls": ["https://example.com"],
-                    "sitemap_url": "https://example.com/sitemap.xml",
-                },
-            })
+            WebIngestionJob(
+                {
+                    "name": "web1",
+                    "config": {
+                        "urls": ["https://example.com"],
+                        "sitemap_url": "https://example.com/sitemap.xml",
+                    },
+                }
+            )
+
+    def test_catch_all_extractor_matches_all_hostnames(self):
+        job, patches = _make_job(urls=["https://example.com"])
+        self.assertIn("example.com", job.website_extractor)
+        self.assertIn("news.ycombinator.com", job.website_extractor)
+        self.assertIs(job.website_extractor["example.com"], _title_extractor)
+        self.assertIs(job.website_extractor["news.ycombinator.com"], _title_extractor)
+        _stop_patches(patches)
 
 
 class TestWebIngestionListItemsUrls(unittest.TestCase):
@@ -86,13 +92,15 @@ class TestWebIngestionListItemsSitemap(unittest.TestCase):
             "https://example.com/wiki/b",
         ]
         with patch("tasks.web_ingestion.SitemapReader", return_value=mock_reader):
-            job = WebIngestionJob({
-                "name": "web1",
-                "config": {
-                    "sitemap_url": "https://example.com/sitemap.xml",
-                    "include_prefix": "/wiki/",
-                },
-            })
+            job = WebIngestionJob(
+                {
+                    "name": "web1",
+                    "config": {
+                        "sitemap_url": "https://example.com/sitemap.xml",
+                        "include_prefix": "/wiki/",
+                    },
+                }
+            )
             items = list(job.list_items())
 
         self.assertEqual(len(items), 2)
@@ -103,10 +111,12 @@ class TestWebIngestionListItemsSitemap(unittest.TestCase):
         mock_reader._load_sitemap.return_value = b"<xml/>"
         mock_reader._parse_sitemap.return_value = ["https://example.com/page"]
         with patch("tasks.web_ingestion.SitemapReader", return_value=mock_reader):
-            job = WebIngestionJob({
-                "name": "web1",
-                "config": {"sitemap_url": "https://example.com/sitemap.xml"},
-            })
+            job = WebIngestionJob(
+                {
+                    "name": "web1",
+                    "config": {"sitemap_url": "https://example.com/sitemap.xml"},
+                }
+            )
             list(job.list_items())
 
         mock_reader._parse_sitemap.assert_called_once_with(b"<xml/>", filter_locs=None)
@@ -136,14 +146,10 @@ class TestWebIngestionGetRawContent(unittest.TestCase):
 
     def test_caches_url_and_title_in_metadata(self):
         mock_reader = MagicMock()
-        mock_reader.load_data.return_value = [
-            Document(text="content", metadata={"title": "My Page"})
-        ]
+        mock_reader.load_data.return_value = [Document(text="content", metadata={"title": "My Page"})]
         with patch("tasks.web_ingestion.BeautifulSoupWebReader", return_value=mock_reader):
             job = WebIngestionJob({"name": "web1", "config": {"urls": ["https://example.com/p"]}})
-            item = IngestionItem(
-                id="web:https://example.com/p", source_ref="https://example.com/p"
-            )
+            item = IngestionItem(id="web:https://example.com/p", source_ref="https://example.com/p")
             job.get_raw_content(item)
 
         self.assertEqual(item._metadata_cache["url"], "https://example.com/p")
@@ -154,9 +160,7 @@ class TestWebIngestionGetRawContent(unittest.TestCase):
         mock_reader.load_data.return_value = [Document(text="content", metadata={})]
         with patch("tasks.web_ingestion.BeautifulSoupWebReader", return_value=mock_reader):
             job = WebIngestionJob({"name": "web1", "config": {"urls": ["https://example.com/p"]}})
-            item = IngestionItem(
-                id="web:https://example.com/p", source_ref="https://example.com/p"
-            )
+            item = IngestionItem(id="web:https://example.com/p", source_ref="https://example.com/p")
             job.get_raw_content(item)
 
         self.assertEqual(item._metadata_cache["title"], "https://example.com/p")
@@ -165,9 +169,7 @@ class TestWebIngestionGetRawContent(unittest.TestCase):
 class TestWebIngestionGetItemName(unittest.TestCase):
     def test_safe_name_from_url(self):
         job, patches = _make_job(urls=["https://example.com"])
-        item = IngestionItem(
-            id="web:https://example.com/page", source_ref="https://example.com/page"
-        )
+        item = IngestionItem(id="web:https://example.com/page", source_ref="https://example.com/page")
         name = job.get_item_name(item)
         self.assertNotIn("/", name)
         self.assertNotIn(":", name)
