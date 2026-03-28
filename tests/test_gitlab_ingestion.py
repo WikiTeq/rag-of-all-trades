@@ -13,7 +13,7 @@ from tasks.gitlab_ingestion import GitLabIngestionJob
 
 def _make_config(
     gitlab_url="https://gitlab.com",
-    personal_token="glpat_test",
+    personal_token=None,
     project_id=12345,
     group_id=None,
     ref="main",
@@ -32,7 +32,7 @@ def _make_config(
         "name": "test_gitlab",
         "config": {
             "gitlab_url": gitlab_url,
-            "personal_token": personal_token,
+            "personal_token": personal_token or "test_token",
             "project_id": project_id,
             "group_id": group_id,
             "ref": ref,
@@ -132,11 +132,12 @@ class TestGitLabIngestionJob(unittest.TestCase):
                 "personal_token": "t",
             }})
 
-    def test_group_id_only_is_valid(self):
+    def test_group_id_only_with_issues_is_valid(self):
         job = GitLabIngestionJob({"name": "x", "config": {
             "gitlab_url": "https://gitlab.com",
             "personal_token": "t",
             "group_id": 999,
+            "include_issues": True,
         }})
         self.assertIsNone(job.project_id)
         self.assertEqual(job.group_id, 999)
@@ -474,6 +475,61 @@ class TestGitLabIngestionJob(unittest.TestCase):
         list(job.list_items())
         call_kwargs = self.mock_issues_reader.load_data.call_args.kwargs
         self.assertTrue(call_kwargs["confidential"])
+
+
+    # ------------------------------------------------------------------
+    # _parse_bool
+    # ------------------------------------------------------------------
+
+    def test_parse_bool_true_values(self):
+        for v in [True, "true", "True", "1", "yes", "on"]:
+            self.assertTrue(GitLabIngestionJob._parse_bool(v), msg=f"expected True for {v!r}")
+
+    def test_parse_bool_false_values(self):
+        for v in [False, "false", "False", "0", "no", "off"]:
+            self.assertFalse(GitLabIngestionJob._parse_bool(v), msg=f"expected False for {v!r}")
+
+    def test_parse_bool_none_uses_default(self):
+        self.assertTrue(GitLabIngestionJob._parse_bool(None, default=True))
+        self.assertFalse(GitLabIngestionJob._parse_bool(None, default=False))
+
+    def test_parse_bool_flows_through_recursive(self):
+        job = self._make_job(recursive="false")
+        self.assertFalse(job.recursive)
+
+    def test_parse_bool_flows_through_include_issues(self):
+        job = self._make_job(include_issues="false")
+        self.assertFalse(job.include_issues)
+
+    def test_parse_bool_flows_through_issues_get_all(self):
+        job = self._make_job(issues_get_all="true")
+        self.assertTrue(job.issues_get_all)
+
+    # ------------------------------------------------------------------
+    # Fail-fast: group_id only + include_issues=False raises ValueError
+    # ------------------------------------------------------------------
+
+    def test_group_id_only_no_issues_raises(self):
+        with self.assertRaises(ValueError):
+            GitLabIngestionJob({"name": "x", "config": {
+                "gitlab_url": "https://gitlab.com",
+                "personal_token": "test_token",
+                "group_id": 999,
+                "include_issues": False,
+            }})
+
+    # ------------------------------------------------------------------
+    # issue last_modified prefers updated_at over created_at
+    # ------------------------------------------------------------------
+
+    def test_list_items_issue_last_modified_uses_created_at(self):
+        doc = _make_issue_doc("5")
+        doc.extra_info["created_at"] = "2024-03-10T08:00:00Z"
+        self.mock_repo_reader.load_data.return_value = []
+        self.mock_issues_reader.load_data.return_value = [doc]
+        job = self._make_job(include_issues=True)
+        items = list(job.list_items())
+        self.assertEqual(items[0].last_modified.year, 2024)
 
 
 if __name__ == "__main__":
