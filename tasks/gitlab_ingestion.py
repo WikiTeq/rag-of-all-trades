@@ -1,8 +1,9 @@
 # Standard library imports
 import logging
 import re
-from datetime import datetime
-from typing import Any, Dict, Iterator, List, Optional
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from typing import Any
 
 # Third-party imports
 import gitlab
@@ -58,45 +59,43 @@ class GitLabIngestionJob(IngestionJob):
             raise ValueError("personal_token is required in GitLab connector config")
 
         # Project / group
-        self.project_id: Optional[int] = cfg.get("project_id")
-        self.group_id: Optional[int] = cfg.get("group_id")
+        self.project_id: int | None = cfg.get("project_id")
+        self.group_id: int | None = cfg.get("group_id")
 
         if not self.project_id and not self.group_id:
-            raise ValueError(
-                "At least one of project_id or group_id is required in GitLab connector config"
-            )
+            raise ValueError("At least one of project_id or group_id is required in GitLab connector config")
 
         # Repository options
         self.ref: str = str(cfg.get("ref", "main"))
-        self.path: Optional[str] = cfg.get("path") or None
-        self.file_path: Optional[str] = cfg.get("file_path") or None
-        self.recursive: bool = bool(cfg.get("recursive", True))
+        self.path: str | None = cfg.get("path") or None
+        self.file_path: str | None = cfg.get("file_path") or None
+        self.recursive: bool = self._parse_bool(cfg.get("recursive"), default=True)
 
         # Issue options
-        self.include_issues: bool = bool(cfg.get("include_issues", False))
+        self.include_issues: bool = self._parse_bool(cfg.get("include_issues"), default=False)
         self.issues_state: str = cfg.get("issues_state", "opened")
-        self.issues_labels: Optional[List[str]] = self._parse_list(cfg.get("issues_labels"))
-        self.issues_assignee: Optional[str] = cfg.get("issues_assignee") or None
-        self.issues_author: Optional[str] = cfg.get("issues_author") or None
-        self.issues_milestone: Optional[str] = cfg.get("issues_milestone") or None
-        self.issues_search: Optional[str] = cfg.get("issues_search") or None
-        self.issues_get_all: bool = bool(cfg.get("issues_get_all", False))
-        self.issues_confidential: Optional[bool] = cfg.get("issues_confidential")
-        self.issues_created_after: Optional[datetime] = self._parse_timestamp(cfg.get("issues_created_after"))
-        self.issues_created_before: Optional[datetime] = self._parse_timestamp(cfg.get("issues_created_before"))
-        self.issues_updated_after: Optional[datetime] = self._parse_timestamp(cfg.get("issues_updated_after"))
-        self.issues_updated_before: Optional[datetime] = self._parse_timestamp(cfg.get("issues_updated_before"))
-        self.issues_iids: Optional[List[int]] = cfg.get("issues_iids") or None
-        self.issues_type: Optional[GitLabIssuesReader.IssueType] = self._resolve_issue_type_enum(cfg.get("issues_type"))
-        self.issues_non_archived: Optional[bool] = cfg.get("issues_non_archived")
-        self.issues_scope: Optional[GitLabIssuesReader.Scope] = self._resolve_scope_enum(cfg.get("issues_scope"))
+        self.issues_labels: list[str] | None = self._parse_list(cfg.get("issues_labels"))
+        self.issues_assignee: str | None = cfg.get("issues_assignee") or None
+        self.issues_author: str | None = cfg.get("issues_author") or None
+        self.issues_milestone: str | None = cfg.get("issues_milestone") or None
+        self.issues_search: str | None = cfg.get("issues_search") or None
+        self.issues_get_all: bool = self._parse_bool(cfg.get("issues_get_all"), default=False)
+        self.issues_confidential: bool | None = cfg.get("issues_confidential")
+        self.issues_created_after: datetime | None = self._parse_timestamp(cfg.get("issues_created_after"))
+        self.issues_created_before: datetime | None = self._parse_timestamp(cfg.get("issues_created_before"))
+        self.issues_updated_after: datetime | None = self._parse_timestamp(cfg.get("issues_updated_after"))
+        self.issues_updated_before: datetime | None = self._parse_timestamp(cfg.get("issues_updated_before"))
+        self.issues_iids: list[int] | None = cfg.get("issues_iids") or None
+        self.issues_type: GitLabIssuesReader.IssueType | None = self._resolve_issue_type_enum(cfg.get("issues_type"))
+        self.issues_non_archived: bool | None = cfg.get("issues_non_archived")
+        self.issues_scope: GitLabIssuesReader.Scope | None = self._resolve_scope_enum(cfg.get("issues_scope"))
 
         # Build authenticated GitLab client
         self._gl = gitlab.Gitlab(self.gitlab_url, private_token=self.personal_token)
 
         # Build readers lazily — repository reader connects at init time
-        self._repo_reader: Optional[GitLabRepositoryReader] = None
-        self._issues_reader: Optional[GitLabIssuesReader] = None
+        self._repo_reader: GitLabRepositoryReader | None = None
+        self._issues_reader: GitLabIssuesReader | None = None
 
         if self.project_id:
             self._repo_reader = GitLabRepositoryReader(
@@ -145,7 +144,7 @@ class GitLabIngestionJob(IngestionJob):
                     yield IngestionItem(
                         id=f"gitlab:{self.project_id}:file:{file_path}",
                         source_ref=doc,
-                        last_modified=datetime.utcnow(),  # GitLab reader does not expose commit dates; use ingestion time
+                        last_modified=datetime.now(UTC),  # GitLab reader does not expose commit dates; use ingestion time
                     )
             except Exception as e:
                 logger.error(f"[{self.source_name}] Failed to load repository files: {e}")
@@ -208,7 +207,7 @@ class GitLabIngestionJob(IngestionJob):
         checksum: str,
         version: int,
         last_modified: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         doc = item.source_ref
         extra = doc.extra_info or {}
 
@@ -216,13 +215,15 @@ class GitLabIngestionJob(IngestionJob):
         metadata["gitlab_url"] = self.gitlab_url
 
         if ":issue:" in item.id:
-            metadata.update({
-                "item_type": "issue",
-                "issue_number": doc.doc_id,
-                "state": extra.get("state", ""),
-                "labels": extra.get("labels", []),
-                "url": extra.get("source", extra.get("url", "")),
-            })
+            metadata.update(
+                {
+                    "item_type": "issue",
+                    "issue_number": doc.doc_id,
+                    "state": extra.get("state", ""),
+                    "labels": extra.get("labels", []),
+                    "url": extra.get("source", extra.get("url", "")),
+                }
+            )
             if extra.get("assignee"):
                 metadata["assignee"] = extra["assignee"]
             if extra.get("author"):
@@ -230,12 +231,14 @@ class GitLabIngestionJob(IngestionJob):
             if extra.get("closed_at"):
                 metadata["closed_at"] = extra["closed_at"]
         else:
-            metadata.update({
-                "item_type": "file",
-                "file_path": extra.get("file_path", ""),
-                "file_name": extra.get("file_name", item_name),
-                "url": extra.get("url", ""),
-            })
+            metadata.update(
+                {
+                    "item_type": "file",
+                    "file_path": extra.get("file_path", ""),
+                    "file_name": extra.get("file_name", item_name),
+                    "url": extra.get("url", ""),
+                }
+            )
 
         return metadata
 
@@ -278,15 +281,15 @@ class GitLabIngestionJob(IngestionJob):
         return cls._resolve_enum(GitLabIssuesReader.IssueState, state, GitLabIssuesReader.IssueState.OPEN)
 
     @classmethod
-    def _resolve_scope_enum(cls, scope: Optional[str]) -> Optional[GitLabIssuesReader.Scope]:
+    def _resolve_scope_enum(cls, scope: str | None) -> GitLabIssuesReader.Scope | None:
         return cls._resolve_enum(GitLabIssuesReader.Scope, scope)
 
     @classmethod
-    def _resolve_issue_type_enum(cls, issue_type: Optional[str]) -> Optional[GitLabIssuesReader.IssueType]:
+    def _resolve_issue_type_enum(cls, issue_type: str | None) -> GitLabIssuesReader.IssueType | None:
         return cls._resolve_enum(GitLabIssuesReader.IssueType, issue_type)
 
     @staticmethod
-    def _parse_timestamp(value: Any) -> Optional[datetime]:
+    def _parse_timestamp(value: Any) -> datetime | None:
         """Parse an ISO-8601 timestamp string into a datetime, or return None."""
         if not value:
             return None
