@@ -37,7 +37,6 @@ class GitLabIngestionJob(IngestionJob):
         - config.issues_milestone: Milestone title filter (optional)
         - config.issues_search: Free-text search filter (optional)
         - config.issues_get_all: Fetch all pages of issues (optional, default False)
-        - config.schedules: Celery schedule in seconds (optional)
     """
 
     @property
@@ -112,6 +111,12 @@ class GitLabIngestionJob(IngestionJob):
                 group_id=self.group_id if self.group_id else None,
             )
 
+        if self._repo_reader is None and self._issues_reader is None:
+            raise ValueError(
+                "Invalid GitLab connector config: no ingestion target enabled. "
+                "Set project_id for repository ingestion or enable include_issues for group/project issues."
+            )
+
         logger.info(
             f"Initialized GitLab connector (url={self.gitlab_url!r}, "
             f"project_id={self.project_id}, group_id={self.group_id}, "
@@ -140,7 +145,7 @@ class GitLabIngestionJob(IngestionJob):
                     yield IngestionItem(
                         id=f"gitlab:{self.project_id}:file:{file_path}",
                         source_ref=doc,
-                        last_modified=None,  # GitLab reader does not expose commit dates
+                        last_modified=datetime.utcnow(),  # GitLab reader does not expose commit dates; use ingestion time
                     )
             except Exception as e:
                 logger.error(f"[{self.source_name}] Failed to load repository files: {e}")
@@ -169,12 +174,11 @@ class GitLabIngestionJob(IngestionJob):
                     scope=self.issues_scope,
                 )
                 for doc in docs:
-                    iid = doc.doc_id
                     yield IngestionItem(
-                        id=f"gitlab:{self.project_id or self.group_id}:issue:{iid}",
+                        id=f"gitlab:{self.project_id or self.group_id}:issue:{doc.doc_id}",
                         source_ref=doc,
                         last_modified=self._parse_timestamp(
-                            doc.extra_info.get("created_at")
+                            doc.extra_info.get("created_at")  # GitLabIssuesReader does not expose updated_at
                         ),
                     )
             except Exception as e:
@@ -240,7 +244,18 @@ class GitLabIngestionJob(IngestionJob):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_list(value: Any) -> Optional[List[str]]:
+    def _parse_bool(value: Any, default: bool = False) -> bool:
+        """Parse a config value to bool, safely handling string inputs like 'false'."""
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
+
+    @staticmethod
+    def _parse_list(value: Any) -> list[str] | None:
         """Parse a comma-separated string or list into a list of strings."""
         if not value:
             return None
