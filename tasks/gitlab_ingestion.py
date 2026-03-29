@@ -90,22 +90,20 @@ class GitLabIngestionJob(IngestionJob):
         self.issues_non_archived: bool | None = cfg.get("issues_non_archived")
         self.issues_scope: GitLabIssuesReader.Scope | None = self._resolve_scope_enum(cfg.get("issues_scope"))
 
-        # Build authenticated GitLab client
-        self._gl = gitlab.Gitlab(self.gitlab_url, private_token=self.personal_token)
+        gl = gitlab.Gitlab(self.gitlab_url, private_token=self.personal_token)
 
-        # Build readers lazily — repository reader connects at init time
         self._repo_reader: GitLabRepositoryReader | None = None
         self._issues_reader: GitLabIssuesReader | None = None
 
         if self.project_id:
             self._repo_reader = GitLabRepositoryReader(
-                gitlab_client=self._gl,
+                gitlab_client=gl,
                 project_id=self.project_id,
             )
 
         if self.include_issues:
             self._issues_reader = GitLabIssuesReader(
-                gitlab_client=self._gl,
+                gitlab_client=gl,
                 project_id=self.project_id if self.project_id else None,
                 group_id=self.group_id if self.group_id else None,
             )
@@ -144,7 +142,9 @@ class GitLabIngestionJob(IngestionJob):
                     yield IngestionItem(
                         id=f"gitlab:{self.project_id}:file:{file_path}",
                         source_ref=doc,
-                        last_modified=datetime.now(UTC),  # GitLab reader does not expose commit dates; use ingestion time
+                        last_modified=datetime.now(
+                            UTC
+                        ),  # GitLab reader does not expose commit dates; use ingestion time
                     )
             except Exception as e:
                 logger.error(f"[{self.source_name}] Failed to load repository files: {e}")
@@ -198,7 +198,7 @@ class GitLabIngestionJob(IngestionJob):
             file_path = extra.get("file_path", doc.doc_id or "")
             name = re.sub(r"[^\w\-_\.]", "_", file_path)
 
-        return name[:255] if name else doc.doc_id[:255]
+        return name[:255] if name else item.id[:255]
 
     def get_document_metadata(
         self,
@@ -263,7 +263,7 @@ class GitLabIngestionJob(IngestionJob):
         if not value:
             return None
         if isinstance(value, list):
-            return [v.strip() for v in value if str(v).strip()]
+            return [s for v in value if (s := str(v).strip())] or None
         return [v.strip() for v in str(value).split(",") if v.strip()] or None
 
     @staticmethod
