@@ -67,6 +67,28 @@ sources:
   #    load_comments: false      # optional, default false
   #    max_comments: 10          # optional, default 10
 
+  # GITLAB CONNECTORS (optional):
+
+  #- type: "gitlab"
+  #  name: "gitlab1"
+  #  config:
+  #    gitlab_url: "${GITLAB1_URL}"          # e.g. https://gitlab.com
+  #    personal_token: "${GITLAB1_TOKEN}"
+  #    project_id: 12345678                  # integer project ID (required unless group_id only)
+  #    #group_id: 999                        # optional, for group-level issue queries
+  #    ref: "main"                           # optional, branch/tag/commit, default "main"
+  #    #path: "docs"                         # optional, limit to sub-directory
+  #    recursive: true                       # optional, default true
+  #    include_issues: false                 # optional, default false
+  #    #issues_state: "opened"              # optional: opened/closed/all, default "opened"
+  #    #issues_labels: "bug,docs"           # optional, comma-separated
+  #    #issues_assignee: "username"         # optional
+  #    #issues_author: "username"           # optional
+  #    #issues_milestone: "v1.0"            # optional
+  #    #issues_search: "keyword"            # optional
+  #    #issues_get_all: false               # optional, fetch all pages, default false
+  #    schedules: "${GITLAB1_SCHEDULES}"
+
 embedding:
   provider: openrouter
   model_config: sentence-transformers/all-mpnet-base-v2
