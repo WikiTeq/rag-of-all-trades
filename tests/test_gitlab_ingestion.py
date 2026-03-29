@@ -1,10 +1,11 @@
 import unittest
+from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
-from llama_index.readers.gitlab import GitLabIssuesReader, GitLabRepositoryReader
-from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.gitlab_ingestion import GitLabIngestionJob
+from llama_index.readers.gitlab import GitLabIssuesReader
 
+from tasks.gitlab_ingestion import GitLabIngestionJob
+from tasks.helper_classes.ingestion_item import IngestionItem
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -18,6 +19,7 @@ def _make_config(
     group_id=None,
     ref="main",
     path=None,
+    file_path=None,
     recursive=True,
     include_issues=False,
     issues_state="opened",
@@ -37,6 +39,7 @@ def _make_config(
             "group_id": group_id,
             "ref": ref,
             "path": path,
+            "file_path": file_path,
             "recursive": recursive,
             "include_issues": include_issues,
             "issues_state": issues_state,
@@ -127,18 +130,28 @@ class TestGitLabIngestionJob(unittest.TestCase):
 
     def test_missing_project_and_group_raises(self):
         with self.assertRaises(ValueError):
-            GitLabIngestionJob({"name": "x", "config": {
-                "gitlab_url": "https://gitlab.com",
-                "personal_token": "t",
-            }})
+            GitLabIngestionJob(
+                {
+                    "name": "x",
+                    "config": {
+                        "gitlab_url": "https://gitlab.com",
+                        "personal_token": "t",
+                    },
+                }
+            )
 
     def test_group_id_only_with_issues_is_valid(self):
-        job = GitLabIngestionJob({"name": "x", "config": {
-            "gitlab_url": "https://gitlab.com",
-            "personal_token": "t",
-            "group_id": 999,
-            "include_issues": True,
-        }})
+        job = GitLabIngestionJob(
+            {
+                "name": "x",
+                "config": {
+                    "gitlab_url": "https://gitlab.com",
+                    "personal_token": "t",
+                    "group_id": 999,
+                    "include_issues": True,
+                },
+            }
+        )
         self.assertIsNone(job.project_id)
         self.assertEqual(job.group_id, 999)
 
@@ -267,6 +280,14 @@ class TestGitLabIngestionJob(unittest.TestCase):
         job = self._make_job(project_id=12345)
         self.assertEqual(job.get_item_name(item), "gitlab_issue_12345_42")
 
+    def test_get_item_name_file_no_doc_id_or_file_path_falls_back_to_item_id(self):
+        doc = Mock()
+        doc.doc_id = None
+        doc.extra_info = {}
+        item = IngestionItem(id="gitlab:1:file:fallback", source_ref=doc)
+        job = self._make_job()
+        self.assertEqual(job.get_item_name(item), "gitlab:1:file:fallback")
+
     def test_get_item_name_truncates_to_255(self):
         doc = _make_file_doc(file_path="a/" * 200 + "file.md")
         item = IngestionItem(id="gitlab:1:file:x", source_ref=doc)
@@ -331,9 +352,11 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertIsNone(GitLabIngestionJob._parse_list(""))
         self.assertIsNone(GitLabIngestionJob._parse_list(None))
 
-    # ------------------------------------------------------------------
-    # _resolve_state_enum
-    # ------------------------------------------------------------------
+    def test_parse_list_non_string_elements(self):
+        self.assertEqual(GitLabIngestionJob._parse_list([1, 2, 3]), ["1", "2", "3"])
+
+    def test_parse_list_all_blank_list_returns_none(self):
+        self.assertIsNone(GitLabIngestionJob._parse_list(["", "  ", ""]))
 
     def test_resolve_state_opened(self):
         self.assertEqual(
@@ -430,20 +453,17 @@ class TestGitLabIngestionJob(unittest.TestCase):
 
     def test_list_items_passes_file_path(self):
         self.mock_repo_reader.load_data.return_value = []
-        job = self._make_job(path=None)
-        # Override file_path directly since _make_config doesn't have it
-        job.file_path = "README.md"
+        job = self._make_job(file_path="README.md")
         list(job.list_items())
         call_kwargs = self.mock_repo_reader.load_data.call_args.kwargs
         self.assertEqual(call_kwargs["file_path"], "README.md")
 
     def test_list_items_issue_date_filters_passed(self):
-        from datetime import datetime, timezone
         self.mock_repo_reader.load_data.return_value = []
         self.mock_issues_reader.load_data.return_value = []
         job = self._make_job(include_issues=True)
-        job.issues_created_after = datetime(2024, 1, 1, tzinfo=timezone.utc)
-        job.issues_created_before = datetime(2024, 12, 31, tzinfo=timezone.utc)
+        job.issues_created_after = datetime(2024, 1, 1, tzinfo=UTC)
+        job.issues_created_before = datetime(2024, 12, 31, tzinfo=UTC)
         list(job.list_items())
         call_kwargs = self.mock_issues_reader.load_data.call_args.kwargs
         self.assertEqual(call_kwargs["created_after"].year, 2024)
@@ -475,7 +495,6 @@ class TestGitLabIngestionJob(unittest.TestCase):
         list(job.list_items())
         call_kwargs = self.mock_issues_reader.load_data.call_args.kwargs
         self.assertTrue(call_kwargs["confidential"])
-
 
     # ------------------------------------------------------------------
     # _parse_bool
@@ -511,12 +530,17 @@ class TestGitLabIngestionJob(unittest.TestCase):
 
     def test_group_id_only_no_issues_raises(self):
         with self.assertRaises(ValueError):
-            GitLabIngestionJob({"name": "x", "config": {
-                "gitlab_url": "https://gitlab.com",
-                "personal_token": "test_token",
-                "group_id": 999,
-                "include_issues": False,
-            }})
+            GitLabIngestionJob(
+                {
+                    "name": "x",
+                    "config": {
+                        "gitlab_url": "https://gitlab.com",
+                        "personal_token": "test_token",
+                        "group_id": 999,
+                        "include_issues": False,
+                    },
+                }
+            )
 
     # ------------------------------------------------------------------
     # issue last_modified prefers updated_at over created_at
