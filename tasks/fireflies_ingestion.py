@@ -138,7 +138,11 @@ class FirefliesIngestionJob(IngestionJob):
     def _handle_graphql_errors(self, data: dict[str, Any]) -> None:
         if "errors" not in data:
             return
-        non_fatal_codes = {"paid_required", "too_many_requests"}
+        for error in data["errors"]:
+            if error.get("code") == "too_many_requests":
+                retry_after = error.get("extensions", {}).get("retryAfter")
+                raise RuntimeError(f"Fireflies rate limit exceeded (too_many_requests); retryAfter={retry_after}")
+        non_fatal_codes = {"paid_required"}
         fatal = [e for e in data["errors"] if e.get("code") not in non_fatal_codes]
         if fatal:
             raise RuntimeError(f"Fireflies GraphQL error: {fatal}")
