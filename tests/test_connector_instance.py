@@ -43,6 +43,10 @@ class TestEncryption(unittest.TestCase):
 
         self._key = Fernet.generate_key().decode()
         os.environ["CONNECTOR_ENCRYPTION_KEY"] = self._key
+        # Patch the settings singleton so encrypt_secret/decrypt_secret pick up the key
+        import utils.config as config_mod
+
+        config_mod.settings.env.CONNECTOR_ENCRYPTION_KEY = self._key
         # Reload to pick up new env key
         import importlib
 
