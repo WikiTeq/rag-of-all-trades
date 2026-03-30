@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 _FIREFLIES_API_URL = "https://api.fireflies.ai/graphql"
 _PAGE_SIZE = 50
+_MIN_OUTLINE_LENGTH = 200
 
 _TRANSCRIPTS_QUERY = """
 query Transcripts(
@@ -101,7 +102,7 @@ class FirefliesIngestionJob(IngestionJob):
         if isinstance(organizers_raw, str):
             organizers = [e.strip() for e in organizers_raw.split(",") if e.strip()] or None
         elif isinstance(organizers_raw, list):
-            organizers = [s for e in organizers_raw if (s := e.strip())] or None
+            organizers = [s for e in organizers_raw if isinstance(e, str) and (s := e.strip())] or None
         else:
             organizers = None
         self.filters: dict[str, Any] = {
@@ -193,7 +194,7 @@ class FirefliesIngestionJob(IngestionJob):
         outline = (summary.get("outline") or "").strip()
         sentences = transcript.get("sentences") or []
 
-        if outline and len(outline) > 200:
+        if outline and len(outline) > _MIN_OUTLINE_LENGTH:
             parts.append(f"## Outline\n\n{outline}")
         elif sentences:
             parts.append("## Transcript\n\n" + self._build_transcript_from_sentences(sentences))
