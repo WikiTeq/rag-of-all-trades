@@ -190,9 +190,7 @@ class TestNotionGetRawContent(unittest.TestCase):
                     "type": "paragraph",
                     "id": "block-1",
                     "has_children": False,
-                    "paragraph": {
-                        "rich_text": [{"text": {"content": "Hello world"}}]
-                    },
+                    "paragraph": {"rich_text": [{"text": {"content": "Hello world"}}]},
                 }
             ],
             "next_cursor": None,
@@ -210,9 +208,7 @@ class TestNotionGetRawContent(unittest.TestCase):
         self.assertEqual(content, "")
 
     def test_applies_request_delay(self):
-        self.mock_client.blocks.children.list.return_value = {
-            "results": [], "next_cursor": None
-        }
+        self.mock_client.blocks.children.list.return_value = {"results": [], "next_cursor": None}
         job = _make_job(self.mock_client, request_delay=0.01)
         item = IngestionItem(id="notion:page-1", source_ref="page-1")
         with patch("tasks.notion_ingestion.time.sleep") as mock_sleep:
@@ -258,9 +254,7 @@ class TestNotionGetRawContent(unittest.TestCase):
                         "type": "paragraph",
                         "id": "child-block",
                         "has_children": True,
-                        "paragraph": {
-                            "rich_text": [{"text": {"content": "Parent"}}]
-                        },
+                        "paragraph": {"rich_text": [{"text": {"content": "Parent"}}]},
                     }
                 ],
                 "next_cursor": None,
@@ -271,9 +265,7 @@ class TestNotionGetRawContent(unittest.TestCase):
                         "type": "paragraph",
                         "id": "grandchild-block",
                         "has_children": False,
-                        "paragraph": {
-                            "rich_text": [{"text": {"content": "Child"}}]
-                        },
+                        "paragraph": {"rich_text": [{"text": {"content": "Child"}}]},
                     }
                 ],
                 "next_cursor": None,
@@ -318,9 +310,7 @@ class TestNotionGetDocumentMetadata(unittest.TestCase):
             id="notion:12345678-1234-1234-1234-123456789abc",
             source_ref="12345678-1234-1234-1234-123456789abc",
         )
-        metadata = job.get_document_metadata(
-            item=item, item_name="test", checksum="chk", version=1, last_modified=None
-        )
+        metadata = job.get_document_metadata(item=item, item_name="test", checksum="chk", version=1, last_modified=None)
         self.assertEqual(metadata["source"], "notion")
         self.assertEqual(metadata["id"], "12345678-1234-1234-1234-123456789abc")
         self.assertIn("notion.so", metadata["url"])
