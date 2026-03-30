@@ -68,7 +68,8 @@ def run_ingestion(instance_id: int):
     # inst is detached here — use captured inst_type, not inst.type
     config["secrets"] = secrets
     logger.info("Starting ingestion for %s/%s", inst_type, config["name"])
-    job = IngestionJobFactory.create(inst_type, config)
+    # normalize type — DB may store mixed case
+    job = IngestionJobFactory.create(inst_type.lower(), config)
     job.run()
 
 

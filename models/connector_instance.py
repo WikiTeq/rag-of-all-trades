@@ -1,3 +1,5 @@
+import copy
+
 from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
@@ -32,5 +34,5 @@ class ConnectorInstance(Base):
             "type": self.type,
             "name": self.name,
             "schedule": self.schedule,
-            "config": self.config,
+            "config": copy.deepcopy(self.config),
         }
