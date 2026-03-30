@@ -2,6 +2,7 @@ from tasks.base import IngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.jira_ingestion import JiraIngestionJob
 from tasks.mediawiki_ingestion import MediaWikiIngestionJob
+from tasks.notion_ingestion import NotionIngestionJob
 from tasks.s3_ingestion import S3IngestionJob
 from tasks.serpapi_ingestion import SerpAPIIngestionJob
 
@@ -28,3 +29,4 @@ IngestionJobFactory.register("mediawiki", MediaWikiIngestionJob)
 IngestionJobFactory.register("jira", JiraIngestionJob)
 IngestionJobFactory.register("serpapi", SerpAPIIngestionJob)
 IngestionJobFactory.register("directory", DirectoryIngestionJob)
+IngestionJobFactory.register("notion", NotionIngestionJob)
