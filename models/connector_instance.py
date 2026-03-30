@@ -8,6 +8,8 @@ from utils.db import Base
 
 
 class ConnectorInstance(Base):
+    """ORM model for a connector instance."""
+
     __tablename__ = "connector_instances"
 
     id = Column(Integer, primary_key=True)
@@ -30,6 +32,7 @@ class ConnectorInstance(Base):
     )
 
     def to_config(self) -> dict:
+        """Return a deep copy of the instance config dict safe for mutation by callers."""
         return {
             "type": self.type,
             "name": self.name,

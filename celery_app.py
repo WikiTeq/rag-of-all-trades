@@ -43,16 +43,19 @@ celery_app.conf.beat_schedule = {}
 # Reset DB connections per worker process
 @worker_process_init.connect
 def init_worker(**kwargs):
+    """Dispose SQLAlchemy engine on worker process start to avoid inherited connections."""
     engine.dispose()
 
 
 @worker_process_shutdown.connect
 def shutdown_worker(**kwargs):
+    """Dispose SQLAlchemy engine on worker process shutdown."""
     engine.dispose()
 
 
 @celery_app.task(name="run_ingestion", base=Singleton, unique_on=["instance_id"], ignore_result=True)
 def run_ingestion(instance_id: int):
+    """Load a ConnectorInstance from DB and run its ingestion job."""
     from tasks.factory import IngestionJobFactory
     from utils.db import get_db_session
     from utils.encryption import decrypt_secret
@@ -75,6 +78,7 @@ def run_ingestion(instance_id: int):
 
 @celery_app.task(name="sync_connector_schedules", ignore_result=True)
 def sync_connector_schedules():
+    """Sync connector schedules from DB to RedBeat."""
     from utils.scheduler import sync_to_beat_schedule
 
     sync_to_beat_schedule()
@@ -82,6 +86,7 @@ def sync_connector_schedules():
 
 @beat_init.connect
 def on_beat_init(**kwargs):
+    """Bootstrap RedBeat on Celery Beat startup: sync schedules and register the periodic sync task."""
     from utils.scheduler import sync_to_beat_schedule
 
     # Register the periodic sync task in RedBeat (every 60 s)
