@@ -62,6 +62,7 @@ def _extract_secrets(config: dict) -> tuple[dict, dict]:
 
 
 def _load_yaml(path: Path) -> dict:
+    """Load a YAML file with ${ENV_VAR} interpolation from os.environ."""
     with open(path) as f:
         raw = f.read()
     import os
@@ -116,6 +117,7 @@ def _expand_sources(raw_sources: list) -> list[dict]:
 
 
 def main() -> None:
+    """Read sources: from config.yaml and insert them as ConnectorInstance rows."""
     yaml_path = Path(__file__).resolve().parent.parent / "config.yaml"
     if not yaml_path.exists():
         print(f"config.yaml not found at {yaml_path}. Nothing to migrate.")

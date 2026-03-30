@@ -12,6 +12,8 @@ YAML_PATH = BASE_DIR / "config.yaml"
 
 
 class EnvSettings(BaseSettings):
+    """Pydantic settings model loaded from .env and environment variables."""
+
     REDIS_URL: str
 
     POSTGRES_USER: str
@@ -54,6 +56,7 @@ class EnvSettings(BaseSettings):
     @field_validator("CONNECTOR_ENCRYPTION_KEY", mode="after")
     @classmethod
     def validate_encryption_key(cls, v):
+        """Raise ValueError if CONNECTOR_ENCRYPTION_KEY is not a valid Fernet key."""
         try:
             Fernet(v.encode() if isinstance(v, str) else v)
         except Exception as e:
@@ -63,6 +66,7 @@ class EnvSettings(BaseSettings):
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):
+        """Parse CORS_ORIGINS from a comma-separated string or list."""
         if isinstance(v, str):
             return [x.strip() for x in v.split(",") if x.strip()]
         return v
@@ -71,6 +75,7 @@ class EnvSettings(BaseSettings):
 
 
 def load_yaml_with_env(path):
+    """Load a YAML file with ${ENV_VAR} interpolation from os.environ."""
     with open(path) as f:
         raw_yaml = f.read()
     # interpolate ${VAR} with os.environ
@@ -80,12 +85,16 @@ def load_yaml_with_env(path):
 
 
 class Settings:
+    """Unified config object combining .env settings and config.yaml values."""
+
     def __init__(self):
+        """Load EnvSettings and config.yaml on construction."""
         self.env = EnvSettings()
         self.yaml = load_yaml_with_env(YAML_PATH)
 
     @property
     def POSTGRES(self):
+        """Return PostgreSQL / pgvector connection and table settings."""
         vector_store = self.yaml.get("vector_store", {})
         hnsw = vector_store.get("hnsw", {})
         return {
@@ -106,6 +115,7 @@ class Settings:
 
     @property
     def EMBEDDING(self):
+        """Return embedding model settings from config.yaml."""
         return {
             "provider": self.yaml.get("embedding", {}).get("provider"),
             "model_config": self.yaml.get("embedding", {}).get("model_config"),
@@ -114,6 +124,7 @@ class Settings:
 
     @property
     def LLM(self):
+        """Return LLM inference settings from .env and config.yaml."""
         return {
             "api_key": self.env.OPENROUTER_API_KEY,
             "base_url": self.env.OPENROUTER_API_BASE,
