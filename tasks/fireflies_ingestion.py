@@ -101,7 +101,7 @@ class FirefliesIngestionJob(IngestionJob):
         if isinstance(organizers_raw, str):
             organizers = [e.strip() for e in organizers_raw.split(",") if e.strip()] or None
         elif isinstance(organizers_raw, list):
-            organizers = [e for e in organizers_raw if e] or None
+            organizers = [s for e in organizers_raw if (s := e.strip())] or None
         else:
             organizers = None
         self.filters: dict[str, Any] = {
@@ -140,7 +140,7 @@ class FirefliesIngestionJob(IngestionJob):
             return
         for error in data["errors"]:
             if error.get("code") == "too_many_requests":
-                retry_after = error.get("extensions", {}).get("retryAfter")
+                retry_after = error.get("extensions", {}).get("metadata", {}).get("retryAfter")
                 raise RuntimeError(f"Fireflies rate limit exceeded (too_many_requests); retryAfter={retry_after}")
         non_fatal_codes = {"paid_required"}
         fatal = [e for e in data["errors"] if e.get("code") not in non_fatal_codes]
