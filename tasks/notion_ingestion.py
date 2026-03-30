@@ -2,8 +2,9 @@
 import logging
 import re
 import time
+from collections.abc import Iterator
 from datetime import datetime
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any
 
 # Third-party imports
 from notion_client import Client
@@ -42,20 +43,16 @@ class NotionIngestionJob(IngestionJob):
 
     def __init__(self, config: dict):
         super().__init__(config)
-        self._user_cache: Dict[str, Optional[str]] = {}
+        self._user_cache: dict[str, str | None] = {}
 
         cfg = config.get("config", {})
 
         self.integration_token = cfg.get("integration_token", "").strip()
         if not self.integration_token:
-            raise ValueError(
-                "integration_token is required in Notion connector config"
-            )
+            raise ValueError("integration_token is required in Notion connector config")
 
-        self.page_ids: List[str] = self._parse_ids(cfg.get("page_ids", ""))
-        self.database_ids: List[str] = self._parse_ids(
-            cfg.get("database_ids", "")
-        )
+        self.page_ids: list[str] = self._parse_ids(cfg.get("page_ids", ""))
+        self.database_ids: list[str] = self._parse_ids(cfg.get("database_ids", ""))
 
         self.request_delay = float(cfg.get("request_delay", 0))
         if self.request_delay < 0:
@@ -63,11 +60,7 @@ class NotionIngestionJob(IngestionJob):
 
         self._client = Client(auth=self.integration_token)
 
-        load_mode = (
-            self.LOAD_MODE_ALL
-            if not self.page_ids and not self.database_ids
-            else self.LOAD_MODE_SELECTIVE
-        )
+        load_mode = self.LOAD_MODE_ALL if not self.page_ids and not self.database_ids else self.LOAD_MODE_SELECTIVE
         logger.info(
             f"Initialized Notion connector "
             f"(mode={load_mode}, page_ids={self.page_ids}, "
@@ -97,10 +90,10 @@ class NotionIngestionJob(IngestionJob):
         page_id: str = item.source_ref
         try:
             text = self._read_page(page_id)
-        except Exception as e:  # _read_page is recursive and may raise unexpected errors, such as KeyError or RecursionError.
-            logger.error(
-                f"[{self.source_name}] Failed to read page {page_id}: {e}"
-            )
+        except (
+            Exception
+        ) as e:  # _read_page is recursive and may raise unexpected errors, such as KeyError or RecursionError.
+            logger.error(f"[{self.source_name}] Failed to read page {page_id}: {e}")
             return ""
         finally:
             if self.request_delay > 0:
@@ -121,13 +114,11 @@ class NotionIngestionJob(IngestionJob):
         checksum: str,
         version: int,
         last_modified: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build metadata dict with Notion-specific fields."""
         page_id: str = item.source_ref
         cache = item._metadata_cache
-        metadata = super().get_document_metadata(
-            item, item_name, checksum, version, last_modified
-        )
+        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
         metadata.update(
             {
                 "id": page_id,
@@ -157,7 +148,7 @@ class NotionIngestionJob(IngestionJob):
         cursor = None
 
         while True:
-            kwargs: Dict[str, Any] = {"block_id": page_id, "page_size": 100}
+            kwargs: dict[str, Any] = {"block_id": page_id, "page_size": 100}
             if cursor:
                 kwargs["start_cursor"] = cursor
 
@@ -189,7 +180,7 @@ class NotionIngestionJob(IngestionJob):
 
     def _search_all_pages(self) -> Iterator[IngestionItem]:
         """Use the Notion Search API to yield all non-trashed pages."""
-        kwargs: Dict[str, Any] = {
+        kwargs: dict[str, Any] = {
             "filter": {"value": "page", "property": "object"},
             "page_size": 100,
         }
@@ -198,9 +189,7 @@ class NotionIngestionJob(IngestionJob):
             try:
                 data = self._client.search(**kwargs)
             except APIResponseError as e:
-                logger.error(
-                    f"[{self.source_name}] Search API request failed: {e}"
-                )
+                logger.error(f"[{self.source_name}] Search API request failed: {e}")
                 break
 
             for page in data.get("results", []):
@@ -213,9 +202,7 @@ class NotionIngestionJob(IngestionJob):
                 break
             kwargs["start_cursor"] = data["next_cursor"]
 
-        logger.info(
-            f"[{self.source_name}] Total pages discovered via search: {total}"
-        )
+        logger.info(f"[{self.source_name}] Total pages discovered via search: {total}")
 
     def _selective_pages(self) -> Iterator[IngestionItem]:
         """Yield items for explicitly configured page_ids and database_ids."""
@@ -226,16 +213,12 @@ class NotionIngestionJob(IngestionJob):
                 if item:
                     yield item
             except APIResponseError as e:
-                logger.error(
-                    f"[{self.source_name}] Failed to fetch page {page_id}: {e}"
-                )
+                logger.error(f"[{self.source_name}] Failed to fetch page {page_id}: {e}")
 
         for db_id in self.database_ids:
             try:
                 db_page_ids = self._query_database(db_id)
-                logger.info(
-                    f"[{self.source_name}] Database {db_id}: found {len(db_page_ids)} page(s)"
-                )
+                logger.info(f"[{self.source_name}] Database {db_id}: found {len(db_page_ids)} page(s)")
                 for pid in db_page_ids:
                     try:
                         page = self._client.pages.retrieve(page_id=pid)
@@ -243,18 +226,14 @@ class NotionIngestionJob(IngestionJob):
                         if item:
                             yield item
                     except APIResponseError as e:
-                        logger.error(
-                            f"[{self.source_name}] Failed to fetch page {pid}: {e}"
-                        )
+                        logger.error(f"[{self.source_name}] Failed to fetch page {pid}: {e}")
             except APIResponseError as e:
-                logger.error(
-                    f"[{self.source_name}] Failed to query database {db_id}: {e}"
-                )
+                logger.error(f"[{self.source_name}] Failed to query database {db_id}: {e}")
 
-    def _query_database(self, database_id: str) -> List[str]:
+    def _query_database(self, database_id: str) -> list[str]:
         """Return all page IDs from a Notion database using the DataSources API."""
         page_ids = []
-        kwargs: Dict[str, Any] = {"page_size": 100}
+        kwargs: dict[str, Any] = {"page_size": 100}
         while True:
             data = self._client.data_sources.query(database_id, **kwargs)
             for result in data.get("results", []):
@@ -265,41 +244,33 @@ class NotionIngestionJob(IngestionJob):
             kwargs["start_cursor"] = data["next_cursor"]
         return page_ids
 
-    def _page_to_item(self, page: Dict[str, Any]) -> Optional[IngestionItem]:
+    def _page_to_item(self, page: dict[str, Any]) -> IngestionItem | None:
         """Convert a Notion page object to an IngestionItem, or None if trashed."""
         if page.get("in_trash") or page.get("archived"):
             return None
 
         page_id: str = page.get("id", "")
 
-        last_modified: Optional[datetime] = None
+        last_modified: datetime | None = None
         raw_edited = page.get("last_edited_time")
         if raw_edited:
             try:
-                last_modified = datetime.fromisoformat(
-                    raw_edited.replace("Z", "+00:00")
-                )
+                last_modified = datetime.fromisoformat(raw_edited.replace("Z", "+00:00"))
             except ValueError:
                 pass
 
-        created_time: Optional[datetime] = None
+        created_time: datetime | None = None
         raw_created = page.get("created_time")
         if raw_created:
             try:
-                created_time = datetime.fromisoformat(
-                    raw_created.replace("Z", "+00:00")
-                )
+                created_time = datetime.fromisoformat(raw_created.replace("Z", "+00:00"))
             except ValueError:
                 pass
 
         title = self._extract_title(page)
         parent = page.get("parent", {})
-        created_by = self._resolve_user_name(
-            (page.get("created_by") or {}).get("id")
-        )
-        last_edited_by = self._resolve_user_name(
-            (page.get("last_edited_by") or {}).get("id")
-        )
+        created_by = self._resolve_user_name((page.get("created_by") or {}).get("id"))
+        last_edited_by = self._resolve_user_name((page.get("last_edited_by") or {}).get("id"))
 
         item = IngestionItem(
             id=f"notion:{page_id}",
@@ -320,7 +291,7 @@ class NotionIngestionJob(IngestionJob):
         )
         return item
 
-    def _resolve_user_name(self, user_id: Optional[str]) -> Optional[str]:
+    def _resolve_user_name(self, user_id: str | None) -> str | None:
         """Resolve a Notion user ID to a display name via the Users API.
 
         Results are cached per connector instance to avoid redundant API calls.
@@ -335,15 +306,13 @@ class NotionIngestionJob(IngestionJob):
             user = self._client.users.retrieve(user_id=user_id)
             name = user.get("name")
         except APIResponseError as e:
-            logger.warning(
-                f"[{self.source_name}] Could not resolve user {user_id}: {e}"
-            )
+            logger.warning(f"[{self.source_name}] Could not resolve user {user_id}: {e}")
             name = None
         self._user_cache[user_id] = name
         return name
 
     @staticmethod
-    def _extract_title(page: Dict[str, Any]) -> str:
+    def _extract_title(page: dict[str, Any]) -> str:
         """Extract the page title from Notion page properties."""
         properties = page.get("properties", {})
         for prop in properties.values():
@@ -353,7 +322,7 @@ class NotionIngestionJob(IngestionJob):
         return ""
 
     @staticmethod
-    def _parse_ids(value: Any) -> List[str]:
+    def _parse_ids(value: Any) -> list[str]:
         """Parse a comma-separated string or list of IDs into a list of stripped strings."""
         if not value:
             return []
