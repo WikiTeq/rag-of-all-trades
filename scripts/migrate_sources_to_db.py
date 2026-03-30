@@ -27,6 +27,38 @@ import yaml  # noqa: E402
 
 from models.connector_instance import ConnectorInstance  # noqa: E402
 from utils.db import get_db_session  # noqa: E402
+from utils.encryption import encrypt_secret  # noqa: E402
+
+# Config keys treated as secrets — stripped from config JSONB and stored encrypted.
+_SECRET_KEYS = frozenset(
+    {
+        "access_key",
+        "secret_key",
+        "api_key",
+        "token",
+        "password",
+        "private_token",
+        "client_secret",
+    }
+)
+
+
+def _parse_schedule(schedules: list, index: int) -> int:
+    """Return schedule in seconds from the schedules list at index, defaulting to 3600."""
+    if index >= len(schedules):
+        return 3600
+    try:
+        value = int(schedules[index])
+    except (ValueError, TypeError):
+        return 3600
+    return value if value > 0 else 3600
+
+
+def _extract_secrets(config: dict) -> tuple[dict, dict]:
+    """Split config into (safe_config, secrets) where secrets contains _SECRET_KEYS values."""
+    secrets = {k: v for k, v in config.items() if k in _SECRET_KEYS}
+    safe_config = {k: v for k, v in config.items() if k not in _SECRET_KEYS}
+    return safe_config, secrets
 
 
 def _load_yaml(path: Path) -> dict:
@@ -56,29 +88,27 @@ def _expand_sources(raw_sources: list) -> list[dict]:
         if isinstance(schedules, str):
             schedules = [s.strip() for s in schedules.split(",") if s.strip()]
 
+        safe_config, secrets = _extract_secrets(config)
+
         if buckets:
             for i, bucket in enumerate(buckets):
-                try:
-                    schedule_seconds = int(schedules[i]) if i < len(schedules) else 3600
-                except ValueError:
-                    schedule_seconds = 3600
-
                 instances.append(
                     {
                         "type": src_type,
                         "name": f"{name}_{bucket}",
-                        "schedule": schedule_seconds,
-                        "config": {**config, "buckets": [bucket], "bucket_override": bucket},
+                        "schedule": _parse_schedule(schedules, i),
+                        "config": {**safe_config, "buckets": [bucket], "bucket_override": bucket},
+                        "secrets": secrets,
                     }
                 )
         else:
-            schedule_seconds = int(schedules[0]) if schedules else 3600
             instances.append(
                 {
                     "type": src_type,
                     "name": name,
-                    "schedule": schedule_seconds,
-                    "config": config,
+                    "schedule": _parse_schedule(schedules, 0),
+                    "config": safe_config,
+                    "secrets": secrets,
                 }
             )
 
@@ -115,6 +145,7 @@ def main() -> None:
                 schedule=inst["schedule"],
                 enabled=True,
                 config=inst["config"],
+                secret=encrypt_secret(inst["secrets"]) if inst["secrets"] else None,
             )
             try:
                 db.add(row)
