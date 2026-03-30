@@ -462,6 +462,10 @@ sources:
       filter_channel_id: ""         # optional, filter by channel ID
       max_items: 100                # optional, default 100
       schedules: "60"
+      filter_organizers: ""         # optional, filter by organizer email(s), comma-separated
+      filter_channel_id: ""         # optional, filter by channel ID
+      max_items: 100                # optional, default 100
+      schedules: "3600"             # hourly; Fireflies free tier allows ~24 req/day
 ```
 
 ```dotenv
