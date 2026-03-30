@@ -78,7 +78,7 @@ sources:
   #    filter_organizers: ""         # optional, filter by organizer email(s), comma-separated
   #    filter_channel_id: ""         # optional, filter by channel ID
   #    max_items: 100                # optional, default 100
-  #    schedules: "60"
+  #    schedules: "3600"             # hourly; free/pro tier: 50 req/day
 
 embedding:
   provider: openrouter
