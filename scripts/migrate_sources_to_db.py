@@ -150,12 +150,12 @@ def main() -> None:
                 secret=encrypt_secret(inst["secrets"]) if inst["secrets"] else None,
             )
             try:
-                db.add(row)
-                db.flush()
+                with db.begin_nested():
+                    db.add(row)
+                    db.flush()
                 print(f"  INSERT {inst['type']}/{inst['name']} (schedule={inst['schedule']}s)")
                 inserted += 1
             except IntegrityError:
-                db.rollback()
                 print(f"  SKIP  {inst['type']}/{inst['name']} (concurrent insert, already exists)")
                 skipped += 1
 
