@@ -97,7 +97,7 @@ class NotionIngestionJob(IngestionJob):
         page_id: str = item.source_ref
         try:
             text = self._read_page(page_id)
-        except Exception as e:
+        except Exception as e:  # _read_page is recursive and may raise unexpected errors, such as KeyError or RecursionError.
             logger.error(
                 f"[{self.source_name}] Failed to read page {page_id}: {e}"
             )

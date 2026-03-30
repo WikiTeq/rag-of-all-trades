@@ -4,6 +4,9 @@ from unittest.mock import MagicMock, patch
 import httpx
 from notion_client.errors import APIResponseError
 
+from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.notion_ingestion import NotionIngestionJob
+
 
 def _api_error(status=404, message="Not found", code="not_found"):
     return APIResponseError(
@@ -13,9 +16,6 @@ def _api_error(status=404, message="Not found", code="not_found"):
         headers=httpx.Headers({}),
         raw_body_text=message,
     )
-
-from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.notion_ingestion import NotionIngestionJob
 
 
 def _make_config(
