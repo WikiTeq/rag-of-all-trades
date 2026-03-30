@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import yaml
+from cryptography.fernet import Fernet
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -40,6 +41,15 @@ class EnvSettings(BaseSettings):
     # generate with:
     # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     CONNECTOR_ENCRYPTION_KEY: str
+
+    @field_validator("CONNECTOR_ENCRYPTION_KEY", mode="after")
+    @classmethod
+    def validate_encryption_key(cls, v):
+        try:
+            Fernet(v.encode() if isinstance(v, str) else v)
+        except Exception as e:
+            raise ValueError(f"CONNECTOR_ENCRYPTION_KEY is not a valid Fernet key: {e}") from e
+        return v
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
