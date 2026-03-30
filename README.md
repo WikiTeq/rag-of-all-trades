@@ -109,13 +109,16 @@ The service supports multiple data sources, including multiple data sources of t
 ingestion schedule. Connector instances are stored in the database (`connector_instances` table) and managed
 at runtime — no Celery restart needed to add, remove, or reschedule connectors.
 
-To migrate existing connectors from `config.yaml` to the database, run the migration script once before
-deploying:
+To migrate existing connectors from `config.yaml` to the database, run once before deploying (the DB
+must be up and reachable):
 
 ```bash
-python scripts/migrate_sources_to_db.py
 alembic upgrade head
+python scripts/migrate_sources_to_db.py
 ```
+
+> **Note:** The `sources:` examples in the connector sections below are legacy migration input for this
+> script only — they are not read at runtime. Connectors are managed via the database after migration.
 
 ### S3 Connector
 
