@@ -155,9 +155,13 @@ def main() -> None:
                     db.flush()
                 print(f"  INSERT {inst['type']}/{inst['name']} (schedule={inst['schedule']}s)")
                 inserted += 1
-            except IntegrityError:
-                print(f"  SKIP  {inst['type']}/{inst['name']} (concurrent insert, already exists)")
-                skipped += 1
+            except IntegrityError as e:
+                orig = str(e.orig).lower() if e.orig else str(e).lower()
+                if "unique" in orig or "duplicate" in orig:
+                    print(f"  SKIP  {inst['type']}/{inst['name']} (already exists)")
+                    skipped += 1
+                else:
+                    raise
 
     print(f"\nDone: {inserted} inserted, {skipped} skipped.")
 

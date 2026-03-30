@@ -69,7 +69,8 @@ def run_ingestion(instance_id: int):
         secrets = decrypt_secret(inst.secret) if inst.secret else {}
 
     # inst is detached here — use captured inst_type, not inst.type
-    config["secrets"] = secrets
+    # merge secrets into config["config"] so connectors read them from cfg = config.get("config", {})
+    config["config"].update(secrets)
     logger.info("Starting ingestion for %s/%s", inst_type, config["name"])
     # normalize type — DB may store mixed case
     job = IngestionJobFactory.create(inst_type.lower(), config)

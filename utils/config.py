@@ -42,12 +42,14 @@ class EnvSettings(BaseSettings):
 
     # generate with:
     # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-    CONNECTOR_ENCRYPTION_KEY: str
+    CONNECTOR_ENCRYPTION_KEY: str = ""
 
     @field_validator("CONNECTOR_ENCRYPTION_KEY", mode="after")
     @classmethod
     def validate_encryption_key(cls, v):
-        """Raise ValueError if CONNECTOR_ENCRYPTION_KEY is not a valid Fernet key."""
+        """Raise ValueError if CONNECTOR_ENCRYPTION_KEY is set but not a valid Fernet key."""
+        if not v:
+            return v
         try:
             Fernet(v.encode() if isinstance(v, str) else v)
         except Exception as e:
