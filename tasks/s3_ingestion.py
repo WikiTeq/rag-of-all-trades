@@ -84,8 +84,8 @@ class S3IngestionJob(IngestionJob):
         try:
             obj = self.s3_client.get_object(Bucket=bucket, Key=key)
             content_bytes = obj["Body"].read()
-            fallback = content_bytes.decode("utf-8", errors="ignore")
-            return self.convert_bytes_to_markdown(content_bytes, fallback_text=fallback)
+            converted = self.convert_bytes_to_markdown(content_bytes)
+            return converted or content_bytes.decode("utf-8", errors="ignore")
         except Exception as e:
             logger.error(f"[{bucket}/{key}] Failed to fetch content: {e}")
             return ""

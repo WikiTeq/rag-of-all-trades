@@ -87,7 +87,7 @@ class TestS3IngestionJob(unittest.TestCase):
         result = job.get_raw_content(item)
 
         self.assertEqual(result, "Converted text")
-        job.convert_bytes_to_markdown.assert_called_once_with(b"raw bytes", fallback_text="raw bytes")
+        job.convert_bytes_to_markdown.assert_called_once_with(b"raw bytes")
 
     def test_get_raw_content_returns_empty_on_s3_error(self):
         self.mock_s3.get_object.side_effect = Exception("boom")
