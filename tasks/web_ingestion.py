@@ -127,11 +127,17 @@ class WebIngestionJob(IngestionJob):
         url: str = item.source_ref
         item._metadata_cache["url"] = url
 
-        docs = self._reader.load_data(urls=[url])
-        if not docs:
+        try:
+            docs = self._reader.load_data(urls=[url])
+            if not docs:
+                return ""
+
+            item._metadata_cache["title"] = docs[0].metadata.get("title", "") or url
+
+            return docs[0].text or ""
+        except Exception as e:
+            logger.warning(f"[{self.source_name}] Failed to fetch {url}: {e}")
             return ""
-        item._metadata_cache["title"] = docs[0].metadata.get("title", "") or url
-        return docs[0].text or ""
 
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe name derived from the URL."""
