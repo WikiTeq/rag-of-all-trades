@@ -25,6 +25,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * MediaWiki
 * SerpAPI
 * Jira
+* Web
 
 ## Embeddings support
 
