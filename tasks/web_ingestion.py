@@ -30,26 +30,33 @@ class CatchAllWebsiteExtractor(Mapping[str, Extractor]):
         default_extractor: Extractor,
         overrides: dict[str, Extractor] | None = None,
     ):
+        """Initialise with a default extractor and optional per-host overrides."""
         self._default = default_extractor
         self._overrides = overrides or {}
 
     def __bool__(self):
+        """Always truthy so BeautifulSoupWebReader treats it as a non-empty mapping."""
         return True
 
     def __contains__(self, key):
+        """Return True for any string key, making every hostname a match."""
         return isinstance(key, str)
 
     def __getitem__(self, key):
+        """Return the host-specific extractor if present, otherwise the default."""
         return self._overrides.get(key, self._default)
 
     def __iter__(self):
+        """Iterate over explicitly overridden hostnames only."""
         return iter(self._overrides)
 
     def __len__(self):
+        """Return the number of explicit hostname overrides."""
         return len(self._overrides)
 
 
 def _title_extractor(soup, **_):
+    """Extract plain text and page title from a BeautifulSoup object."""
     title_tag = soup.find("title")
     title = title_tag.getText().strip() if title_tag else ""
     return soup.getText(), {"title": title}

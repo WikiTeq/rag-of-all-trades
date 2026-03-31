@@ -11,13 +11,16 @@ class _WebIngestionTestCase(unittest.TestCase):
     """Base class that manages patch lifecycle via setUp/tearDown."""
 
     def setUp(self):
+        """Initialise the patch registry before each test."""
         self._patches = []
 
     def tearDown(self):
+        """Stop all active patches after each test."""
         for p in self._patches:
             p.stop()
 
     def _make_job(self, mock_bs_reader=None, mock_sitemap_reader=None, **cfg_overrides):
+        """Build a WebIngestionJob with optional reader mocks tracked for cleanup."""
         cfg = {"name": "web1", "config": cfg_overrides}
         if mock_bs_reader is not None:
             p = patch("tasks.web_ingestion.BeautifulSoupWebReader", return_value=mock_bs_reader)
