@@ -83,6 +83,24 @@ class IngestionJob(ABC):
         """
         pass
 
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        """Return a pre-computed checksum or revision ID for the item, or None to fall back.
+
+        Override this in subclasses when the source provides a stable identifier
+        (e.g. a revision ID, ETag, or content hash) that can be used to detect changes
+        *before* fetching the full item content.
+
+        If this method returns a non-None value it is compared against the stored checksum
+        and content fetching is skipped entirely when they match.
+
+        Args:
+            item: The ingestion item to return a checksum for
+
+        Returns:
+            str | None: A revision string or identifier, or None to use content-based MD5
+        """
+        return None
+
     def get_document_metadata(
         self,
         item: IngestionItem,
@@ -99,7 +117,7 @@ class IngestionJob(ABC):
         Args:
             item: The ingestion item being processed
             item_name: The generated name for the item
-            checksum: MD5 hash of the content for duplicate detection
+            checksum: Content checksum or source revision ID used for change detection
             version: Version number of this content (increments on changes)
             last_modified: Timestamp when the source content was last modified
 
@@ -125,7 +143,7 @@ class IngestionJob(ABC):
         duplicate processing within a reasonable time window.
 
         Args:
-            checksum: MD5 hash of the content
+            checksum: Checksum or revision ID to track
 
         Returns:
             bool: True if this is new content, False if already seen recently
@@ -142,12 +160,11 @@ class IngestionJob(ABC):
         """Process a single ingestion item through the complete pipeline.
 
         This method orchestrates the entire ingestion workflow for one item:
-        1. Fetch raw content
-        2. Check for duplicates and emptiness
-        3. Generate checksum and check for changes
-        4. Handle versioning and cleanup of old embeddings
-        5. Create document with metadata
-        6. Store in vector database and update metadata tracking
+        1. Resolve checksum — either from get_item_checksum() or by fetching content and computing MD5
+        2. Skip if checksum matches the stored record (unchanged) or was already seen this run
+        3. Handle versioning and cleanup of old embeddings
+        4. Create document with metadata
+        5. Store in vector database and update metadata tracking
 
         Args:
             item: The ingestion item to process
@@ -156,30 +173,38 @@ class IngestionJob(ABC):
             int: 1 if item was successfully ingested, 0 if skipped or failed
         """
         try:
-            # Get raw content
-            raw_content = self.get_raw_content(item)
+            pre_checksum = self.get_item_checksum(item)
+            raw_content = None
 
-            if not raw_content.strip():
-                logger.debug(f"Skipping empty content for item: {item.id}")
-                return 0
-
-            new_checksum = hashlib.md5(raw_content.encode("utf-8")).hexdigest()
-
-            # skip if duplicate
-            if not self._seen_add(new_checksum):
-                logger.debug(f"Skipping duplicate checksum for item: {item.id}")
-                return 0
+            if pre_checksum:
+                # Fast path: resolve checksum without fetching content
+                new_checksum = pre_checksum
+            else:
+                # Standard path: fetch content and compute MD5
+                raw_content = self.get_raw_content(item)
+                if not raw_content.strip():
+                    logger.warning(f"Skipping empty content for item: {item.id}")
+                    return 0
+                new_checksum = hashlib.md5(raw_content.encode("utf-8")).hexdigest()
 
             item_name = self.get_item_name(item)
 
-            # Extract last_modified from ingestion item
-            last_modified = item.last_modified
-
-            # existing metadata
+            # Unified dedup checks
             latest = self.metadata_tracker.get_latest_record(item_name)
             if latest and latest.checksum == new_checksum:
-                logger.debug(f"Skipping unchanged item: {item_name}")
+                logger.info(f"Skipping unchanged item: {item_name}")
                 return 0
+            if not self._seen_add(new_checksum):
+                logger.info(f"Skipping duplicate checksum for item: {item.id}")
+                return 0
+
+            # Fetch content for the fast path only after dedup checks pass —
+            # avoids the expensive API call when the item is unchanged or already seen.
+            if raw_content is None:
+                raw_content = self.get_raw_content(item)
+                if not raw_content.strip():
+                    logger.warning(f"Skipping empty content for item: {item.id}")
+                    return 0
 
             # delete previous embeddings if updated
             if latest:
@@ -188,31 +213,31 @@ class IngestionJob(ABC):
 
             version = (latest.version + 1) if latest else 1
 
-            docs = Document(
+            doc = Document(
                 text=raw_content,
-                metadata=self.get_document_metadata(item, item_name, new_checksum, version, last_modified),
+                metadata=self.get_document_metadata(item, item_name, new_checksum, version, item.last_modified),
             )
 
-            self.vector_manager.insert_documents([docs])
+            self.vector_manager.insert_documents([doc])
 
             self.metadata_tracker.record_metadata(
                 item_name,
                 new_checksum,
                 version,
                 1,
-                last_modified,
+                item.last_modified,
                 extra_metadata={"source_name": self.source_name},
             )
 
             logger.info(f"Successfully ingested: {item_name} (version {version})")
 
-            del raw_content
             gc.collect()
+
             return 1
 
-        except Exception as e:
-            logger.exception(f"Failed to process item {item}: {e}")
-            return 0  # Return 0 to continue processing other items
+        except Exception:
+            logger.exception(f"Failed to process item {item}")
+            return 0
 
     def run(self):
         """Execute the complete ingestion job for this data source.
