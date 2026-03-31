@@ -51,6 +51,25 @@ sources:
   #    queries: "${SERPAPI_QUERIES}"
   #    schedules: "${SERPAPI_SCHEDULES}"
 
+  #- type: "web"
+  #  name: "web1"
+  #  config:
+  #    # urls mode: scrape a fixed list of URLs (mutually exclusive with sitemap_url)
+  #    urls:
+  #      - https://example.com/page1
+  #      - https://example.com/page2
+  #    html_to_text: true   # optional, default true
+  #    schedules: "${WEB1_SCHEDULES}"
+
+  #- type: "web"
+  #  name: "web2"
+  #  config:
+  #    # sitemap mode: discover URLs from a sitemap (mutually exclusive with urls)
+  #    sitemap_url: https://example.com/sitemap.xml
+  #    include_prefix: "/wiki/"   # optional: only ingest URLs containing this string
+  #    html_to_text: true         # optional, default true
+  #    schedules: "${WEB2_SCHEDULES}"
+
   #- type: "jira"
   #  name: "jira1"
   #  config:
