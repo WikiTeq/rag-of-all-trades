@@ -33,8 +33,15 @@ class IngestionJob(ABC):
         Sets up metadata tracking, vector store management, and duplicate detection infrastructure.
         """
         self.config = config
+        raw_delay = config.get("config", {}).get("request_delay", 0)
+        try:
+            self.request_delay = float(raw_delay)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("request_delay must be a number") from exc
+        if self.request_delay < 0:
+            raise ValueError("request_delay must be >= 0")
+
         self.source_name = config.get("name")
-        self.request_delay = config.get("request_delay", 0)
         self.metadata_tracker = MetadataTracker()
         self.vector_manager = VectorStoreManager()
 
@@ -157,6 +164,9 @@ class IngestionJob(ABC):
         Returns:
             int: 1 if item was successfully ingested, 0 if skipped or failed
         """
+        if self.request_delay:
+            time.sleep(self.request_delay)
+
         try:
             # Get raw content
             raw_content = self.get_raw_content(item)
@@ -238,9 +248,6 @@ class IngestionJob(ABC):
                     skipped += 1
                 else:
                     total += count
-
-                if self.request_delay:
-                    time.sleep(self.request_delay)
 
             result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
             logger.info(result_msg)

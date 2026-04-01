@@ -164,27 +164,36 @@ class TestIngestionJob(unittest.TestCase):
         self.assertEqual(job.process_item.call_count, 2)
 
     @patch("tasks.base.time.sleep")
-    def test_run_applies_request_delay(self, mock_sleep):
+    def test_process_item_applies_request_delay(self, mock_sleep):
         item1 = IngestionItem(id="item-1", source_ref="src")
         item2 = IngestionItem(id="item-2", source_ref="src")
-        config = {**self.config, "request_delay": 0.5}
+        config = {**self.config, "config": {"request_delay": 0.5}}
         job = DummyIngestionJob(config, items=[item1, item2])
-        job.process_item = Mock(return_value=1)
 
-        job.run()
+        job.process_item(item1)
+        job.process_item(item2)
 
         self.assertEqual(mock_sleep.call_count, 2)
         mock_sleep.assert_called_with(0.5)
 
     @patch("tasks.base.time.sleep")
-    def test_run_no_delay_by_default(self, mock_sleep):
+    def test_process_item_no_delay_by_default(self, mock_sleep):
         item1 = IngestionItem(id="item-1", source_ref="src")
         job = DummyIngestionJob(self.config, items=[item1])
-        job.process_item = Mock(return_value=1)
 
-        job.run()
+        job.process_item(item1)
 
         mock_sleep.assert_not_called()
+
+    def test_init_invalid_request_delay_raises(self):
+        config = {**self.config, "config": {"request_delay": "not-a-number"}}
+        with self.assertRaises(ValueError):
+            DummyIngestionJob(config, items=[])
+
+    def test_init_negative_request_delay_raises(self):
+        config = {**self.config, "config": {"request_delay": -1}}
+        with self.assertRaises(ValueError):
+            DummyIngestionJob(config, items=[])
 
 
 if __name__ == "__main__":
