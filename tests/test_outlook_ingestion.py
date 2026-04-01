@@ -2,6 +2,8 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+import requests
+
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.outlook_ingestion import OutlookIngestionJob
 
@@ -68,6 +70,7 @@ class TestOutlookListItems(unittest.TestCase):
     def _mock_reader(self, emails):
         mock = MagicMock()
         mock._fetch_emails.return_value = emails
+        mock._authorization_headers = {"Authorization": "Bearer token"}
         return mock
 
     def test_yields_correct_items(self):
@@ -90,6 +93,50 @@ class TestOutlookListItems(unittest.TestCase):
             items = list(job.list_items())
 
         self.assertEqual(len(items), 0)
+
+    def test_resolves_display_name_folder_when_graph_path_returns_400(self):
+        email = _make_email("id1")
+        response_400 = MagicMock(status_code=400)
+        reader = self._mock_reader([])
+        reader._fetch_emails.side_effect = requests.HTTPError(response=response_400)
+
+        folder_lookup = MagicMock()
+        folder_lookup.json.return_value = {
+            "value": [{"id": "folder-id-123", "displayName": "Proba", "childFolderCount": 0}]
+        }
+
+        messages_lookup = MagicMock()
+        messages_lookup.json.return_value = {"value": [email]}
+
+        job = _make_job(folder="Proba")
+
+        with (
+            patch("tasks.outlook_ingestion.OutlookEmailReader", return_value=reader),
+            patch("tasks.outlook_ingestion.requests.get", side_effect=[folder_lookup, messages_lookup]) as mock_get,
+        ):
+            items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].id, "outlook:id1")
+        self.assertEqual(mock_get.call_count, 2)
+
+    def test_raises_original_error_when_folder_display_name_cannot_be_resolved(self):
+        response_400 = MagicMock(status_code=400)
+        reader = self._mock_reader([])
+        error = requests.HTTPError(response=response_400)
+        reader._fetch_emails.side_effect = error
+
+        folder_lookup = MagicMock()
+        folder_lookup.json.return_value = {"value": []}
+
+        job = _make_job(folder="Missing Folder")
+
+        with (
+            patch("tasks.outlook_ingestion.OutlookEmailReader", return_value=reader),
+            patch("tasks.outlook_ingestion.requests.get", return_value=folder_lookup),
+            self.assertRaises(requests.HTTPError),
+        ):
+            list(job.list_items())
 
 
 class TestOutlookGetRawContent(unittest.TestCase):

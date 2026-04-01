@@ -2,13 +2,17 @@ import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
+import requests
 from llama_index.readers.microsoft_outlook_emails import OutlookEmailReader
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
 logger = logging.getLogger(__name__)
+
+GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
 
 
 class OutlookIngestionJob(IngestionJob):
@@ -26,7 +30,6 @@ class OutlookIngestionJob(IngestionJob):
         - config.user_email: Mailbox owner email address (required)
         - config.folder: Mail folder name (optional, default "Inbox")
         - config.num_mails: Maximum number of emails to fetch (optional, default 10)
-        - config.schedules: Celery schedule in seconds (optional)
     """
 
     @property
@@ -81,7 +84,7 @@ class OutlookIngestionJob(IngestionJob):
             num_mails=self.num_mails,
         )
         reader._ensure_token()
-        emails = reader._fetch_emails()
+        emails = self._fetch_emails(reader)
 
         yielded = 0
         for email in emails:
@@ -99,6 +102,110 @@ class OutlookIngestionJob(IngestionJob):
             yielded += 1
 
         logger.info(f"[{self.source_name}] Found {yielded} email(s)")
+
+    def _fetch_emails(self, reader: OutlookEmailReader) -> list[dict[str, Any]]:
+        """Fetch emails using the LlamaIndex reader.
+
+        The LlamaIndex OutlookEmailReader passes the folder value directly into
+        the Graph API URL (/mailFolders/{folder}/messages). The Graph API only
+        accepts well-known folder names (e.g. Inbox, SentItems) or folder IDs
+        at that path — custom display names return 400.
+
+        When a 400 is returned, fall back to resolving the folder display name
+        to a folder ID via _resolve_folder_id() and retry with the ID.
+        """
+        try:
+            return reader._fetch_emails()
+        except requests.HTTPError as exc:
+            if exc.response is None or exc.response.status_code != 400:
+                raise
+
+            headers = self._get_reader_headers(reader)
+            folder_id = self._resolve_folder_id(headers)
+            if not folder_id:
+                logger.error(
+                    "[%s] Graph returned 400 for folder %r and display-name lookup found no match",
+                    self.source_name,
+                    self.folder,
+                )
+                raise
+
+            logger.info(
+                "[%s] Resolved Outlook folder display name %r to Graph folder id %r",
+                self.source_name,
+                self.folder,
+                folder_id,
+            )
+            return self._fetch_emails_from_folder_id(headers, folder_id)
+
+    def _get_reader_headers(self, reader: OutlookEmailReader) -> dict[str, str]:
+        """Extract the Bearer token headers from the reader after token initialization."""
+        headers = getattr(reader, "_authorization_headers", None)
+        if not headers:
+            raise RuntimeError("Outlook reader did not expose authorization headers after token initialization")
+        return headers
+
+    def _resolve_folder_id(self, headers: dict[str, str]) -> str | None:
+        """Resolve a folder display name to a Graph API folder ID.
+
+        The Graph API /mailFolders/{id} endpoint does not accept custom folder
+        display names — only well-known names or folder IDs. This method walks
+        the full folder tree (BFS, including subfolders and paginated results)
+        to find a folder whose displayName matches self.folder (case-insensitive)
+        and returns its ID.
+
+        Returns None if no matching folder is found.
+        """
+        target_name = self.folder.strip().casefold()
+        if not target_name:
+            return None
+
+        # BFS over the folder tree; queue starts with the top-level mailFolders endpoint
+        queue = [f"{self._user_mail_folders_url()}/mailFolders"]
+        while queue:
+            url = queue.pop(0)
+            # follow @odata.nextLink pagination within each level
+            while url:
+                response = requests.get(
+                    url,
+                    headers=headers,
+                    params={"$top": 100, "includeHiddenFolders": "true"},
+                )
+                response.raise_for_status()
+                payload = response.json()
+
+                for folder in payload.get("value", []):
+                    display_name = (folder.get("displayName") or "").strip()
+                    if display_name.casefold() == target_name:
+                        return folder.get("id")
+
+                    # enqueue child folders for BFS
+                    if folder.get("childFolderCount", 0) > 0 and folder.get("id"):
+                        queue.append(
+                            f"{self._user_mail_folders_url()}/mailFolders/{quote(folder['id'], safe='')}/childFolders"
+                        )
+
+                url = payload.get("@odata.nextLink")
+
+        return None
+
+    def _fetch_emails_from_folder_id(self, headers: dict[str, str], folder_id: str) -> list[dict[str, Any]]:
+        """Fetch emails directly by folder ID, bypassing the LlamaIndex reader.
+
+        Used as a fallback after _resolve_folder_id() resolves a custom folder
+        display name to its Graph API folder ID.
+        """
+        response = requests.get(
+            f"{self._user_mail_folders_url()}/mailFolders/{quote(folder_id, safe='')}/messages",
+            headers=headers,
+            params={"$top": self.num_mails},
+        )
+        response.raise_for_status()
+        return response.json().get("value", [])
+
+    def _user_mail_folders_url(self) -> str:
+        """Base Graph API URL for this user's mailbox."""
+        return f"{GRAPH_API_BASE}/users/{quote(self.user_email, safe='@')}"
 
     def get_raw_content(self, item: IngestionItem) -> str:
         """Format a raw Graph API email dict as Markdown."""
@@ -133,10 +240,6 @@ class OutlookIngestionJob(IngestionJob):
             }
         )
         return metadata
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     @staticmethod
     def _extract_sender(email: dict) -> str:
