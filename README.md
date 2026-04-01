@@ -346,7 +346,7 @@ sources:
       client_secret: "${OUTLOOK1_CLIENT_SECRET}"
       tenant_id: "${OUTLOOK1_TENANT_ID}"
       user_email: "${OUTLOOK1_USER_EMAIL}"
-      folder: "Inbox"          # optional, default Inbox
+      folder: "Inbox"           # optional, default Inbox
       num_mails: 100            # optional, default 10
       schedules: "${OUTLOOK1_SCHEDULES}"
 ```
