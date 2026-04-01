@@ -41,7 +41,11 @@ def _make_email(
 def _make_job(config=None, **cfg_overrides):
     if config is None:
         config = _make_config(**cfg_overrides)
-    with patch("tasks.base.MetadataTracker"), patch("tasks.base.VectorStoreManager"):
+    with (
+        patch("tasks.base.MetadataTracker"),
+        patch("tasks.base.VectorStoreManager"),
+        patch("tasks.outlook_ingestion.OutlookEmailReader"),
+    ):
         return OutlookIngestionJob(config)
 
 
@@ -76,9 +80,9 @@ class TestOutlookListItems(unittest.TestCase):
     def test_yields_correct_items(self):
         emails = [_make_email("id1"), _make_email("id2")]
         job = _make_job()
+        job._reader = self._mock_reader(emails)
 
-        with patch("tasks.outlook_ingestion.OutlookEmailReader", return_value=self._mock_reader(emails)):
-            items = list(job.list_items())
+        items = list(job.list_items())
 
         self.assertEqual(len(items), 2)
         self.assertEqual(items[0].id, "outlook:id1")
@@ -88,9 +92,9 @@ class TestOutlookListItems(unittest.TestCase):
     def test_skips_email_without_id(self):
         emails = [{"subject": "No ID", "receivedDateTime": RECEIVED, "body": {"content": ""}}]
         job = _make_job()
+        job._reader = self._mock_reader(emails)
 
-        with patch("tasks.outlook_ingestion.OutlookEmailReader", return_value=self._mock_reader(emails)):
-            items = list(job.list_items())
+        items = list(job.list_items())
 
         self.assertEqual(len(items), 0)
 
@@ -109,11 +113,9 @@ class TestOutlookListItems(unittest.TestCase):
         messages_lookup.json.return_value = {"value": [email]}
 
         job = _make_job(folder="Proba")
+        job._reader = reader
 
-        with (
-            patch("tasks.outlook_ingestion.OutlookEmailReader", return_value=reader),
-            patch("tasks.outlook_ingestion.requests.get", side_effect=[folder_lookup, messages_lookup]) as mock_get,
-        ):
+        with patch("tasks.outlook_ingestion.requests.get", side_effect=[folder_lookup, messages_lookup]) as mock_get:
             items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
@@ -130,9 +132,9 @@ class TestOutlookListItems(unittest.TestCase):
         folder_lookup.json.return_value = {"value": []}
 
         job = _make_job(folder="Missing Folder")
+        job._reader = reader
 
         with (
-            patch("tasks.outlook_ingestion.OutlookEmailReader", return_value=reader),
             patch("tasks.outlook_ingestion.requests.get", return_value=folder_lookup),
             self.assertRaises(requests.HTTPError),
         ):
