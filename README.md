@@ -290,7 +290,7 @@ Uses the [LlamaIndex OutlookEmailReader](https://llamahub.ai/l/readers/llama-ind
 for authentication and email fetching.
 
 > **Note:** Client credentials authentication (app-only flow) is only supported for
-> **Microsoft 365 / OneDrive for Business** accounts. Personal Microsoft accounts are not supported.
+> **Microsoft 365 / Entra ID work or school accounts**. Personal Microsoft accounts are not supported.
 > Requires an Azure app registration with `Mail.Read` application permission and admin consent.
 
 ```yaml
