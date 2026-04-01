@@ -163,6 +163,29 @@ class TestIngestionJob(unittest.TestCase):
         self.assertEqual(result, "[test-source] Completed: 1 ingested, 1 skipped")
         self.assertEqual(job.process_item.call_count, 2)
 
+    @patch("tasks.base.time.sleep")
+    def test_run_applies_request_delay(self, mock_sleep):
+        item1 = IngestionItem(id="item-1", source_ref="src")
+        item2 = IngestionItem(id="item-2", source_ref="src")
+        config = {**self.config, "request_delay": 0.5}
+        job = DummyIngestionJob(config, items=[item1, item2])
+        job.process_item = Mock(return_value=1)
+
+        job.run()
+
+        self.assertEqual(mock_sleep.call_count, 2)
+        mock_sleep.assert_called_with(0.5)
+
+    @patch("tasks.base.time.sleep")
+    def test_run_no_delay_by_default(self, mock_sleep):
+        item1 = IngestionItem(id="item-1", source_ref="src")
+        job = DummyIngestionJob(self.config, items=[item1])
+        job.process_item = Mock(return_value=1)
+
+        job.run()
+
+        mock_sleep.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ sources:
       use_ssl: "${S3_ACCOUNT1_USE_SSL}"
       buckets: "${S3_ACCOUNT1_BUCKETS}" # comma-separated string or list
       schedules: "${S3_ACCOUNT1_SCHEDULES}"
+      #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
   #- type: "directory"
   #  name: "local_docs"
@@ -20,6 +21,7 @@ sources:
   #    exclude_empty: false
   #    num_files_limit: 1000
   #    schedules: "${DIRECTORY1_SCHEDULES}"
+  #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
   #- type: "s3"
   #  name: "account2"
@@ -31,6 +33,7 @@ sources:
   #    use_ssl: "${S3_ACCOUNT2_USE_SSL}"
   #    buckets: "${S3_ACCOUNT2_BUCKETS}"
   #    schedules: "${S3_ACCOUNT2_SCHEDULES}"
+  #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
   #- type: "mediawiki1"
   #  name: "wiki1"
@@ -50,6 +53,7 @@ sources:
   #    api_key: "${SERPAPI_KEY}"
   #    queries: "${SERPAPI_QUERIES}"
   #    schedules: "${SERPAPI_SCHEDULES}"
+  #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
   #- type: "web"
   #  name: "web1"
@@ -85,6 +89,7 @@ sources:
   #    # Bonus: load top N comments per issue
   #    load_comments: false      # optional, default false
   #    max_comments: 10          # optional, default 10
+  #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
 embedding:
   provider: openrouter
