@@ -13,6 +13,7 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 logger = logging.getLogger(__name__)
 
 GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
+REQUEST_TIMEOUT = (5, 30)  # (connect timeout, read timeout) in seconds
 
 
 class OutlookIngestionJob(IngestionJob):
@@ -62,8 +63,17 @@ class OutlookIngestionJob(IngestionJob):
         if self.num_mails <= 0:
             raise ValueError("num_mails must be positive in Outlook connector config")
 
+        self._reader = OutlookEmailReader(
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+            tenant_id=self.tenant_id,
+            user_email=self.user_email,
+            folder=self.folder,
+            num_mails=self.num_mails,
+        )
+
         logger.info(
-            f"Initialized Outlook connector for {self.user_email} (folder={self.folder!r}, num_mails={self.num_mails})"
+            f"Initialized Outlook connector [{self.source_name}] (folder={self.folder!r}, num_mails={self.num_mails})"
         )
 
     def list_items(self) -> Iterator[IngestionItem]:
@@ -75,16 +85,8 @@ class OutlookIngestionJob(IngestionJob):
         """
         logger.info(f"[{self.source_name}] Listing emails in folder {self.folder!r}")
 
-        reader = OutlookEmailReader(
-            client_id=self.client_id,
-            client_secret=self.client_secret,
-            tenant_id=self.tenant_id,
-            user_email=self.user_email,
-            folder=self.folder,
-            num_mails=self.num_mails,
-        )
-        reader._ensure_token()
-        emails = self._fetch_emails(reader)
+        self._reader._ensure_token()
+        emails = self._fetch_emails(self._reader)
 
         yielded = 0
         for email in emails:
@@ -163,14 +165,20 @@ class OutlookIngestionJob(IngestionJob):
         # BFS over the folder tree; queue starts with the top-level mailFolders endpoint
         queue = [f"{self._user_mail_folders_url()}/mailFolders"]
         while queue:
-            url = queue.pop(0)
-            # follow @odata.nextLink pagination within each level
+            base_url = queue.pop(0)
+            url: str | None = base_url
+            # follow @odata.nextLink pagination within each level;
+            # params are only sent on the initial request — nextLink URLs are opaque
+            # and already contain all query parameters
+            is_first = True
             while url:
                 response = requests.get(
                     url,
                     headers=headers,
-                    params={"$top": 100, "includeHiddenFolders": "true"},
+                    params={"$top": 100, "includeHiddenFolders": "true"} if is_first else None,
+                    timeout=REQUEST_TIMEOUT,
                 )
+                is_first = False
                 response.raise_for_status()
                 payload = response.json()
 
@@ -199,6 +207,7 @@ class OutlookIngestionJob(IngestionJob):
             f"{self._user_mail_folders_url()}/mailFolders/{quote(folder_id, safe='')}/messages",
             headers=headers,
             params={"$top": self.num_mails},
+            timeout=REQUEST_TIMEOUT,
         )
         response.raise_for_status()
         return response.json().get("value", [])
