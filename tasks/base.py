@@ -15,20 +15,6 @@ from tasks.helper_classes.vector_store import VectorStoreManager
 
 logger = logging.getLogger(__name__)
 
-# Keys that process_item sets; get_extra_metadata must not overwrite these.
-RESERVED_METADATA_KEYS = frozenset(
-    {
-        "source",
-        "key",
-        "checksum",
-        "version",
-        "format",
-        "source_name",
-        "file_name",
-        "last_modified",
-    }
-)
-
 
 class IngestionJob(ABC):
     """Abstract base class for all ingestion jobs that process content from various sources.
@@ -37,6 +23,25 @@ class IngestionJob(ABC):
     (files, APIs, databases, etc.) into a vector store for RAG applications. It handles
     duplicate detection, versioning, metadata tracking, and provides hooks for customization.
     """
+
+    # Keys that process_item sets; get_extra_metadata must not overwrite these.
+    RESERVED_METADATA_KEYS: frozenset = frozenset(
+        {
+            "source",
+            "key",
+            "checksum",
+            "version",
+            "format",
+            "source_name",
+            "file_name",
+            "last_modified",
+        }
+    )
+
+    @property
+    def content_format(self) -> str:
+        """Content format reported in document metadata. Override in subclasses if needed."""
+        return "markdown"
 
     def __init__(self, config: dict):
         """Initialize the ingestion job with configuration and core components.
@@ -108,7 +113,7 @@ class IngestionJob(ABC):
         Default implementation returns an empty dictionary. Subclasses can override
         this to add source-specific fields (e.g., URLs, tags, etc.) without
         needing to construct the standard metadata dictionary. Keys that match
-        RESERVED_METADATA_KEYS (source, key, checksum, version, format,
+        IngestionJob.RESERVED_METADATA_KEYS (source, key, checksum, version, format,
         source_name, file_name, last_modified) are ignored and will not overwrite
         standard metadata.
 
@@ -199,17 +204,14 @@ class IngestionJob(ABC):
                 "key": item_name,
                 "checksum": new_checksum,
                 "version": version,
-                "format": "markdown",
+                "format": self.content_format,
                 "source_name": self.source_name,
                 "file_name": item_name,
                 "last_modified": str(last_modified),
             }
 
             extra = self.get_extra_metadata(item, raw_content, metadata)
-            filtered_extra = {
-                k: v for k, v in extra.items()
-                if k not in RESERVED_METADATA_KEYS
-            }
+            filtered_extra = {k: v for k, v in extra.items() if k not in self.RESERVED_METADATA_KEYS}
             metadata.update(filtered_extra)
 
             docs = Document(text=raw_content, metadata=metadata)
