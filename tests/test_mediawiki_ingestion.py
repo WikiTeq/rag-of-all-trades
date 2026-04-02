@@ -1,5 +1,12 @@
 """Tests for MediaWikiIngestionJob (Pytest version)."""
 
+import sys
+from unittest.mock import MagicMock
+
+# llama-index-readers-mediawiki is not yet published; stub it so the module
+# can be imported and MediaWikiReader is always patched in tests.
+sys.modules.setdefault("llama_index.readers.mediawiki", MagicMock())
+
 from datetime import datetime
 from unittest.mock import Mock, patch
 
@@ -16,7 +23,7 @@ from tasks.mediawiki_ingestion import MediaWikiIngestionJob
 
 def _default_config(**overrides):
     """Return a minimal config dict for the job."""
-    cfg = {"api_url": "https://example.com/w/api.php"}
+    cfg = {"host": "example.com"}
     cfg.update(overrides)
     return {"name": "test_wiki", "config": cfg}
 
@@ -29,10 +36,10 @@ def _make_job(config=None, **reader_attrs):
     config = config or _default_config()
     with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
         mock_reader = Mock()
-        # Sensible defaults
-        mock_reader.api_url = config["config"]["api_url"]
-        mock_reader.request_delay = config["config"].get("request_delay", 0.1)
-        mock_reader.batch_size = config["config"].get("batch_size", 50)
+        # Sensible defaults matching reader Pydantic fields
+        mock_reader.host = config["config"]["host"]
+        mock_reader.path = config["config"].get("path", "/w/")
+        mock_reader.scheme = config["config"].get("scheme", "https")
         for k, v in reader_attrs.items():
             setattr(mock_reader, k, v)
         MockReader.return_value = mock_reader
@@ -55,33 +62,28 @@ class TestInitialization:
     def test_creates_reader_with_config(self):
         """Reader should receive the config values from the job config."""
         cfg = _default_config(
-            user_agent="test/1.0",
-            request_delay=0.5,
+            path="/wiki/",
+            scheme="http",
             page_limit=100,
-            batch_size=10,
-            max_retries=5,
-            timeout=60,
             namespaces=[0, 1],
+            filter_redirects=False,
         )
         with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
-            MockReader.return_value = Mock(api_url="https://example.com/w/api.php", request_delay=0.5, batch_size=10)
+            MockReader.return_value = Mock(host="example.com", path="/wiki/", scheme="http")
             MediaWikiIngestionJob(cfg)
             MockReader.assert_called_once_with(
-                api_url="https://example.com/w/api.php",
-                user_agent="test/1.0",
-                request_delay=0.5,
+                host="example.com",
+                path="/wiki/",
+                scheme="http",
                 page_limit=100,
-                batch_size=10,
-                max_retries=5,
-                timeout=60,
                 namespaces=[0, 1],
+                filter_redirects=False,
             )
 
-    def test_missing_api_url_raises(self):
-        """Job raises ValueError when api_url is empty (validated in __init__ before reader build).
-        Boundary: real MediaWikiReader validation is in the reader's own test suite."""
-        with pytest.raises(ValueError, match="api_url is required"):
-            MediaWikiIngestionJob(_default_config(api_url=""))
+    def test_missing_host_raises(self):
+        """Job raises ValueError when host is empty."""
+        with pytest.raises(ValueError, match="host is required"):
+            MediaWikiIngestionJob(_default_config(host=""))
 
     def test_source_type(self, base_wiki_job):
         job, _ = base_wiki_job
@@ -98,8 +100,8 @@ class TestListItems:
         """Pages returned from the reader's generator → IngestionItems."""
         job, reader = base_wiki_job
         reader._get_all_pages_generator.return_value = [
-            {"title": "Page 1", "last_modified": datetime(2024, 1, 1), "url": "u1"},
-            {"title": "Page 2", "last_modified": datetime(2024, 1, 2), "url": "u2"},
+            {"title": "Page 1", "last_modified": datetime(2024, 1, 1), "url": "u1", "pageid": 1, "namespace": 0},
+            {"title": "Page 2", "last_modified": datetime(2024, 1, 2), "url": "u2", "pageid": 2, "namespace": 4},
         ]
 
         items = list(job.list_items())
@@ -109,14 +111,14 @@ class TestListItems:
         assert items[0].source_ref == "Page 1"
         assert items[0].last_modified == datetime(2024, 1, 1)
         assert items[0].url == "u1"
+        assert items[0].pageid == 1
+        assert items[0].namespace == 0
         assert items[1].id == "mediawiki:Page 2"
         assert items[1].url == "u2"
+        assert items[1].pageid == 2
+        assert items[1].namespace == 4
 
-        # reader._get_all_pages_generator called once
         reader._get_all_pages_generator.assert_called_once()
-        # get_resources_info and list_resources are NOT called anymore for listing
-        reader.list_resources.assert_not_called()
-        reader.get_resources_info.assert_not_called()
 
     def test_list_items_empty_wiki(self, base_wiki_job):
         """No pages → no items."""
@@ -139,17 +141,23 @@ class TestGetRawContent:
             text="Clean content",
             metadata={"url": "https://example.com/wiki/P", "title": "P"},
         )
-        reader.load_resource.return_value = [doc]
+        reader._page_to_document.return_value = doc
 
-        item = IngestionItem(id="mediawiki:P", source_ref="P")
+        item = IngestionItem(id="mediawiki:P", source_ref="P", pageid=42, namespace=0)
         content = job.get_raw_content(item)
 
         assert content == "Clean content"
-        reader.load_resource.assert_called_once_with("P", resource_url=None, last_modified=None)
+        reader._page_to_document.assert_called_once_with(
+            title="P",
+            url=None,
+            last_modified=None,
+            pageid=42,
+            namespace=0,
+        )
 
     def test_missing_page(self, base_wiki_job):
         job, reader = base_wiki_job
-        reader.load_resource.return_value = []
+        reader._page_to_document.return_value = None
 
         item = IngestionItem(id="mediawiki:M", source_ref="M")
         content = job.get_raw_content(item)
@@ -198,7 +206,7 @@ class TestGetItemName:
 
 
 # ---------------------------------------------------------------------------
-# get_document_metadata
+# get_extra_metadata
 # ---------------------------------------------------------------------------
 
 
@@ -210,6 +218,8 @@ class TestGetExtraMetadata:
             source_ref="Test Page",
             last_modified=datetime(2024, 1, 1, 12, 0, 0),
             url="https://example.com/wiki/Test_Page",
+            pageid=10,
+            namespace=0,
         )
 
         extra = job.get_extra_metadata(
@@ -219,6 +229,9 @@ class TestGetExtraMetadata:
         )
 
         assert extra["url"] == "https://example.com/wiki/Test_Page"
+        assert extra["title"] == "Test Page"
+        assert extra["page_id"] == 10
+        assert extra["namespace"] == 0
 
     def test_without_cached_url(self, base_wiki_job):
         job, _ = base_wiki_job
@@ -226,6 +239,8 @@ class TestGetExtraMetadata:
             id="mediawiki:Test Page",
             source_ref="Test Page",
             last_modified=datetime(2024, 1, 1, 12, 0, 0),
+            pageid=10,
+            namespace=0,
         )
 
         extra = job.get_extra_metadata(
@@ -235,6 +250,8 @@ class TestGetExtraMetadata:
         )
 
         assert "url" not in extra
+        assert extra["page_id"] == 10
+        assert extra["namespace"] == 0
 
 
 # ---------------------------------------------------------------------------
@@ -245,13 +262,12 @@ class TestGetExtraMetadata:
 class TestProcessItem:
     def test_success(self, base_wiki_job):
         job, reader = base_wiki_job
-        reader.request_delay = 0.1
 
         doc = Document(
             text="Content",
             metadata={"url": "https://example.com/wiki/P", "title": "P"},
         )
-        reader.load_resource.return_value = [doc]
+        reader._page_to_document.return_value = doc
 
         with patch.object(job.metadata_tracker, "get_latest_record", return_value=None):
             with patch.object(job.metadata_tracker, "record_metadata"):
@@ -263,6 +279,8 @@ class TestProcessItem:
                         source_ref="P",
                         last_modified=datetime(2024, 1, 1),
                         url="https://example.com/wiki/P",
+                        pageid=1,
+                        namespace=0,
                     )
                     result = job.process_item(item)
 
@@ -272,13 +290,12 @@ class TestProcessItem:
 
     def test_duplicate_content(self, base_wiki_job):
         job, reader = base_wiki_job
-        reader.request_delay = 0.1
 
         doc = Document(
             text="Duplicate",
             metadata={"url": "https://example.com/wiki/P", "title": "P"},
         )
-        reader.load_resource.return_value = [doc]
+        reader._page_to_document.return_value = doc
 
         with patch.object(job.metadata_tracker, "get_latest_record", return_value=None):
             with patch.object(job.metadata_tracker, "record_metadata"):
@@ -308,7 +325,8 @@ class TestRun:
     @patch("tasks.base.time.sleep")
     def test_run_applies_delay(self, mock_sleep):
         """run() should call time.sleep with request_delay for each item."""
-        cfg = _default_config(request_delay=2.0)
+        cfg = _default_config()
+        cfg["config"]["request_delay"] = 2.0
         job, _ = _make_job(config=cfg)
 
         with patch.object(job, "list_items") as mock_list:
