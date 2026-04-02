@@ -33,7 +33,10 @@ class IngestionJob(ABC):
         Sets up metadata tracking, vector store management, and duplicate detection infrastructure.
         """
         self.config = config
-        raw_delay = config.get("config", {}).get("request_delay", 0)
+        cfg = config.get("config") or {}
+        if not isinstance(cfg, dict):
+            raise ValueError("config.config must be an object")
+        raw_delay = cfg.get("request_delay", 0)
         try:
             self.request_delay = float(raw_delay)
         except (TypeError, ValueError) as exc:
