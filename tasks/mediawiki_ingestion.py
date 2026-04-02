@@ -94,15 +94,15 @@ class MediaWikiIngestionJob(IngestionJob):
     def list_items(self) -> Iterator[IngestionItem]:
         """Discover all pages in the MediaWiki instance and yield ingestion items.
 
-        Iterates through pages discovered via the reader's optimized generator,
-        which fetches metadata (titles, URLs, timestamps) in single API requests.
-        If the generator raises mid-iteration, the exception propagates and run()
-        will report partial results; the job does not retry mid-stream.
+        Iterates through pages discovered via the reader's _get_all_pages_generator,
+        which uses mwclient's allpages API to fetch titles, URLs, timestamps,
+        page IDs, and namespace IDs in a single streaming pass.
 
         Yields:
             IngestionItem objects containing page metadata for processing
         """
-        logger.info(f"Starting to list pages from {self._reader.api_url}")
+        base_url = f"{self._reader.scheme}://{self._reader.host}{self._reader.path}"
+        logger.info(f"Starting to list pages from {base_url}")
 
         for page_record in self._reader._get_all_pages_generator():
             title = page_record["title"]
@@ -111,6 +111,8 @@ class MediaWikiIngestionJob(IngestionJob):
                 source_ref=title,
                 last_modified=page_record.get("last_modified"),
                 url=page_record.get("url"),
+                pageid=page_record.get("pageid"),
+                namespace=page_record.get("namespace"),
             )
 
     def get_raw_content(self, item: IngestionItem) -> str:
@@ -125,13 +127,19 @@ class MediaWikiIngestionJob(IngestionJob):
         page_title = item.source_ref
 
         logger.debug(f"Fetching content for page: {page_title}")
-        docs = self._reader.load_resource(page_title, resource_url=item.url, last_modified=item.last_modified)
+        doc = self._reader._page_to_document(
+            title=page_title,
+            url=item.url,
+            last_modified=item.last_modified,
+            pageid=item.pageid,
+            namespace=item.namespace,
+        )
 
-        if not docs:
+        if doc is None:
             logger.warning(f"Failed to fetch content for page: {page_title}")
             return ""
 
-        return docs[0].text
+        return doc.text
 
     def get_item_name(self, item: IngestionItem) -> str:
         """Generate a filesystem-safe, unique filename from the MediaWiki page title.
@@ -160,18 +168,22 @@ class MediaWikiIngestionJob(IngestionJob):
 
         return safe_name
 
-    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
-        """Provide MediaWiki-specific page title and URL as extra metadata.
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+        """Provide MediaWiki-specific metadata for the page.
 
         Args:
-            item: IngestionItem containing cached page URL
-            content: Raw page content
+            item: IngestionItem containing page metadata
+            content: Raw page content (unused)
             metadata: Standard metadata dictionary (do not return keys that overlap with it)
 
         Returns:
-            dict: Additional metadata (title, and url if available)
+            dict: Additional metadata (title, url, page_id, namespace)
         """
-        extra: dict[str, Any] = {"title": item.source_ref}
+        extra: Dict[str, Any] = {
+            "title": item.source_ref,
+            "page_id": item.pageid,
+            "namespace": item.namespace,
+        }
         if item.url:
             extra["url"] = item.url
         else:
