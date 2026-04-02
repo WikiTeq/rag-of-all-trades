@@ -164,9 +164,6 @@ class IngestionJob(ABC):
         Returns:
             int: 1 if item was successfully ingested, 0 if skipped or failed
         """
-        if self.request_delay:
-            time.sleep(self.request_delay)
-
         try:
             # Get raw content
             raw_content = self.get_raw_content(item)
@@ -246,8 +243,11 @@ class IngestionJob(ABC):
                 count = self.process_item(item)
                 if count == 0:
                     skipped += 1
-                else:
-                    total += count
+                    continue
+
+                total += count
+                if self.request_delay > 0:
+                    time.sleep(self.request_delay)
 
             result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
             logger.info(result_msg)
