@@ -57,74 +57,39 @@ class MediaWikiIngestionJob(IngestionJob):
 
         Args:
             config: Configuration dictionary containing:
-                - config.api_url: MediaWiki API endpoint URL (required)
-                - config.user_agent: User-Agent header for requests (optional)
-                - config.request_delay: Delay between requests in seconds (optional, default 0.1, must be >= 0)
-                - config.page_limit: Pages per API call (optional, default 500, must be > 0)
-                - config.batch_size: Pages to batch for timestamp fetching (optional, default 50, must be > 0)
-                - config.max_retries: Maximum API request retries (optional, default 3, must be >= 0)
-                - config.timeout: HTTP request timeout in seconds (optional, default 30, must be > 0)
-                - config.namespaces: List of namespace IDs to include (optional, None = all namespaces)
-                - config.verify_ssl: Whether to verify SSL certificates (optional, default True)
-                - config.resolve_to_ip: IP address to resolve the API hostname to (optional)
-                - config.custom_headers: Dict of extra HTTP headers to send (optional)
+                - config.host: MediaWiki site hostname, e.g. 'wiki.example.org' (required)
+                - config.path: MediaWiki script path (optional, default '/w/')
+                - config.scheme: URL scheme 'https' or 'http' (optional, default 'https')
+                - config.page_limit: Max page titles per allpages API call (optional, default 500)
+                - config.namespaces: List of namespace IDs to include (optional, None = content namespaces)
+                - config.filter_redirects: Exclude redirect pages (optional, default True)
 
         Raises:
-            ValueError: If api_url is not provided or numeric config values are invalid
+            ValueError: If host is not provided
         """
         super().__init__(config)
 
         cfg = config.get("config", {})
 
-        # Validate required and numeric fields (reader also validates; this keeps job contract clear)
-        api_url = cfg.get("api_url", "").strip()
-        if not api_url:
-            raise ValueError("api_url is required and must be non-empty")
+        host = cfg.get("host", "").strip()
+        if not host:
+            raise ValueError("host is required and must be non-empty")
 
-        def _check_positive(name: str, default: Any) -> float:
-            val = cfg.get(name, default)
-            try:
-                f = float(val)
-            except (TypeError, ValueError):
-                raise ValueError(f"{name} must be a number, got {val!r}")
-            return f
-
-        def _check_positive_int(name: str, default: int) -> int:
-            val = cfg.get(name, default)
-            try:
-                i = int(val)
-            except (TypeError, ValueError):
-                raise ValueError(f"{name} must be an integer, got {val!r}")
-            if i <= 0:
-                raise ValueError(f"{name} must be > 0, got {i}")
-            return i
-
-        request_delay = _check_positive("request_delay", 0.1)
-        if request_delay < 0:
-            raise ValueError("request_delay must be >= 0")
-        page_limit = _check_positive_int("page_limit", 500)
-        batch_size = _check_positive_int("batch_size", 50)
-        try:
-            max_retries = int(cfg.get("max_retries", 3))
-        except (TypeError, ValueError):
-            raise ValueError(f"max_retries must be an integer, got {cfg.get('max_retries')!r}")
-        if max_retries < 0:
-            raise ValueError("max_retries must be >= 0")
-        timeout = _check_positive_int("timeout", 30)
-
-        # Build the reader (schedules are consumed by config/celery, not by the reader)
         self._reader = MediaWikiReader(
-            api_url=api_url,
-            user_agent=cfg.get("user_agent", "rag-of-all-trades-connector-mediawiki/1.0"),
-            request_delay=request_delay,
-            page_limit=page_limit,
-            batch_size=batch_size,
-            max_retries=max_retries,
-            timeout=timeout,
+            host=host,
+            path=cfg.get("path", "/w/"),
+            scheme=cfg.get("scheme", "https"),
+            page_limit=cfg.get("page_limit", 500),
             namespaces=cfg.get("namespaces"),
+            filter_redirects=cfg.get("filter_redirects", True),
         )
 
-        logger.info(f"Initialized MediaWiki connector for {self._reader.api_url}")
+        logger.info(
+            "Initialized MediaWiki connector for %s://%s%s",
+            self._reader.scheme,
+            self._reader.host,
+            self._reader.path,
+        )
 
     def list_items(self) -> Iterator[IngestionItem]:
         """Discover all pages in the MediaWiki instance and yield ingestion items.
