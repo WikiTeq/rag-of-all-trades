@@ -63,7 +63,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 
 ## MCP endpoint
 
-The service includes an optional MCP (Model Context Protocol) server at `/mcp`.
+The service includes an optional MCP (Model Context Protocol) server at `/mcp/` (trailing slash required).
 It is disabled by default and can be enabled via environment variables.
 
 ### Enabling MCP
