@@ -453,7 +453,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.assertIn("Issue", content)
 
     # ------------------------------------------------------------------
-    # get_document_metadata
+    # get_extra_metadata
     # ------------------------------------------------------------------
 
     def test_get_document_metadata_contains_all_required_fields(self):
@@ -480,32 +480,17 @@ class TestJiraIngestionJob(unittest.TestCase):
         )
 
         job = self._make_job()
-        metadata = job.get_document_metadata(
-            item=item,
-            item_name="TEST-1",
-            checksum="abc123",
-            version=1,
-            last_modified=datetime(2024, 6, 1, 12, 0, 0),
-        )
+        extra = job.get_extra_metadata(item=item, content="", metadata={})
 
-        # Base fields from IngestionJob
-        self.assertEqual(metadata["source"], "jira")
-        self.assertEqual(metadata["key"], "TEST-1")
-        self.assertEqual(metadata["checksum"], "abc123")
-        self.assertEqual(metadata["version"], 1)
-        self.assertEqual(metadata["format"], "markdown")
-        self.assertEqual(metadata["source_name"], "test_jira")
-
-        # Jira-specific fields
-        self.assertEqual(metadata["id"], "10001")
-        self.assertEqual(metadata["title"], "My Issue")
-        self.assertEqual(metadata["url"], "https://jira.example.com/browse/TEST-1")
-        self.assertEqual(metadata["assignee"], "Alice")
-        self.assertEqual(metadata["reporter"], "Bob")
-        self.assertEqual(metadata["status"], "In Progress")
-        self.assertEqual(metadata["labels"], ["bug", "urgent"])
-        self.assertEqual(metadata["project"], "Test Project")
-        self.assertEqual(metadata["priority"], "High")
+        self.assertEqual(extra["id"], "10001")
+        self.assertEqual(extra["title"], "My Issue")
+        self.assertEqual(extra["url"], "https://jira.example.com/browse/TEST-1")
+        self.assertEqual(extra["assignee"], "Alice")
+        self.assertEqual(extra["reporter"], "Bob")
+        self.assertEqual(extra["status"], "In Progress")
+        self.assertEqual(extra["labels"], ["bug", "urgent"])
+        self.assertEqual(extra["project"], "Test Project")
+        self.assertEqual(extra["priority"], "High")
 
     def test_get_document_metadata_handles_unassigned_issue(self):
         issue = _make_issue(key="TEST-2")
@@ -519,16 +504,10 @@ class TestJiraIngestionJob(unittest.TestCase):
         object.__setattr__(item, "_metadata_cache", {"issue_url": ""})
 
         job = self._make_job()
-        metadata = job.get_document_metadata(
-            item=item,
-            item_name="TEST-2",
-            checksum="x",
-            version=1,
-            last_modified=datetime(2024, 6, 1),
-        )
+        extra = job.get_extra_metadata(item=item, content="", metadata={})
 
-        self.assertEqual(metadata["assignee"], "")
-        self.assertEqual(metadata["reporter"], "")
+        self.assertEqual(extra["assignee"], "")
+        self.assertEqual(extra["reporter"], "")
 
     def test_get_document_metadata_missing_url_cache_uses_empty_string(self):
         issue = _make_issue(key="TEST-3")
@@ -536,15 +515,9 @@ class TestJiraIngestionJob(unittest.TestCase):
         # No url in _metadata_cache
 
         job = self._make_job()
-        metadata = job.get_document_metadata(
-            item=item,
-            item_name="TEST-3",
-            checksum="x",
-            version=1,
-            last_modified=None,
-        )
+        extra = job.get_extra_metadata(item=item, content="", metadata={})
 
-        self.assertEqual(metadata["url"], "")
+        self.assertEqual(extra["url"], "")
 
     # ------------------------------------------------------------------
     # _to_markdown helpers

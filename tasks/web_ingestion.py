@@ -87,7 +87,8 @@ class WebIngestionJob(IngestionJob):
 
         cfg = config.get("config", {})
 
-        self.urls: list[str] = cfg.get("urls") or []
+        urls = cfg.get("urls") or []
+        self.urls: list[str] = urls.split(",") if isinstance(urls, str) else urls
         self.sitemap_url: str | None = cfg.get("sitemap_url", "").strip() or None
 
         if not self.urls and not self.sitemap_url:
@@ -152,22 +153,12 @@ class WebIngestionJob(IngestionJob):
         safe = re.sub(r"[^\w\-]", "_", url)
         return safe[:255]
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: Any,
-    ) -> dict[str, Any]:
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
-        metadata.update(
-            {
-                "url": item._metadata_cache.get("url", ""),
-                "title": item._metadata_cache.get("title", ""),
-            }
-        )
-        return metadata
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return web-specific metadata fields."""
+        return {
+            "url": item._metadata_cache.get("url", ""),
+            "title": item._metadata_cache.get("title", ""),
+        }
 
     def _discover_sitemap_urls(self) -> list[str]:
         """Parse the configured sitemap and return matching URLs."""
