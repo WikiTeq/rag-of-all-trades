@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from functools import wraps
 
@@ -58,7 +59,7 @@ async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RA
         if not payload.query or not payload.query.strip():
             raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-        nodes_with_score = rag_engine.retrieve_top_k(query=payload.query, top_k=payload.top_k)
+        nodes_with_score = await asyncio.to_thread(rag_engine.retrieve_top_k, query=payload.query, top_k=payload.top_k)
 
         if not nodes_with_score:
             return QueryResponse(answer="No relevant content found.", references=[])
@@ -74,7 +75,7 @@ async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RA
                 content=f"Query: {payload.query}\n\nContent:\n\n{chunks_text}",
             ),
         ]
-        llm_response = llm.chat(messages)
+        llm_response = await asyncio.to_thread(llm.chat, messages)
 
         source_refs = RAGQueryEngine.build_references(nodes_with_score)
 

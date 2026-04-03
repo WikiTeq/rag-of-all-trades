@@ -139,7 +139,7 @@ async def combined_lifespan(app_instance: FastAPI):
             if mcp_lifespan is None:
                 yield
             else:
-                async with mcp_lifespan(app_instance):
+                async with mcp_lifespan(mcp_http_app):
                     yield
 
 
