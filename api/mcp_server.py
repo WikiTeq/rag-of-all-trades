@@ -32,14 +32,14 @@ async def retrieve_chunks_response(
 ) -> dict[str, Any]:
     _validate_query(query)
     _validate_top_k(top_k)
-    logger.info("MCP retrieve_chunks: query=%r top_k=%d filters=%s", query, top_k, metadata_filters)
+    logger.info("MCP retrieve_chunks: top_k=%d has_filters=%s", top_k, bool(metadata_filters))
     nodes_with_score = await asyncio.to_thread(
         rag_engine.retrieve_top_k,
         query=query,
         top_k=top_k,
         metadata=metadata_filters or {},
     )
-    logger.info("MCP retrieve_chunks: returned %d results", len(nodes_with_score))
+    logger.info("MCP retrieve_chunks: num_results=%d", len(nodes_with_score))
     return {
         "references": RAGQueryEngine.build_references(nodes_with_score),
         "raw": format_chunks(nodes_with_score),
@@ -56,7 +56,7 @@ async def rephrase_chunks_response(
     if llm is None:
         raise RuntimeError("LLM is not configured. Please set OPENAI_API_KEY and LLM model name.")
 
-    logger.info("MCP rephrase_chunks: query=%r top_k=%d", query, top_k)
+    logger.info("MCP rephrase_chunks: top_k=%d", top_k)
     nodes_with_score = await asyncio.to_thread(
         rag_engine.retrieve_top_k,
         query=query,
@@ -78,7 +78,7 @@ async def rephrase_chunks_response(
         ),
     ]
     llm_response = await asyncio.to_thread(llm.chat, messages)
-    logger.info("MCP rephrase_chunks: LLM response generated, %d source chunks", len(nodes_with_score))
+    logger.info("MCP rephrase_chunks: num_results=%d", len(nodes_with_score))
     return {
         "answer": llm_response.message.content,
         "references": RAGQueryEngine.build_references(nodes_with_score),
