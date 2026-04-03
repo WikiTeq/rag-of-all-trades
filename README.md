@@ -293,6 +293,7 @@ The following parameters are supported by all connector types:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
+| `schedules` | string | — | Cron expression or interval (in seconds) defining how often the connector runs. |
 | `request_delay` | float | `0` | Delay in seconds between processing each item. Useful for rate-limiting requests to external APIs. |
 
 > Environment variables (`${...}`) in the config file are evaluated at runtime.
