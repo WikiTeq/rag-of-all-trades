@@ -22,6 +22,13 @@ class EnvSettings(BaseSettings):
 
     OPENROUTER_API_KEY: str
     OPENROUTER_API_BASE: str
+    MCP_ENABLE: bool = False
+    MCP_API_KEY: str = ""
+
+    @field_validator("MCP_API_KEY", mode="before")
+    @classmethod
+    def strip_mcp_api_key(cls, v: str) -> str:
+        return v.strip() if isinstance(v, str) else v
 
     CELERY_CONCURRENCY: int = 2  # Default fallback
     MAX_TASK_CHILD: int = 50

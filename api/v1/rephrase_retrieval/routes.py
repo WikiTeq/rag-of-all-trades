@@ -1,7 +1,9 @@
+import asyncio
 import logging
 from functools import wraps
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from llama_index.core.llms import ChatMessage, MessageRole
 
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
 from utils.config import settings
@@ -50,26 +52,36 @@ def limit(func):
 @limit
 async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RAGQueryEngine = Depends(get_rag_engine)):
     """
-    Rephrase Node for by default 5 chunks using LLM.
+    Rephrase top-k chunks using LLM.
     """
     try:
         # Validate query
         if not payload.query or not payload.query.strip():
             raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-        nodes_with_score = rag_engine.retrieve_top_k(query=payload.query, top_k=5)
+        nodes_with_score = await asyncio.to_thread(rag_engine.retrieve_top_k, query=payload.query, top_k=payload.top_k)
 
         if not nodes_with_score:
             return QueryResponse(answer="No relevant content found.", references=[])
 
         chunks_text = "\n\n".join([n.node.get_text() for n in nodes_with_score])
-        rephrase_prompt = f'"""Original Query: {payload.query}\n\nRephrase the following content clearly and concisely:\n\n{chunks_text}"""'
-
-        llm_response = llm.complete(rephrase_prompt)
+        messages = [
+            ChatMessage(
+                role=MessageRole.SYSTEM,
+                content="Rephrase the following content clearly and concisely.",
+            ),
+            ChatMessage(
+                role=MessageRole.USER,
+                content=f"Query: {payload.query}\n\nContent:\n\n{chunks_text}",
+            ),
+        ]
+        llm_response = await asyncio.to_thread(llm.chat, messages)
 
         source_refs = RAGQueryEngine.build_references(nodes_with_score)
 
-        return QueryResponse(answer=str(llm_response), references=[SourceReference(**r) for r in source_refs])
+        return QueryResponse(
+            answer=llm_response.message.content, references=[SourceReference(**r) for r in source_refs]
+        )
 
     except HTTPException:
         raise

@@ -3,6 +3,7 @@ from functools import wraps
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from utils.api import format_chunks
 from utils.config import settings
 
 from .modules import RAGQueryEngine
@@ -57,8 +58,7 @@ async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RA
             query=payload.query, top_k=payload.top_k, metadata=metadata_filters
         )
 
-        # Format chunks as list of strings with optional scores
-        chunks: list[str] = [f"Score: {n.score:.4f} | Text: {n.node.get_text()}" for n in nodes_with_score]
+        chunks = format_chunks(nodes_with_score)
 
         # Build source references from retrieved nodes
         source_refs = RAGQueryEngine.build_references(nodes_with_score)
