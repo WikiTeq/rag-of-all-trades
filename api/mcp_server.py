@@ -20,14 +20,14 @@ def _validate_query(query: str) -> None:
 
 
 def _validate_top_k(top_k: int) -> None:
-    if top_k < 1 or top_k > 20:
-        raise ValueError("top_k must be between 1 and 20")
+    if top_k < 1 or top_k > 100:
+        raise ValueError("top_k must be between 1 and 100")
 
 
 async def retrieve_chunks_response(
     rag_engine: RAGQueryEngine,
     query: str,
-    top_k: int = 5,
+    top_k: int = 20,
     metadata_filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     _validate_query(query)
@@ -49,7 +49,7 @@ async def retrieve_chunks_response(
 async def rephrase_chunks_response(
     rag_engine: RAGQueryEngine,
     query: str,
-    top_k: int = 5,
+    top_k: int = 20,
 ) -> dict[str, Any]:
     _validate_query(query)
     _validate_top_k(top_k)
@@ -110,7 +110,7 @@ def create_mcp_server(app: FastAPI, api_key: str) -> FastMCP:
     )
     async def retrieve_chunks(
         query: str,
-        top_k: int = 5,
+        top_k: int = 20,
         metadata_filters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         return await retrieve_chunks_response(
@@ -124,7 +124,7 @@ def create_mcp_server(app: FastAPI, api_key: str) -> FastMCP:
         name="rephrase_chunks",
         description="Generate concise answer from top-k chunks using configured LLM.",
     )
-    async def rephrase_chunks(query: str, top_k: int = 5) -> dict[str, Any]:
+    async def rephrase_chunks(query: str, top_k: int = 20) -> dict[str, Any]:
         return await rephrase_chunks_response(
             rag_engine=get_rag_engine(),
             query=query,

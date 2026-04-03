@@ -51,14 +51,14 @@ def limit(func):
 @limit
 async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RAGQueryEngine = Depends(get_rag_engine)):
     """
-    Rephrase Node for by default 5 chunks using LLM.
+    Rephrase top-k chunks using LLM.
     """
     try:
         # Validate query
         if not payload.query or not payload.query.strip():
             raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-        nodes_with_score = rag_engine.retrieve_top_k(query=payload.query, top_k=5)
+        nodes_with_score = rag_engine.retrieve_top_k(query=payload.query, top_k=payload.top_k)
 
         if not nodes_with_score:
             return QueryResponse(answer="No relevant content found.", references=[])
