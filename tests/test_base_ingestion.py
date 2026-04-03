@@ -77,7 +77,8 @@ class TestIngestionJob:
 
     def test_get_extra_metadata_reserved_keys_not_overwritten(self, base_config):
         """Extra metadata must not overwrite reserved standard keys."""
-        from tasks.base import RESERVED_METADATA_KEYS
+        from tasks.base import IngestionJob
+        RESERVED_METADATA_KEYS = IngestionJob.RESERVED_METADATA_KEYS
 
         job = DummyIngestionJob(base_config)
         job.get_extra_metadata = Mock(

@@ -4,9 +4,11 @@ import logging
 import re
 from collections.abc import Iterator
 from typing import Any
+from urllib.parse import urlparse
 
 # Third-party imports
 from llama_index.readers.mediawiki import MediaWikiReader
+from requests.adapters import HTTPAdapter
 
 # Local imports
 from tasks.base import IngestionJob
@@ -84,6 +86,11 @@ class MediaWikiIngestionJob(IngestionJob):
             filter_redirects=cfg.get("filter_redirects", True),
         )
 
+        username = cfg.get("username")
+        password = cfg.get("password")
+        if username and password:
+            self._reader.login(username, password)
+
         logger.info(
             "Initialized MediaWiki connector for %s://%s%s",
             self._reader.scheme,
@@ -105,14 +112,14 @@ class MediaWikiIngestionJob(IngestionJob):
         logger.info(f"Starting to list pages from {base_url}")
 
         for page_record in self._reader._get_all_pages_generator():
-            title = page_record["title"]
+            title = page_record.title
             yield IngestionItem(
                 id=f"mediawiki:{title}",
                 source_ref=title,
-                last_modified=page_record.get("last_modified"),
-                url=page_record.get("url"),
-                pageid=page_record.get("pageid"),
-                namespace=page_record.get("namespace"),
+                last_modified=page_record.last_modified,
+                url=page_record.url,
+                pageid=page_record.pageid,
+                namespace=page_record.namespace,
             )
 
     def get_raw_content(self, item: IngestionItem) -> str:
@@ -168,7 +175,7 @@ class MediaWikiIngestionJob(IngestionJob):
 
         return safe_name
 
-    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Provide MediaWiki-specific metadata for the page.
 
         Args:
@@ -179,7 +186,7 @@ class MediaWikiIngestionJob(IngestionJob):
         Returns:
             dict: Additional metadata (title, url, page_id, namespace)
         """
-        extra: Dict[str, Any] = {
+        extra: dict[str, Any] = {
             "title": item.source_ref,
             "page_id": item.pageid,
             "namespace": item.namespace,

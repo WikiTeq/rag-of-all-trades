@@ -107,7 +107,7 @@ class IngestionJob(ABC):
         """
         pass
 
-    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Hook for subclasses to provide additional metadata.
 
         Default implementation returns an empty dictionary. Subclasses can override
@@ -254,14 +254,14 @@ class IngestionJob(ABC):
 
         try:
             for item in self.list_items():
-                if self.request_delay > 0:
-                    time.sleep(self.request_delay)
-
                 count = self.process_item(item)
                 if count == 0:
                     skipped += 1
-                else:
-                    total += count
+                    continue
+
+                total += count
+                if self.request_delay > 0:
+                    time.sleep(self.request_delay)
 
             result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
             logger.info(result_msg)

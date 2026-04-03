@@ -35,18 +35,14 @@ sources:
   #- type: "mediawiki"
   #  name: "wiki1"
   #  config:
-  #    host: "${MEDIAWIKI_WIKI1_HOST}"
+  #    host: "${MEDIAWIKI1_HOST}"
   #    path: "/w/"          # optional, default /w/
   #    scheme: "https"      # optional, default https
   #    page_limit: 500      # optional, max titles per allpages API call
   #    filter_redirects: true  # optional, exclude redirect pages
-  #    schedules: "${MEDIAWIKI_WIKI1_SCHEDULES}"
-
-  #- type: "mediawiki"
-  #  name: "wiki2"
-  #  config:
-  #    host: "${MEDIAWIKI_WIKI2_HOST}"
-  #    schedules: "${MEDIAWIKI_WIKI2_SCHEDULES}"
+  #    username: "${MEDIAWIKI1_USERNAME}"  # optional, for private wikis
+  #    password: "${MEDIAWIKI1_PASSWORD}"  # optional, for private wikis
+  #    schedules: "${MEDIAWIKI1_SCHEDULES}"
 
   #- type: "serpapi"
   #  name: "serp_ingestion"

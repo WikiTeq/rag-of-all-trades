@@ -61,7 +61,6 @@ class MediaWikiReader(BasePydanticReader):
     FILTERREDIR_ALL: str = "all"
 
     is_remote: bool = True
-    model_config = {"arbitrary_types_allowed": True}
 
     # -- Pydantic fields (serialisable config) --------------------------------
 
@@ -126,9 +125,7 @@ class MediaWikiReader(BasePydanticReader):
         """Return the mwclient Site, creating one lazily if needed."""
         if self._site is None:
             self._site = mwclient.Site(
-                self.host,
-                path=self.path,
-                scheme=self.scheme,
+                self.host, path=self.path, scheme=self.scheme
             )
         return self._site
 
@@ -145,7 +142,7 @@ class MediaWikiReader(BasePydanticReader):
 
         """
         self.site.login(username=username, password=password)
-        self.logger.info("Logged in as %s", username)
+        self.logger.info("Successfully logged into MediaWiki")
 
     # -- Internal helpers -----------------------------------------------------
 

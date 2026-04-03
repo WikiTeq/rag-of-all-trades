@@ -61,7 +61,6 @@ class MediaWikiReader(BasePydanticReader):
     FILTERREDIR_ALL: str = "all"
 
     is_remote: bool = True
-    model_config = {"arbitrary_types_allowed": True}
 
     # -- Pydantic fields (serialisable config) --------------------------------
 
@@ -126,9 +125,7 @@ class MediaWikiReader(BasePydanticReader):
         """Return the mwclient Site, creating one lazily if needed."""
         if self._site is None:
             self._site = mwclient.Site(
-                self.host,
-                path=self.path,
-                scheme=self.scheme,
+                self.host, path=self.path, scheme=self.scheme
             )
         return self._site
 
@@ -145,7 +142,7 @@ class MediaWikiReader(BasePydanticReader):
 
         """
         self.site.login(username=username, password=password)
-        self.logger.info("Logged in as %s", username)
+        self.logger.info("Successfully logged into MediaWiki")
 
     # -- Internal helpers -----------------------------------------------------
 
@@ -155,10 +152,10 @@ class MediaWikiReader(BasePydanticReader):
 
         Queries ``action=query&meta=siteinfo&siprop=namespaces`` and filters
         for namespaces that carry the ``content`` flag.
-        Falls back to ``[0]`` (main namespace) if none are found.
 
         Raises:
             mwclient.errors.APIError: If the siteinfo query fails.
+            RuntimeError: If no content namespaces are found in siteinfo.
 
         """
         result = self.site.get("query", meta="siteinfo", siprop="namespaces")
@@ -172,10 +169,10 @@ class MediaWikiReader(BasePydanticReader):
         ]
 
         if not ids:
-            self.logger.warning(
-                "No content namespaces found in siteinfo; defaulting to main namespace (0)."
+            raise RuntimeError(
+                "No content namespaces found in siteinfo; "
+                "the MediaWiki API may be unreachable or misconfigured."
             )
-            return [0]
         return sorted(ids)
 
     def _resolve_namespace_list(self) -> List[int]:
@@ -308,7 +305,7 @@ class MediaWikiReader(BasePydanticReader):
             h.emphasis_mark = "*"
             h.strong_mark = "**"
             return h.handle(html_content).strip()
-        except Exception as e:
+        except (AttributeError, TypeError, ValueError) as e:
             _internal_logger.debug(
                 "html2text failed, using tag-strip fallback: %s",
                 e,
