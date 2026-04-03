@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import FastAPI
 from fastmcp import FastMCP
@@ -28,8 +28,8 @@ async def retrieve_chunks_response(
     rag_engine: RAGQueryEngine,
     query: str,
     top_k: int = 5,
-    metadata_filters: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    metadata_filters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     _validate_query(query)
     _validate_top_k(top_k)
     logger.info("MCP retrieve_chunks: query=%r top_k=%d filters=%s", query, top_k, metadata_filters)
@@ -50,17 +50,17 @@ async def rephrase_chunks_response(
     rag_engine: RAGQueryEngine,
     query: str,
     top_k: int = 5,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     _validate_query(query)
     _validate_top_k(top_k)
     if llm is None:
-        raise RuntimeError(
-            "LLM is not configured. Please set OPENAI_API_KEY and LLM model name."
-        )
+        raise RuntimeError("LLM is not configured. Please set OPENAI_API_KEY and LLM model name.")
 
     logger.info("MCP rephrase_chunks: query=%r top_k=%d", query, top_k)
     nodes_with_score = await asyncio.to_thread(
-        rag_engine.retrieve_top_k, query=query, top_k=top_k,
+        rag_engine.retrieve_top_k,
+        query=query,
+        top_k=top_k,
     )
     if not nodes_with_score:
         logger.info("MCP rephrase_chunks: no results found")
@@ -87,10 +87,7 @@ async def rephrase_chunks_response(
 
 def create_mcp_server(app: FastAPI, api_key: str) -> FastMCP:
     if not api_key:
-        raise ValueError(
-            "MCP_API_KEY must be configured. "
-            "Set it in your .env file or environment variables."
-        )
+        raise ValueError("MCP_API_KEY must be configured. Set it in your .env file or environment variables.")
     auth = StaticTokenVerifier(
         tokens={
             api_key: {
@@ -114,8 +111,8 @@ def create_mcp_server(app: FastAPI, api_key: str) -> FastMCP:
     async def retrieve_chunks(
         query: str,
         top_k: int = 5,
-        metadata_filters: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata_filters: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         return await retrieve_chunks_response(
             rag_engine=get_rag_engine(),
             query=query,
@@ -127,7 +124,7 @@ def create_mcp_server(app: FastAPI, api_key: str) -> FastMCP:
         name="rephrase_chunks",
         description="Generate concise answer from top-k chunks using configured LLM.",
     )
-    async def rephrase_chunks(query: str, top_k: int = 5) -> Dict[str, Any]:
+    async def rephrase_chunks(query: str, top_k: int = 5) -> dict[str, Any]:
         return await rephrase_chunks_response(
             rag_engine=get_rag_engine(),
             query=query,
