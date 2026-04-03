@@ -8,6 +8,7 @@ from fastmcp.server.auth import StaticTokenVerifier
 from llama_index.core.llms import ChatMessage, MessageRole
 
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
+from utils.api import format_chunks
 from utils.llm_embedding import llm
 
 logger = logging.getLogger(__name__)
@@ -21,17 +22,6 @@ def _validate_query(query: str) -> None:
 def _validate_top_k(top_k: int) -> None:
     if top_k < 1 or top_k > 20:
         raise ValueError("top_k must be between 1 and 20")
-
-
-def _format_chunks(nodes_with_score: list[Any]) -> list[str]:
-    chunks: list[str] = []
-    for node_with_score in nodes_with_score:
-        score = node_with_score.score
-        if score is None:
-            chunks.append(f"Score: n/a | Text: {node_with_score.node.get_text()}")
-            continue
-        chunks.append(f"Score: {score:.4f} | Text: {node_with_score.node.get_text()}")
-    return chunks
 
 
 async def retrieve_chunks_response(
@@ -52,7 +42,7 @@ async def retrieve_chunks_response(
     logger.info("MCP retrieve_chunks: returned %d results", len(nodes_with_score))
     return {
         "references": RAGQueryEngine.build_references(nodes_with_score),
-        "raw": _format_chunks(nodes_with_score),
+        "raw": format_chunks(nodes_with_score),
     }
 
 
