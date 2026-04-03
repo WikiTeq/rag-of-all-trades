@@ -8,9 +8,10 @@ MediaWiki API interactions.
 
 import logging
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any, Iterator, List, Literal, Optional, Tuple
+from datetime import UTC, datetime
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import html2text
@@ -27,10 +28,10 @@ class Page:
     """Lightweight record for a single wiki page entry from allpages."""
 
     title: str
-    url: Optional[str]
-    last_modified: Optional[datetime]
-    pageid: Optional[int]
-    namespace: Optional[int]
+    url: str | None
+    last_modified: datetime | None
+    pageid: int | None
+    namespace: int | None
 
 
 class MediaWikiReader(BasePydanticReader):
@@ -79,12 +80,9 @@ class MediaWikiReader(BasePydanticReader):
     page_limit: int = Field(
         default=500,
         gt=0,
-        description=(
-            "Max page titles per allpages API call. Pagination continues "
-            "until the wiki is fully listed."
-        ),
+        description=("Max page titles per allpages API call. Pagination continues until the wiki is fully listed."),
     )
-    namespaces: Optional[List[int]] = Field(
+    namespaces: list[int] | None = Field(
         default=None,
         description=(
             "Namespace IDs to list. None = wiki content namespaces from "
@@ -94,8 +92,7 @@ class MediaWikiReader(BasePydanticReader):
     filter_redirects: bool = Field(
         default=True,
         description=(
-            "If True (default), redirect pages are excluded from results. "
-            "Set to False to include redirect pages."
+            "If True (default), redirect pages are excluded from results. Set to False to include redirect pages."
         ),
     )
     logger: logging.Logger = Field(
@@ -105,7 +102,7 @@ class MediaWikiReader(BasePydanticReader):
     )
 
     # -- Non-serialised internal state ----------------------------------------
-    _site: Optional[mwclient.Site] = PrivateAttr(default=None)
+    _site: mwclient.Site | None = PrivateAttr(default=None)
 
     # -- Construction helpers -------------------------------------------------
 
@@ -124,9 +121,7 @@ class MediaWikiReader(BasePydanticReader):
     def site(self) -> mwclient.Site:
         """Return the mwclient Site, creating one lazily if needed."""
         if self._site is None:
-            self._site = mwclient.Site(
-                self.host, path=self.path, scheme=self.scheme
-            )
+            self._site = mwclient.Site(self.host, path=self.path, scheme=self.scheme)
         return self._site
 
     def login(self, username: str, password: str) -> None:
@@ -146,7 +141,7 @@ class MediaWikiReader(BasePydanticReader):
 
     # -- Internal helpers -----------------------------------------------------
 
-    def _get_content_namespace_ids(self) -> List[int]:
+    def _get_content_namespace_ids(self) -> list[int]:
         """
         Return namespace IDs marked as content ($wgContentNamespaces).
 
@@ -160,28 +155,25 @@ class MediaWikiReader(BasePydanticReader):
         """
         result = self.site.get("query", meta="siteinfo", siprop="namespaces")
         namespaces = result.get("query", {}).get("namespaces", {})
-        ids: List[int] = [
+        ids: list[int] = [
             int(ns_data["id"])
             for ns_data in namespaces.values()
-            if isinstance(ns_data, dict)
-            and "content" in ns_data
-            and ns_data.get("id") is not None
+            if isinstance(ns_data, dict) and "content" in ns_data and ns_data.get("id") is not None
         ]
 
         if not ids:
             raise RuntimeError(
-                "No content namespaces found in siteinfo; "
-                "the MediaWiki API may be unreachable or misconfigured."
+                "No content namespaces found in siteinfo; the MediaWiki API may be unreachable or misconfigured."
             )
         return sorted(ids)
 
-    def _resolve_namespace_list(self) -> List[int]:
+    def _resolve_namespace_list(self) -> list[int]:
         """Return the effective list of namespace IDs to iterate."""
         if self.namespaces is not None:
             return self.namespaces
         return self._get_content_namespace_ids()
 
-    def _get_url_base(self) -> Tuple[str, str]:
+    def _get_url_base(self) -> tuple[str, str]:
         """
         Return ``(origin, article_path)`` parsed from the site's siteinfo.
 
@@ -193,31 +185,24 @@ class MediaWikiReader(BasePydanticReader):
         base_url = site_info.get("base", "")
         article_path = site_info.get("articlepath", "/wiki/$1")
         if not base_url:
-            raise RuntimeError(
-                "Could not determine base URL from siteinfo; "
-                "the 'base' field is missing or empty."
-            )
+            raise RuntimeError("Could not determine base URL from siteinfo; the 'base' field is missing or empty.")
         parsed = urlparse(base_url)
         origin = f"{parsed.scheme}://{parsed.netloc}"
         return origin, article_path
 
-    def _build_page_url(
-        self, title: str, url_base: Optional[Tuple[str, str]]
-    ) -> Optional[str]:
+    def _build_page_url(self, title: str, url_base: tuple[str, str] | None) -> str | None:
         """Build canonical page URL from pre-parsed (origin, article_path)."""
         if not url_base:
             return None
         origin, article_path = url_base
         return origin + article_path.replace("$1", title.replace(" ", "_"))
 
-    def _extract_revision_time(
-        self, page: Any, title: str
-    ) -> Optional[datetime]:
+    def _extract_revision_time(self, page: Any, title: str) -> datetime | None:
         """Extract last_modified from page revision timestamp (struct_time)."""
         try:
             ts = page.touched
             if ts:
-                return datetime(*ts[:6], tzinfo=timezone.utc)
+                return datetime(*ts[:6], tzinfo=UTC)
             return None
         except (AttributeError, TypeError) as e:
             self.logger.debug(
@@ -235,11 +220,7 @@ class MediaWikiReader(BasePydanticReader):
         # Parse site base URL once; origin + article_path are constant per site
         url_base = self._get_url_base()
 
-        filterredir = (
-            self.FILTERREDIR_NONREDIRECTS
-            if self.filter_redirects
-            else self.FILTERREDIR_ALL
-        )
+        filterredir = self.FILTERREDIR_NONREDIRECTS if self.filter_redirects else self.FILTERREDIR_ALL
 
         for ns in ns_list:
             for page in self.site.allpages(
@@ -257,7 +238,7 @@ class MediaWikiReader(BasePydanticReader):
                     namespace=page.namespace,
                 )
 
-    def _get_page_contents(self, page_title: str) -> Optional[str]:
+    def _get_page_contents(self, page_title: str) -> str | None:
         """
         Fetch parsed HTML content for a page via mwclient's parse API.
 
@@ -275,9 +256,7 @@ class MediaWikiReader(BasePydanticReader):
                 disabletoc=True,
             )
         except mwclient.errors.APIError as exc:
-            self.logger.warning(
-                "Parse API failed for '%s': %s", page_title, exc
-            )
+            self.logger.warning("Parse API failed for '%s': %s", page_title, exc)
             return None
 
         if not result:
@@ -286,9 +265,7 @@ class MediaWikiReader(BasePydanticReader):
 
         html_content = result.get("parse", {}).get("text", {}).get("*", "")
         if not html_content:
-            self.logger.warning(
-                "No content in parse result for page '%s'", page_title
-            )
+            self.logger.warning("No content in parse result for page '%s'", page_title)
             return None
 
         return html_content
@@ -311,18 +288,16 @@ class MediaWikiReader(BasePydanticReader):
                 e,
                 exc_info=True,
             )
-            return re.sub(
-                r"\s+", " ", re.sub(r"<[^>]+>", "", html_content)
-            ).strip()
+            return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", html_content)).strip()
 
     def _page_to_document(
         self,
         title: str,
-        url: Optional[str],
-        last_modified: Optional[datetime],
-        pageid: Optional[int] = None,
-        namespace: Optional[int] = None,
-    ) -> Optional[Document]:
+        url: str | None,
+        last_modified: datetime | None,
+        pageid: int | None = None,
+        namespace: int | None = None,
+    ) -> Document | None:
         """
         Fetch and convert a single wiki page into a Document.
 
@@ -348,9 +323,7 @@ class MediaWikiReader(BasePydanticReader):
             metadata={
                 "title": title,
                 "url": url,
-                "last_modified": (
-                    last_modified.isoformat() if last_modified else None
-                ),
+                "last_modified": (last_modified.isoformat() if last_modified else None),
                 "pageid": pageid,
                 "namespace": namespace,
             },

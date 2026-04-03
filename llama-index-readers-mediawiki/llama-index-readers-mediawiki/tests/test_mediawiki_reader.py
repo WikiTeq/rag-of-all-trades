@@ -4,10 +4,8 @@ import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
-from pydantic import ValidationError
-
 from llama_index.readers.mediawiki import MediaWikiReader
-
+from pydantic import ValidationError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -124,18 +122,14 @@ class TestLogin:
         reader = _make_reader()
         reader.login("testuser", "testpass")
 
-        mock_site.login.assert_called_once_with(
-            username="testuser", password="testpass"
-        )
+        mock_site.login.assert_called_once_with(username="testuser", password="testpass")
 
     @patch("llama_index.readers.mediawiki.base.mwclient.Site")
     def test_login_failure_raises(self, mock_site_cls):
         import mwclient.errors
 
         mock_site = _mock_site()
-        mock_site.login.side_effect = mwclient.errors.LoginError(
-            mock_site, "FAIL", "Bad credentials"
-        )
+        mock_site.login.side_effect = mwclient.errors.LoginError(mock_site, "FAIL", "Bad credentials")
         mock_site_cls.return_value = mock_site
 
         reader = _make_reader()
@@ -151,9 +145,7 @@ class TestLogin:
         reader = _make_reader()
         reader.login("User@BotName", "bot-password-token")
 
-        mock_site.login.assert_called_once_with(
-            username="User@BotName", password="bot-password-token"
-        )
+        mock_site.login.assert_called_once_with(username="User@BotName", password="bot-password-token")
 
 
 # ---------------------------------------------------------------------------
@@ -411,9 +403,7 @@ class TestHtmlToCleanText:
     @patch("llama_index.readers.mediawiki.base.html2text.HTML2Text")
     def test_fallback_when_html2text_raises(self, mock_html2text_cls):
         """When html2text raises, fallback strips tags with regex and normalizes space."""
-        mock_html2text_cls.return_value.handle.side_effect = ValueError(
-            "html2text fail"
-        )
+        mock_html2text_cls.return_value.handle.side_effect = ValueError("html2text fail")
         result = MediaWikiReader._html_to_clean_text("<p>Hello</p> <b>world</b>")
         assert result == "Hello world"
 
