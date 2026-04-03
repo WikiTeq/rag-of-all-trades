@@ -1,7 +1,8 @@
 import hashlib
-import pytest
 from datetime import datetime
 from unittest.mock import Mock, patch
+
+import pytest
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -77,13 +78,10 @@ class TestIngestionJob:
 
     def test_get_extra_metadata_reserved_keys_not_overwritten(self, base_config):
         """Extra metadata must not overwrite reserved standard keys."""
-        from tasks.base import IngestionJob
         RESERVED_METADATA_KEYS = IngestionJob.RESERVED_METADATA_KEYS
 
         job = DummyIngestionJob(base_config)
-        job.get_extra_metadata = Mock(
-            return_value={k: "overwrite" for k in RESERVED_METADATA_KEYS}
-        )
+        job.get_extra_metadata = Mock(return_value={k: "overwrite" for k in RESERVED_METADATA_KEYS})
 
         item = IngestionItem(id="item-1", source_ref="src")
         job.metadata_tracker = Mock()
