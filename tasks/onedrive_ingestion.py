@@ -99,9 +99,9 @@ class OneDriveIngestionJob(IngestionJob):
                 mime_types=self.mime_types,
                 recursive=self.recursive,
             )
-        except Exception as e:
-            logger.error(f"[{self.source_name}] Failed to load documents from OneDrive: {e}")
-            return
+        except Exception:
+            logger.exception(f"[{self.source_name}] Failed to load documents from OneDrive")
+            raise
 
         # reader may return None instead of raising on certain 404/empty responses
         if not docs:
@@ -169,7 +169,7 @@ class OneDriveIngestionJob(IngestionJob):
         try:
             dt = datetime.fromisoformat(raw_ts)
             return dt.astimezone(UTC) if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
-        except ValueError:
+        except (ValueError, TypeError):
             return None
 
     @staticmethod

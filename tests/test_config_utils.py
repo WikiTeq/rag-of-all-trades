@@ -26,15 +26,23 @@ class TestParseBool(unittest.TestCase):
     def test_none_returns_custom_default(self):
         self.assertTrue(parse_bool(None, default=True))
 
-    def test_int_truthy(self):
+    def test_int_one_is_true(self):
         self.assertTrue(parse_bool(1))
 
-    def test_int_falsy(self):
+    def test_int_zero_is_false(self):
         self.assertFalse(parse_bool(0))
+
+    def test_int_other_raises(self):
+        with self.assertRaises(ValueError):
+            parse_bool(2)
 
     def test_unrecognised_string_raises(self):
         with self.assertRaises(ValueError):
             parse_bool("maybe")
+
+    def test_unknown_type_raises(self):
+        with self.assertRaises(ValueError):
+            parse_bool([])
 
     def test_whitespace_stripped(self):
         self.assertTrue(parse_bool("  true  "))
