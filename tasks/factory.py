@@ -3,6 +3,7 @@ from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.imap_ingestion import IMAPIngestionJob
 from tasks.jira_ingestion import JiraIngestionJob
 from tasks.mediawiki_ingestion import MediaWikiIngestionJob
+from tasks.onedrive_ingestion import OneDriveIngestionJob
 from tasks.pipedrive_ingestion import PipedriveIngestionJob
 from tasks.s3_ingestion import S3IngestionJob
 from tasks.serpapi_ingestion import SerpAPIIngestionJob
@@ -36,3 +37,4 @@ IngestionJobFactory.register("web", WebIngestionJob)
 IngestionJobFactory.register("pipedrive", PipedriveIngestionJob)
 IngestionJobFactory.register("slack", SlackIngestionJob)
 IngestionJobFactory.register("imap", IMAPIngestionJob)
+IngestionJobFactory.register("onedrive", OneDriveIngestionJob)
