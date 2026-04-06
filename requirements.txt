@@ -49,8 +49,6 @@ markitdown[pdf, docx, pptx]==0.1.3
 html2text==2024.2.26  # pinned to <2025 for llama-index-readers-web compatibility
 pyyaml==6.0.3
 
-# # MediaWiki reader — local copy, switch to PyPI once published
-# ./llama-index-readers-mediawiki
 # MediaWiki reader — install from WikiTeq fork until published to PyPI
 git+https://github.com/WikiTeq/llama_index.git@MAIT-41-MediaWiki-reader#subdirectory=llama-index-integrations/readers/llama-index-readers-mediawiki
 mwclient==0.11.0
