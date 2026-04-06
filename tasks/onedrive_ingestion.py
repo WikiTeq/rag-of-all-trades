@@ -9,6 +9,7 @@ from llama_index.readers.microsoft_onedrive import OneDriveReader
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.config import parse_bool
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -68,7 +69,7 @@ class OneDriveIngestionJob(IngestionJob):
         self.file_paths: list[str] | None = self._parse_config_list(cfg.get("file_paths"))
         self.mime_types: list[str] | None = self._parse_config_list(cfg.get("mime_types"))
 
-        self.recursive: bool = bool(cfg.get("recursive", True))
+        self.recursive: bool = parse_bool(cfg.get("recursive"), default=True)
 
         self._reader: OneDriveReader = OneDriveReader(
             client_id=self.client_id,
@@ -166,7 +167,8 @@ class OneDriveIngestionJob(IngestionJob):
         if not raw_ts:
             return None
         try:
-            return datetime.fromisoformat(raw_ts).replace(tzinfo=UTC)
+            dt = datetime.fromisoformat(raw_ts)
+            return dt.astimezone(UTC) if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
         except ValueError:
             return None
 

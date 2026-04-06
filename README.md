@@ -30,6 +30,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Pipedrive
 * Slack
 * IMAP
+* OneDrive (OneDrive for Business — App authentication)
 
 ## Embeddings support
 
