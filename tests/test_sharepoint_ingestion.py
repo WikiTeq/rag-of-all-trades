@@ -59,6 +59,10 @@ class TestSharePointIngestionInit(unittest.TestCase):
         job = _make_job(sharepoint_type="page")
         self.assertEqual(job.sharepoint_type, SharePointType.PAGE)
 
+    def test_invalid_sharepoint_type_raises(self):
+        with self.assertRaises(ValueError):
+            _make_job(sharepoint_type="invalid")
+
     def test_source_type(self):
         job = _make_job()
         self.assertEqual(job.source_type, "sharepoint")
@@ -153,6 +157,19 @@ class TestSharePointIngestionListItems(unittest.TestCase):
             items = list(job.list_items())
 
         self.assertIsNotNone(items[0].last_modified)
+
+    def test_last_modified_from_camel_case_key(self):
+        doc = Document(
+            text="x",
+            metadata={"file_path": "a.pdf", "lastModifiedDateTime": "2024-06-01T12:00:00+00:00"},
+        )
+        with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
+            MockReader.return_value.load_data.return_value = [doc]
+            job = _make_job()
+            items = list(job.list_items())
+
+        self.assertIsNotNone(items[0].last_modified)
+        self.assertIsNotNone(items[0].last_modified.tzinfo)
 
     def test_last_modified_fallback_when_missing(self):
         doc = Document(text="x", metadata={"file_path": "a.pdf"})
