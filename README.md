@@ -283,6 +283,44 @@ JIRA1_SCHEDULES=3600
 # (set auth_type: "token" in config.yaml; email is not needed)
 ```
 
+### OneDrive Connector
+
+The OneDrive connector ingests files from Microsoft OneDrive for Business (Microsoft 365) using App
+authentication (client credentials). Files can be selected by folder ID, folder path, file IDs, or file
+paths. Recursive subfolder traversal and MIME type filtering are supported.
+
+> **Note:** Only OneDrive for Business is supported. OneDrive Personal accounts are not supported.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "onedrive"
+    name: "onedrive1"
+    config:
+      client_id: "${ONEDRIVE1_CLIENT_ID}"
+      client_secret: "${ONEDRIVE1_CLIENT_SECRET}"
+      tenant_id: "${ONEDRIVE1_TENANT_ID}"
+      userprincipalname: "${ONEDRIVE1_USER_PRINCIPAL_NAME}"
+      folder_path: "Documents/Reports"  # optional: hardcode directly in config
+      folder_id:                        # optional: OneDrive folder ID
+      file_ids:                         # optional: comma-separated file IDs
+      file_paths:                       # optional: comma-separated file paths
+      mime_types:                       # optional: comma-separated MIME types to filter
+      recursive: true                   # optional, default true
+      schedules: "${ONEDRIVE1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+ONEDRIVE1_CLIENT_ID=your-azure-app-client-id
+ONEDRIVE1_CLIENT_SECRET=your-azure-app-client-secret
+ONEDRIVE1_TENANT_ID=your-azure-tenant-id
+ONEDRIVE1_USER_PRINCIPAL_NAME=user@your-org.onmicrosoft.com
+ONEDRIVE1_SCHEDULES=3600
+```
+
 ## Reference of the `config.yaml`
 
 The `config.yaml` file contains the main configuration of the service.
