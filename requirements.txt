@@ -36,6 +36,11 @@ jira==3.10.5
 # Web connector
 llama-index-readers-web==0.6.0
 
+# SharePoint connector
+# Pinned to 0.8.1 — 0.9.x bumps llama-index-embeddings-openai floor to >=0.6.0,
+# which conflicts with llama-index==0.14.6 (requires <0.6). No functional changes in 0.9.x.
+llama-index-readers-microsoft-sharepoint==0.8.1
+
 # Environment management
 python-dotenv==1.2.1
 
