@@ -128,11 +128,11 @@ class TestOneDriveIngestionJob(unittest.TestCase):
         items = list(job.list_items())
         self.assertEqual(items, [])
 
-    def test_list_items_empty_on_reader_exception(self):
+    def test_list_items_raises_on_reader_exception(self):
         self.mock_reader.load_data.side_effect = Exception("auth error")
         job = self._make_job()
-        items = list(job.list_items())
-        self.assertEqual(items, [])
+        with self.assertRaises(Exception):
+            list(job.list_items())
 
     def test_list_items_source_ref_is_document(self):
         doc = _make_doc()

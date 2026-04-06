@@ -65,9 +65,10 @@ def test_parse_bool_int(value, expected):
     assert parse_bool(value) is expected
 
 
-def test_parse_bool_unrecognised_string_raises():
+@pytest.mark.parametrize("value", ["maybe", 2, []])
+def test_parse_bool_invalid_raises(value):
     with pytest.raises(ValueError):
-        parse_bool("maybe")
+        parse_bool(value)
 
 
 @pytest.mark.parametrize(("value", "expected"), [("  true  ", True), ("  false  ", False)])
