@@ -463,6 +463,7 @@ SHAREPOINT1_CLIENT_ID=your-azure-app-client-id
 SHAREPOINT1_CLIENT_SECRET=your-azure-app-client-secret
 SHAREPOINT1_TENANT_ID=your-azure-tenant-id
 SHAREPOINT1_SCHEDULES=3600
+
 SHAREPOINT2_CLIENT_ID=your-azure-app-client-id
 SHAREPOINT2_CLIENT_SECRET=your-azure-app-client-secret
 SHAREPOINT2_TENANT_ID=your-azure-tenant-id
@@ -552,6 +553,7 @@ IMAP1_USERNAME=your-email@gmail.com
 IMAP1_PASSWORD=your-app-specific-password
 IMAP1_MAILBOXES=INBOX,Sent
 IMAP1_SCHEDULES=3600
+
 SHAREPOINT1_CLIENT_ID=your-azure-app-client-id
 SHAREPOINT1_CLIENT_SECRET=your-azure-app-client-secret
 SHAREPOINT1_TENANT_ID=your-azure-tenant-id

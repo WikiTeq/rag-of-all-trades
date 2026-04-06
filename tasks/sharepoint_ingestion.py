@@ -66,11 +66,11 @@ class SharePointIngestionJob(IngestionJob):
         self.sharepoint_folder_id: str | None = cfg.get("sharepoint_folder_id", "").strip() or None
         self.drive_name: str | None = cfg.get("drive_name", "").strip() or None
 
+        _type_map = {"file": SharePointType.DRIVE, "page": SharePointType.PAGE}
         sharepoint_type_raw = cfg.get("sharepoint_type", "file").strip().lower()
-        if sharepoint_type_raw == "page":
-            self.sharepoint_type = SharePointType.PAGE
-        else:
-            self.sharepoint_type = SharePointType.DRIVE
+        if sharepoint_type_raw not in _type_map:
+            raise ValueError(f"Invalid sharepoint_type {sharepoint_type_raw!r}; expected one of {list(_type_map)}")
+        self.sharepoint_type = _type_map[sharepoint_type_raw]
 
         recursive_raw = cfg.get("recursive", True)
         if isinstance(recursive_raw, str):
@@ -115,19 +115,34 @@ class SharePointIngestionJob(IngestionJob):
         logger.info(f"[{self.source_name}] Loaded {len(docs)} document(s) from SharePoint")
 
         for doc in docs:
-            file_path = doc.metadata.get("file_path") or doc.metadata.get("file_name") or doc.id_
-            item_id = f"sharepoint:{self.source_name}:{file_path}"
-            raw_ts = doc.metadata.get("last_modified_datetime") or doc.metadata.get("last_modified")
+            stable_id = (
+                doc.metadata.get("file_id") or doc.id_ or doc.metadata.get("file_path") or doc.metadata.get("file_name")
+            )
+            item_id = f"sharepoint:{self.source_name}:{stable_id}"
+            raw_ts = (
+                doc.metadata.get("lastModifiedDateTime")
+                or doc.metadata.get("last_modified_datetime")
+                or doc.metadata.get("last_modified")
+            )
             if isinstance(raw_ts, datetime):
-                last_modified = raw_ts if raw_ts.tzinfo else raw_ts.replace(tzinfo=UTC)
+                last_modified = raw_ts.astimezone(UTC)
             elif isinstance(raw_ts, str):
                 try:
-                    last_modified = datetime.fromisoformat(raw_ts)
-                    if not last_modified.tzinfo:
-                        last_modified = last_modified.replace(tzinfo=UTC)
+                    last_modified = datetime.fromisoformat(raw_ts).astimezone(UTC)
                 except ValueError:
+                    logger.warning(
+                        "[%s] Could not parse last_modified %r for %s; falling back to now()",
+                        self.source_name,
+                        raw_ts,
+                        stable_id,
+                    )
                     last_modified = datetime.now(UTC)
             else:
+                logger.warning(
+                    "[%s] No last_modified metadata for %s; falling back to now()",
+                    self.source_name,
+                    stable_id,
+                )
                 last_modified = datetime.now(UTC)
             yield IngestionItem(
                 id=item_id,
