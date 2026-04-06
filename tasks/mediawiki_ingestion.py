@@ -533,25 +533,6 @@ class MediaWikiIngestionJob(IngestionJob):
 
         return safe_name
 
-    def process_item(self, item: IngestionItem):
-        """Process a single ingestion item with rate limiting.
-
-        Overrides base implementation to add rate limiting between page fetches.
-        The URL is automatically cached by get_raw_content() for use in get_document_metadata().
-
-        Args:
-            item: The ingestion item to process
-
-        Returns:
-            int: 1 if item was successfully ingested, 0 if skipped or failed
-        """
-        # Rate limiting between individual page fetches
-        time.sleep(self.request_delay)
-
-        # Delegate to base class implementation
-        # get_raw_content() will cache the URL in item._metadata_cache
-        return super().process_item(item)
-
     def get_document_metadata(
         self,
         item: IngestionItem,
