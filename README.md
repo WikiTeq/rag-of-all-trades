@@ -26,6 +26,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * SerpAPI
 * Jira
 * Web
+* OneDrive (OneDrive for Business — App authentication)
 
 ## Embeddings support
 
