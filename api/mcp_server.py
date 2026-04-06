@@ -54,7 +54,7 @@ async def rephrase_chunks_response(
     _validate_query(query)
     _validate_top_k(top_k)
     if llm is None:
-        raise RuntimeError("LLM is not configured. Please set OPENAI_API_KEY and LLM model name.")
+        raise RuntimeError("LLM is not configured. Please configure the LLM provider, API key, and model name.")
 
     logger.info("MCP rephrase_chunks: top_k=%d", top_k)
     nodes_with_score = await asyncio.to_thread(
