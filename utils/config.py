@@ -21,6 +21,12 @@ def parse_bool(value: object, default: bool = False) -> bool:
         return default
     if isinstance(value, bool):
         return value
+    if isinstance(value, int):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        raise ValueError(f"Cannot parse {value!r} as a boolean")
     if isinstance(value, str):
         normalized = value.strip().lower()
         if normalized in {"true", "1", "yes", "on"}:
@@ -28,7 +34,7 @@ def parse_bool(value: object, default: bool = False) -> bool:
         if normalized in {"false", "0", "no", "off"}:
             return False
         raise ValueError(f"Cannot parse {value!r} as a boolean")
-    return bool(value)
+    raise ValueError(f"Cannot parse {value!r} as a boolean")
 
 
 class EnvSettings(BaseSettings):
