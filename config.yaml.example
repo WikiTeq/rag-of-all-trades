@@ -41,8 +41,9 @@ sources:
   #    host: "${MEDIAWIKI1_HOST}"
   #    path: "/w/"          # optional, default /w/
   #    scheme: "https"      # optional, default https
-  #    page_limit: 500      # optional, max titles per allpages API call
-  #    filter_redirects: true  # optional, exclude redirect pages
+  #    page_limit: 500      # optional, max pages per namespace (default: unlimited)
+  #    namespaces: [0]      # optional, list of namespace IDs (default: content namespaces)
+  #    filter_redirects: true  # optional, exclude redirect pages (default: true)
   #    username: "${MEDIAWIKI1_USERNAME}"  # optional, for private wikis
   #    password: "${MEDIAWIKI1_PASSWORD}"  # optional, for private wikis
   #    schedules: "${MEDIAWIKI1_SCHEDULES}"

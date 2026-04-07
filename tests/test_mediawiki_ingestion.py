@@ -1,20 +1,19 @@
 """Tests for MediaWikiIngestionJob (Pytest version)."""
 
 import sys
-from unittest.mock import MagicMock
+from datetime import datetime
+from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock, patch
+
+import pytest
+from llama_index.core.schema import Document
 
 # llama-index-readers-mediawiki is not yet published; stub it so the module
 # can be imported and MediaWikiReader is always patched in tests.
 sys.modules.setdefault("llama_index.readers.mediawiki", MagicMock())
 
-from datetime import datetime
-from unittest.mock import Mock, patch
-
-import pytest
-from llama_index.core.schema import Document
-
-from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.mediawiki_ingestion import MediaWikiIngestionJob
+from tasks.helper_classes.ingestion_item import IngestionItem  # noqa: E402
+from tasks.mediawiki_ingestion import MediaWikiIngestionJob  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -100,8 +99,8 @@ class TestListItems:
         """Pages returned from the reader's generator → IngestionItems."""
         job, reader = base_wiki_job
         reader._get_all_pages_generator.return_value = [
-            {"title": "Page 1", "last_modified": datetime(2024, 1, 1), "url": "u1", "pageid": 1, "namespace": 0},
-            {"title": "Page 2", "last_modified": datetime(2024, 1, 2), "url": "u2", "pageid": 2, "namespace": 4},
+            SimpleNamespace(title="Page 1", last_modified=datetime(2024, 1, 1), url="u1", pageid=1, namespace=0),
+            SimpleNamespace(title="Page 2", last_modified=datetime(2024, 1, 2), url="u2", pageid=2, namespace=4),
         ]
 
         items = list(job.list_items())
@@ -314,28 +313,3 @@ class TestProcessItem:
                     assert result == 0
                     job.metadata_tracker.record_metadata.assert_not_called()
                     job.vector_manager.insert_documents.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# run
-# ---------------------------------------------------------------------------
-
-
-class TestRun:
-    @patch("tasks.base.time.sleep")
-    def test_run_applies_delay(self, mock_sleep):
-        """run() should call time.sleep with request_delay for each item."""
-        cfg = _default_config()
-        cfg["config"]["request_delay"] = 2.0
-        job, _ = _make_job(config=cfg)
-
-        with patch.object(job, "list_items") as mock_list:
-            mock_list.return_value = [
-                IngestionItem(id="1", source_ref="1"),
-                IngestionItem(id="2", source_ref="2"),
-            ]
-            with patch.object(job, "process_item", return_value=1):
-                job.run()
-
-        assert mock_sleep.call_count == 2
-        mock_sleep.assert_called_with(2.0)

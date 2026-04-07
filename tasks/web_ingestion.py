@@ -87,8 +87,11 @@ class WebIngestionJob(IngestionJob):
 
         cfg = config.get("config", {})
 
-        urls = cfg.get("urls") or []
-        self.urls: list[str] = urls.split(",") if isinstance(urls, str) else urls
+        raw_urls = cfg.get("urls") or []
+        if isinstance(raw_urls, str):
+            self.urls: list[str] = [u.strip() for u in raw_urls.split(",") if u.strip()]
+        else:
+            self.urls = [u.strip() for u in raw_urls if u and u.strip()]
         self.sitemap_url: str | None = cfg.get("sitemap_url", "").strip() or None
 
         if not self.urls and not self.sitemap_url:

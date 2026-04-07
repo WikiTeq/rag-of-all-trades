@@ -41,8 +41,6 @@ You still need PostgreSQL with pgvector and Redis running, plus valid `.env` and
 
 ## Running tests
 
-Use the project venv so dependencies (including `llama-index-readers-mediawiki` for MediaWiki tests) are available. The suite is run with **pytest**.
-
 ```bash
 source .venv/bin/activate
 python -m pytest tests/ -v
@@ -52,12 +50,6 @@ To run a single test file:
 
 ```bash
 python -m pytest tests/test_mediawiki_ingestion.py -v
-```
-
-For MediaWiki ingestion tests you need the reader package installed, e.g. editable install from the MediaWikiReader repo:
-
-```bash
-pip install -e /path/to/MediaWikiReader
 ```
 
 ## Migrations

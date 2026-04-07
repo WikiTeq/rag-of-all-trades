@@ -4,11 +4,9 @@ import logging
 import re
 from collections.abc import Iterator
 from typing import Any
-from urllib.parse import urlparse
 
 # Third-party imports
 from llama_index.readers.mediawiki import MediaWikiReader
-from requests.adapters import HTTPAdapter
 
 # Local imports
 from tasks.base import IngestionJob
@@ -18,35 +16,6 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 # TODO: Logging should not be done here and in s3, but in the main module
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
-
-
-class HostOverrideAdapter(HTTPAdapter):
-    """HTTP adapter that resolves a specific hostname to a given IP address.
-
-    Works like curl's --resolve flag: the TCP connection goes to the override IP,
-    but TLS SNI and certificate validation still use the original hostname.
-    Compatible with requests 2.x / urllib3 2.x.
-    """
-
-    def __init__(self, dest_ip: str, dest_hostname: str, **kwargs):
-        self._dest_ip = dest_ip
-        self._dest_hostname = dest_hostname
-        super().__init__(**kwargs)
-
-    def init_poolmanager(self, *args, **kwargs):
-        """Configure the pool manager to use the original hostname for TLS SNI/cert."""
-        kwargs["server_hostname"] = self._dest_hostname
-        super().init_poolmanager(*args, **kwargs)
-
-    def send(self, request, **kwargs):
-        """Swap hostname -> IP in the URL so the socket connects to the override IP."""
-        parsed = urlparse(request.url)
-        # Preserve original Host header for the server
-        request.headers.setdefault("Host", parsed.hostname)
-        # Rewrite URL to connect to the override IP
-        new_netloc = parsed.netloc.replace(parsed.hostname, self._dest_ip)
-        request.url = parsed._replace(netloc=new_netloc).geturl()
-        return super().send(request, **kwargs)
 
 
 class MediaWikiIngestionJob(IngestionJob):
@@ -65,6 +34,8 @@ class MediaWikiIngestionJob(IngestionJob):
                 - config.page_limit: Max page titles per allpages API call (optional, default 500)
                 - config.namespaces: List of namespace IDs to include (optional, None = content namespaces)
                 - config.filter_redirects: Exclude redirect pages (optional, default True)
+                - config.username: MediaWiki username or bot username (optional, for private wikis)
+                - config.password: MediaWiki password or bot password (optional, for private wikis)
 
         Raises:
             ValueError: If host is not provided
@@ -81,7 +52,7 @@ class MediaWikiIngestionJob(IngestionJob):
             host=host,
             path=cfg.get("path", "/w/"),
             scheme=cfg.get("scheme", "https"),
-            page_limit=cfg.get("page_limit", 500),
+            page_limit=cfg.get("page_limit"),
             namespaces=cfg.get("namespaces"),
             filter_redirects=cfg.get("filter_redirects", True),
         )

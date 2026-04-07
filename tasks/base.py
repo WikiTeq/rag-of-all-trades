@@ -1,7 +1,6 @@
 import gc
 import hashlib
 import logging
-import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
@@ -80,10 +79,6 @@ class IngestionJob(ABC):
         self.source_name = config.get("name")
         self.metadata_tracker = MetadataTracker()
         self.vector_manager = VectorStoreManager()
-
-        # Rate limiting
-        cfg = config.get("config", {})
-        self.request_delay = float(cfg.get("request_delay", 0.0))
 
         # Seen checksums - prevent reprocessing identical content
         self._seen_capacity = 10000
@@ -285,8 +280,6 @@ class IngestionJob(ABC):
                     continue
 
                 total += count
-                if self.request_delay > 0:
-                    time.sleep(self.request_delay)
 
             result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
             logger.info(result_msg)
