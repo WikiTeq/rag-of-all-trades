@@ -69,6 +69,7 @@ class PipedriveClient:
         """Perform a GET request with retry logic."""
         url = f"{_API_BASE}{path}"
         params = dict(params or {})
+        rate_limit_retries = 0
 
         for attempt in range(self._max_retries + 1):
             try:
@@ -82,8 +83,12 @@ class PipedriveClient:
                 raise
 
             if resp.status_code == 429:
+                rate_limit_retries += 1
+                if rate_limit_retries > self._max_retries:
+                    logger.error(f"Exceeded max rate-limit retries ({self._max_retries}) for {path}")
+                    resp.raise_for_status()
                 retry_after = int(resp.headers.get("Retry-After", 2**attempt))
-                logger.warning(f"Rate limited; waiting {retry_after}s")
+                logger.warning(f"Rate limited (attempt {rate_limit_retries}); waiting {retry_after}s")
                 time.sleep(retry_after)
                 continue
 
@@ -143,8 +148,11 @@ class PipedriveClient:
         try:
             data = self.get(f"/users/{user_id}")
             name = (data.get("data") or {}).get("name", "") or ""
-        except Exception as exc:
+        except requests.RequestException as exc:
             logger.warning(f"Failed to resolve user {user_id}: {exc}")
+            name = str(user_id)
+        except (KeyError, AttributeError) as exc:
+            logger.warning(f"Unexpected response parsing user {user_id}: {exc}")
             name = str(user_id)
         self._user_cache[user_id] = name
         return name
@@ -158,8 +166,11 @@ class PipedriveClient:
         try:
             data = self.get(f"/pipelines/{pipeline_id}")
             name = (data.get("data") or {}).get("name", "") or ""
-        except Exception as exc:
+        except requests.RequestException as exc:
             logger.warning(f"Failed to resolve pipeline {pipeline_id}: {exc}")
+            name = str(pipeline_id)
+        except (KeyError, AttributeError) as exc:
+            logger.warning(f"Unexpected response parsing pipeline {pipeline_id}: {exc}")
             name = str(pipeline_id)
         self._pipeline_cache[pipeline_id] = name
         return name
@@ -173,8 +184,11 @@ class PipedriveClient:
         try:
             data = self.get(f"/stages/{stage_id}")
             name = (data.get("data") or {}).get("name", "") or ""
-        except Exception as exc:
+        except requests.RequestException as exc:
             logger.warning(f"Failed to resolve stage {stage_id}: {exc}")
+            name = str(stage_id)
+        except (KeyError, AttributeError) as exc:
+            logger.warning(f"Unexpected response parsing stage {stage_id}: {exc}")
             name = str(stage_id)
         self._stage_cache[stage_id] = name
         return name
