@@ -198,5 +198,107 @@ class TestIngestionJob(unittest.TestCase):
             DummyIngestionJob(config, items=[])
 
 
+class TestIngestionJobMarkdownConversion(unittest.TestCase):
+    def setUp(self):
+        self.job = DummyIngestionJob({"name": "test-source"})
+
+    # ------------------------------------------------------------------
+    # convert_bytes_to_markdown
+    # ------------------------------------------------------------------
+
+    def test_convert_bytes_returns_converted_text(self):
+        mock_md = Mock()
+        mock_md.convert_stream.return_value = Mock(text_content="# Hello")
+        self.job._markitdown = mock_md
+
+        result = self.job.convert_bytes_to_markdown(b"raw bytes")
+
+        self.assertEqual(result, "# Hello")
+        mock_md.convert_stream.assert_called_once()
+
+    def test_convert_bytes_falls_back_on_empty_result(self):
+        mock_md = Mock()
+        mock_md.convert_stream.return_value = Mock(text_content="   ")
+        self.job._markitdown = mock_md
+
+        result = self.job.convert_bytes_to_markdown(b"raw", fallback_text="raw text")
+
+        self.assertEqual(result, "raw text")
+
+    def test_convert_bytes_falls_back_on_exception(self):
+        mock_md = Mock()
+        mock_md.convert_stream.side_effect = RuntimeError("boom")
+        self.job._markitdown = mock_md
+
+        result = self.job.convert_bytes_to_markdown(b"raw", fallback_text="fallback")
+
+        self.assertEqual(result, "fallback")
+
+    def test_convert_bytes_default_fallback_is_empty_string(self):
+        mock_md = Mock()
+        mock_md.convert_stream.return_value = Mock(text_content="")
+        self.job._markitdown = mock_md
+
+        result = self.job.convert_bytes_to_markdown(b"raw")
+
+        self.assertEqual(result, "")
+
+    # ------------------------------------------------------------------
+    # convert_text_to_markdown
+    # ------------------------------------------------------------------
+
+    def test_convert_text_returns_converted_text(self):
+        mock_md = Mock()
+        mock_md.convert_stream.return_value = Mock(text_content="# Heading")
+        self.job._markitdown = mock_md
+
+        result = self.job.convert_text_to_markdown("some wiki text")
+
+        self.assertEqual(result, "# Heading")
+
+    def test_convert_text_falls_back_on_empty_result(self):
+        mock_md = Mock()
+        mock_md.convert_stream.return_value = Mock(text_content="   ")
+        self.job._markitdown = mock_md
+
+        result = self.job.convert_text_to_markdown("original text")
+
+        self.assertEqual(result, "original text")
+
+    def test_convert_text_falls_back_on_exception(self):
+        mock_md = Mock()
+        mock_md.convert_stream.side_effect = RuntimeError("oops")
+        self.job._markitdown = mock_md
+
+        result = self.job.convert_text_to_markdown("original text")
+
+        self.assertEqual(result, "original text")
+
+    def test_convert_text_returns_empty_string_unchanged(self):
+        result = self.job.convert_text_to_markdown("")
+        self.assertEqual(result, "")
+
+    def test_convert_text_returns_whitespace_only_unchanged(self):
+        result = self.job.convert_text_to_markdown("   ")
+        self.assertEqual(result, "   ")
+
+    # ------------------------------------------------------------------
+    # _get_markitdown lazy initialisation
+    # ------------------------------------------------------------------
+
+    def test_get_markitdown_is_lazily_created(self):
+        self.assertIsNone(self.job._markitdown)
+        with patch("tasks.base.MarkItDown") as mock_cls:
+            instance = self.job._get_markitdown()
+            mock_cls.assert_called_once_with()
+            self.assertIs(instance, mock_cls.return_value)
+
+    def test_get_markitdown_returns_same_instance(self):
+        with patch("tasks.base.MarkItDown"):
+            first = self.job._get_markitdown()
+            second = self.job._get_markitdown()
+            self.assertIs(first, second)
+
+
 if __name__ == "__main__":
     unittest.main()
