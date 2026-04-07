@@ -92,6 +92,36 @@ sources:
   #    max_comments: 10          # optional, default 10
   #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
+  #- type: "pipedrive"
+  #  name: "pipedrive1"
+  #  config:
+  #    api_token: "${PIPEDRIVE1_API_TOKEN}"
+  #    schedules: "${PIPEDRIVE1_SCHEDULES}"
+  #    # Optional: which entity types to load (default: all)
+  #    # load_types:
+  #    #   - activities
+  #    #   - deals
+  #    #   - notes
+  #    #   - organizations
+  #    #   - persons
+  #    #   - products
+  #    #   - projects
+  #    #   - leads
+  #    #   - tasks
+  #    #   - mails
+  #    # max_items: 500          # optional, global per-entity limit (default: unlimited)
+  #    # request_delay: 1        # optional, seconds between API requests (default: 0)
+  #    # max_retries: 3          # optional, retries on failure (default: 1)
+  #    # filter_deals_updated_since: "2025-01-01"   # optional ISO date
+  #    # filter_activities_updated_since: "2025-01-01"
+  #    # filter_deals_stages_ids:
+  #    #   - 1
+  #    # filter_deals_filter_id: "xxx"
+  #    # filter_organizations_filter_id: "xxx"
+  #    # filter_persons_filter_id: "xxx"
+  #    # filter_mail_folders:
+  #    #   - inbox
+
 embedding:
   provider: openrouter
   model_config: sentence-transformers/all-mpnet-base-v2
