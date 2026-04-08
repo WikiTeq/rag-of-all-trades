@@ -232,6 +232,8 @@ class JiraIngestionJob(IngestionJob):
             author = self._safe_display_name(getattr(comment, "author", None))
             created = getattr(comment, "created", "") or ""
             body = getattr(comment, "body", "") or ""
+            if isinstance(body, dict):
+                body = self._extract_adf_text(body)
             lines.append(f"**{author}** ({created}):\n{body}")
 
         return "\n\n".join(lines)
