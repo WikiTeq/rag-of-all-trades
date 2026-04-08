@@ -63,6 +63,7 @@ class MediaWikiIngestionJob(IngestionJob):
             page_limit=cfg.get("page_limit"),
             namespaces=namespaces,
             filter_redirects=cfg.get("filter_redirects", True),
+            logger=logger,
         )
 
         username = cfg.get("username")

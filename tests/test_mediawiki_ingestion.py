@@ -3,7 +3,7 @@
 import sys
 from datetime import datetime
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import ANY, MagicMock, Mock, patch
 
 import pytest
 from llama_index.core.schema import Document
@@ -98,6 +98,7 @@ class TestInitialization:
                 page_limit=100,
                 namespaces=[0, 1],
                 filter_redirects=False,
+                logger=ANY,
             )
 
     def test_namespaces_int_converted_to_list(self):
