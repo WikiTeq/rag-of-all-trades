@@ -50,5 +50,5 @@ html2text==2024.2.26  # pinned to <2025 for llama-index-readers-web compatibilit
 pyyaml==6.0.3
 
 # MediaWiki reader — install from WikiTeq fork until published to PyPI
-llama-index-readers-mediawiki @ git+https://github.com/WikiTeq/llama_index.git@MAIT-41-MediaWiki-reader#subdirectory=llama-index-integrations/readers/llama-index-readers-mediawiki
+llama-index-readers-mediawiki @ git+https://github.com/WikiTeq/llama_index.git@main#subdirectory=llama-index-integrations/readers/llama-index-readers-mediawiki
 mwclient==0.11.0
