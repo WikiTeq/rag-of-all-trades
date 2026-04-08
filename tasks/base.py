@@ -35,7 +35,9 @@ class IngestionJob(ABC):
         Sets up metadata tracking, vector store management, and duplicate detection infrastructure.
         """
         self.config = config
-        cfg = config.get("config") or {}
+        cfg = config.get("config", None)
+        if cfg is None:
+            cfg = {}
         if not isinstance(cfg, dict):
             raise ValueError("config.config must be an object")
         raw_delay = cfg.get("request_delay", 0)
