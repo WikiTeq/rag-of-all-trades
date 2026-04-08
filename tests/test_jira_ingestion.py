@@ -547,6 +547,76 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.assertEqual(metadata["url"], "")
 
     # ------------------------------------------------------------------
+    # ADF (Atlassian Document Format) handling
+    # ------------------------------------------------------------------
+
+    def test_get_raw_content_extracts_text_from_adf_description(self):
+        issue = _make_issue(
+            key="TEST-ADF-1",
+            description={
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": "ADF description text"}],
+                    }
+                ],
+            },
+        )
+        item = IngestionItem(id="jira:TEST-ADF-1", source_ref=issue)
+
+        job = self._make_job()
+        md_result = Mock()
+        md_result.text_content = "ADF description text"
+        self.mock_md.convert_stream.return_value = md_result
+        raw_content = job.get_raw_content(item)
+
+        self.assertIn("ADF description text", raw_content)
+
+    def test_get_raw_content_includes_adf_comment_body_when_comments_enabled(self):
+        issue = _make_issue(
+            key="TEST-ADF-2",
+            description={
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": "ADF issue description"}],
+                    }
+                ],
+            },
+        )
+
+        comment = Mock()
+        comment.author = Mock(displayName="Alice Example")
+        comment.created = "2024-06-15T10:30:00.000+0000"
+        comment.body = {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": "ADF comment body"}],
+                }
+            ],
+        }
+        self.mock_jira.comments.return_value = [comment]
+
+        item = IngestionItem(id="jira:TEST-ADF-2", source_ref=issue)
+        job = self._make_job(load_comments=True, max_comments=5)
+        md_result = Mock()
+        md_result.text_content = "ADF issue description"
+        self.mock_md.convert_stream.return_value = md_result
+
+        raw_content = job.get_raw_content(item)
+
+        self.assertIn("ADF issue description", raw_content)
+        self.assertIn("ADF comment body", raw_content)
+        self.assertIn("Alice Example", raw_content)
+
+    # ------------------------------------------------------------------
     # _parse_jira_timestamp
     # ------------------------------------------------------------------
 
