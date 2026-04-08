@@ -4,6 +4,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
+from datetime import UTC, datetime
 from typing import Any
 
 from llama_index.core import Document
@@ -201,7 +202,7 @@ class IngestionJob(ABC):
                 if not raw_content.strip():
                     logger.warning(f"Skipping empty content for item: {item.id}")
                     return 0
-                new_checksum = hashlib.md5(raw_content.encode("utf-8")).hexdigest()
+                new_checksum = hashlib.md5(raw_content.encode("utf-8"), usedforsecurity=False).hexdigest()
 
             item_name = self.get_item_name(item)
 
@@ -210,7 +211,8 @@ class IngestionJob(ABC):
             if latest and latest.checksum == new_checksum:
                 logger.info(f"Skipping unchanged item: {item_name}")
                 return 0
-            if not self._seen_add(new_checksum):
+            seen_key = f"{item.id}:{new_checksum}"
+            if not self._seen_add(seen_key):
                 logger.info(f"Skipping duplicate checksum for item: {item.id}")
                 return 0
 
@@ -236,6 +238,8 @@ class IngestionJob(ABC):
 
             version = (latest.version + 1) if latest else 1
 
+            last_modified_ts = item.last_modified or datetime.now(UTC)
+
             # Standard metadata (reserved keys must not be overwritten by get_extra_metadata)
             metadata = {
                 "source": self.source_type,
@@ -245,7 +249,7 @@ class IngestionJob(ABC):
                 "format": self.content_format,
                 "source_name": self.source_name,
                 "file_name": item_name,
-                "last_modified": str(item.last_modified),
+                "last_modified": str(last_modified_ts),
             }
 
             extra = self.get_extra_metadata(item, raw_content, metadata)
@@ -261,7 +265,7 @@ class IngestionJob(ABC):
                 new_checksum,
                 version,
                 1,
-                item.last_modified,
+                last_modified_ts,
                 extra_metadata={"source_name": self.source_name},
             )
 

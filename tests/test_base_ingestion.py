@@ -128,7 +128,7 @@ class TestIngestionJob(unittest.TestCase):
 
     def test_process_item_skips_unchanged_content(self, base_config):
         content = "same content"
-        checksum = hashlib.md5(content.encode("utf-8")).hexdigest()
+        checksum = hashlib.md5(content.encode("utf-8"), usedforsecurity=False).hexdigest()
         item = IngestionItem(id="item-1", source_ref="src")
         job = DummyIngestionJob(
             base_config,
@@ -154,7 +154,7 @@ class TestIngestionJob(unittest.TestCase):
     @patch("tasks.base.Document")
     def test_process_item_updates_version_and_records_metadata(self, mock_document, base_config):
         content = "updated content"
-        checksum = hashlib.md5(content.encode("utf-8")).hexdigest()
+        checksum = hashlib.md5(content.encode("utf-8"), usedforsecurity=False).hexdigest()
         last_modified = datetime(2024, 1, 2, 3, 4, 5)
         item = IngestionItem(
             id="item-1",
