@@ -46,6 +46,27 @@ def _make_job(config=None, **reader_attrs):
     return job, mock_reader
 
 
+def _make_page(title, last_modified=None, url=None, pageid=1, namespace=0):
+    """Return a SimpleNamespace mimicking a MediaWiki page record."""
+    return SimpleNamespace(
+        title=title,
+        last_modified=last_modified,
+        url=url,
+        pageid=pageid,
+        namespace=namespace,
+    )
+
+
+def _make_item(title, last_modified=None, **page_kwargs):
+    """Return an IngestionItem with a page_record in source_ref."""
+    page_record = _make_page(title, last_modified=last_modified, **page_kwargs)
+    return IngestionItem(
+        id=f"mediawiki:{title}",
+        source_ref=page_record,
+        last_modified=last_modified,
+    )
+
+
 @pytest.fixture
 def base_wiki_job():
     """Provide a MediaWikiIngestionJob and its mock reader."""
@@ -79,6 +100,42 @@ class TestInitialization:
                 filter_redirects=False,
             )
 
+    def test_namespaces_int_converted_to_list(self):
+        """Single int namespace should be wrapped in a list."""
+        cfg = _default_config(namespaces=0)
+        with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
+            MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
+            MediaWikiIngestionJob(cfg)
+            _, kwargs = MockReader.call_args
+            assert kwargs["namespaces"] == [0]
+
+    def test_namespaces_str_converted_to_list(self):
+        """Comma-separated string namespace should be converted to a list of ints."""
+        cfg = _default_config(namespaces="0,1")
+        with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
+            MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
+            MediaWikiIngestionJob(cfg)
+            _, kwargs = MockReader.call_args
+            assert kwargs["namespaces"] == [0, 1]
+
+    def test_namespaces_list_passthrough(self):
+        """List namespace should be passed through unchanged."""
+        cfg = _default_config(namespaces=[0, 1, 4])
+        with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
+            MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
+            MediaWikiIngestionJob(cfg)
+            _, kwargs = MockReader.call_args
+            assert kwargs["namespaces"] == [0, 1, 4]
+
+    def test_namespaces_none_passthrough(self):
+        """Absent namespaces should pass None to the reader (default content namespaces)."""
+        cfg = _default_config()
+        with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
+            MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
+            MediaWikiIngestionJob(cfg)
+            _, kwargs = MockReader.call_args
+            assert kwargs["namespaces"] is None
+
     def test_missing_host_raises(self):
         """Job raises ValueError when host is empty."""
         with pytest.raises(ValueError, match="host is required"):
@@ -98,24 +155,19 @@ class TestListItems:
     def test_list_items_basic(self, base_wiki_job):
         """Pages returned from the reader's generator → IngestionItems."""
         job, reader = base_wiki_job
-        reader._get_all_pages_generator.return_value = [
-            SimpleNamespace(title="Page 1", last_modified=datetime(2024, 1, 1), url="u1", pageid=1, namespace=0),
-            SimpleNamespace(title="Page 2", last_modified=datetime(2024, 1, 2), url="u2", pageid=2, namespace=4),
-        ]
+        page1 = _make_page("Page 1", last_modified=datetime(2024, 1, 1), url="u1", pageid=1, namespace=0)
+        page2 = _make_page("Page 2", last_modified=datetime(2024, 1, 2), url="u2", pageid=2, namespace=4)
+        reader._get_all_pages_generator.return_value = [page1, page2]
 
         items = list(job.list_items())
 
         assert len(items) == 2
         assert items[0].id == "mediawiki:Page 1"
-        assert items[0].source_ref == "Page 1"
+        assert items[0].source_ref is page1
         assert items[0].last_modified == datetime(2024, 1, 1)
-        assert items[0].url == "u1"
-        assert items[0].pageid == 1
-        assert items[0].namespace == 0
         assert items[1].id == "mediawiki:Page 2"
-        assert items[1].url == "u2"
-        assert items[1].pageid == 2
-        assert items[1].namespace == 4
+        assert items[1].source_ref is page2
+        assert items[1].last_modified == datetime(2024, 1, 2)
 
         reader._get_all_pages_generator.assert_called_once()
 
@@ -142,23 +194,17 @@ class TestGetRawContent:
         )
         reader._page_to_document.return_value = doc
 
-        item = IngestionItem(id="mediawiki:P", source_ref="P", pageid=42, namespace=0)
+        item = _make_item("P", pageid=42, namespace=0)
         content = job.get_raw_content(item)
 
         assert content == "Clean content"
-        reader._page_to_document.assert_called_once_with(
-            title="P",
-            url=None,
-            last_modified=None,
-            pageid=42,
-            namespace=0,
-        )
+        reader._page_to_document.assert_called_once_with(item.source_ref)
 
     def test_missing_page(self, base_wiki_job):
         job, reader = base_wiki_job
         reader._page_to_document.return_value = None
 
-        item = IngestionItem(id="mediawiki:M", source_ref="M")
+        item = _make_item("M")
         content = job.get_raw_content(item)
 
         assert content == ""
@@ -172,22 +218,19 @@ class TestGetRawContent:
 class TestGetItemName:
     def test_basic(self, base_wiki_job):
         job, _ = base_wiki_job
-        item = IngestionItem(id="mediawiki:Test Page", source_ref="Test Page")
+        item = _make_item("Test Page")
         assert job.get_item_name(item) == "Test_Page"
 
     def test_special_characters(self, base_wiki_job):
         job, _ = base_wiki_job
-        item = IngestionItem(
-            id="mediawiki:Page/With:Special*Chars?",
-            source_ref="Page/With:Special*Chars?",
-        )
+        item = _make_item("Page/With:Special*Chars?")
         # Colon -> __, slash -> _ so "Page/One" and "Page:One" do not collide
         assert job.get_item_name(item) == "Page_With__Special_Chars"
 
     def test_long_title(self, base_wiki_job):
         job, _ = base_wiki_job
         long_title = "A" * 300
-        item = IngestionItem(id=f"mediawiki:{long_title}", source_ref=long_title)
+        item = _make_item(long_title)
         result = job.get_item_name(item)
         assert len(result) == 255
         assert result.endswith("A")
@@ -195,12 +238,12 @@ class TestGetItemName:
     def test_unicode(self, base_wiki_job):
         job, _ = base_wiki_job
         title = "Página_tëst_中文_🚀"
-        item = IngestionItem(id=f"mediawiki:{title}", source_ref=title)
+        item = _make_item(title)
         assert job.get_item_name(item) == "Página_tëst_中文"
 
     def test_leading_trailing_underscores(self, base_wiki_job):
         job, _ = base_wiki_job
-        item = IngestionItem(id="mediawiki:_Test_Page_", source_ref="_Test_Page_")
+        item = _make_item("_Test_Page_")
         assert job.get_item_name(item) == "Test_Page"
 
 
@@ -210,43 +253,28 @@ class TestGetItemName:
 
 
 class TestGetExtraMetadata:
-    def test_with_cached_url(self, base_wiki_job):
+    def test_with_url(self, base_wiki_job):
         job, _ = base_wiki_job
-        item = IngestionItem(
-            id="mediawiki:Test Page",
-            source_ref="Test Page",
+        item = _make_item(
+            "Test Page",
             last_modified=datetime(2024, 1, 1, 12, 0, 0),
             url="https://example.com/wiki/Test_Page",
             pageid=10,
             namespace=0,
         )
 
-        extra = job.get_extra_metadata(
-            item=item,
-            content="content",
-            metadata={},
-        )
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
 
         assert extra["url"] == "https://example.com/wiki/Test_Page"
         assert extra["title"] == "Test Page"
         assert extra["page_id"] == 10
         assert extra["namespace"] == 0
 
-    def test_without_cached_url(self, base_wiki_job):
+    def test_without_url(self, base_wiki_job):
         job, _ = base_wiki_job
-        item = IngestionItem(
-            id="mediawiki:Test Page",
-            source_ref="Test Page",
-            last_modified=datetime(2024, 1, 1, 12, 0, 0),
-            pageid=10,
-            namespace=0,
-        )
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
 
-        extra = job.get_extra_metadata(
-            item=item,
-            content="content",
-            metadata={},
-        )
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
 
         assert "url" not in extra
         assert extra["page_id"] == 10
@@ -273,9 +301,8 @@ class TestProcessItem:
                 with patch.object(job.metadata_tracker, "delete_previous_embeddings"):
                     job.vector_manager.insert_documents = Mock()
 
-                    item = IngestionItem(
-                        id="mediawiki:P",
-                        source_ref="P",
+                    item = _make_item(
+                        "P",
                         last_modified=datetime(2024, 1, 1),
                         url="https://example.com/wiki/P",
                         pageid=1,
@@ -302,12 +329,7 @@ class TestProcessItem:
                     job.vector_manager.insert_documents = Mock()
                     job._seen_add = Mock(return_value=False)  # duplicate
 
-                    item = IngestionItem(
-                        id="mediawiki:P",
-                        source_ref="P",
-                        last_modified=datetime(2024, 1, 1),
-                        url="https://example.com/wiki/P",
-                    )
+                    item = _make_item("P", last_modified=datetime(2024, 1, 1))
                     result = job.process_item(item)
 
                     assert result == 0

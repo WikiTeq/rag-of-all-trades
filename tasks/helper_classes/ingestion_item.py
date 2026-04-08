@@ -8,9 +8,6 @@ class IngestionItem:
     id: str
     source_ref: Any
     last_modified: datetime | None = None
-    url: str | None = None
-    pageid: int | None = None
-    namespace: int | None = None
     # Mutable field for caching additional metadata during processing
     # Excluded from equality and hashing to keep the dataclass hashable
     _metadata_cache: dict[str, Any] = field(default_factory=dict, init=False, compare=False, hash=False)

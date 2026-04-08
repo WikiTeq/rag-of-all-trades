@@ -1,7 +1,6 @@
 import gc
 import hashlib
 import logging
-import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
@@ -14,20 +13,6 @@ from tasks.helper_classes.metadata_tracker import MetadataTracker
 from tasks.helper_classes.vector_store import VectorStoreManager
 
 logger = logging.getLogger(__name__)
-
-# Keys that process_item sets; get_extra_metadata must not overwrite these.
-RESERVED_METADATA_KEYS = frozenset(
-    {
-        "source",
-        "key",
-        "checksum",
-        "version",
-        "format",
-        "source_name",
-        "file_name",
-        "last_modified",
-    }
-)
 
 
 class IngestionJob(ABC):

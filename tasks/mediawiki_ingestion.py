@@ -48,12 +48,20 @@ class MediaWikiIngestionJob(IngestionJob):
         if not host:
             raise ValueError("host is required and must be non-empty")
 
+        raw = cfg.get("namespaces")
+        if isinstance(raw, str):
+            namespaces = [int(n.strip()) for n in raw.split(",") if n.strip()]
+        elif isinstance(raw, int):
+            namespaces = [raw]
+        else:
+            namespaces = raw
+
         self._reader = MediaWikiReader(
             host=host,
             path=cfg.get("path", "/w/"),
             scheme=cfg.get("scheme", "https"),
             page_limit=cfg.get("page_limit"),
-            namespaces=cfg.get("namespaces"),
+            namespaces=namespaces,
             filter_redirects=cfg.get("filter_redirects", True),
         )
 
@@ -86,35 +94,26 @@ class MediaWikiIngestionJob(IngestionJob):
             title = page_record.title
             yield IngestionItem(
                 id=f"mediawiki:{title}",
-                source_ref=title,
+                source_ref=page_record,
                 last_modified=page_record.last_modified,
-                url=page_record.url,
-                pageid=page_record.pageid,
-                namespace=page_record.namespace,
             )
 
     def get_raw_content(self, item: IngestionItem) -> str:
         """Fetch and return the raw text content of a MediaWiki page.
 
         Args:
-            item: IngestionItem containing the page title in source_ref
+            item: IngestionItem with page_record in source_ref
 
         Returns:
             str: The raw text content of the page, or empty string if fetch failed
         """
-        page_title = item.source_ref
+        page_record = item.source_ref
 
-        logger.debug(f"Fetching content for page: {page_title}")
-        doc = self._reader._page_to_document(
-            title=page_title,
-            url=item.url,
-            last_modified=item.last_modified,
-            pageid=item.pageid,
-            namespace=item.namespace,
-        )
+        logger.debug(f"Fetching content for page: {page_record.title}")
+        doc = self._reader._page_to_document(page_record)
 
         if doc is None:
-            logger.warning(f"Failed to fetch content for page: {page_title}")
+            logger.warning(f"Failed to fetch content for page: {page_record.title}")
             return ""
 
         return doc.text
@@ -126,12 +125,12 @@ class MediaWikiIngestionJob(IngestionJob):
         collide: ':' -> '__', '/' -> '_', then other non-word chars -> '_'.
 
         Args:
-            item: IngestionItem containing the page title in source_ref
+            item: IngestionItem with page_record in source_ref
 
         Returns:
             Sanitized filename safe for filesystem storage (255 char limit)
         """
-        page_title = item.source_ref
+        page_title = item.source_ref.title
 
         # Preserve namespace distinction: : -> __, / -> _, then other bad chars -> _
         safe_name = page_title.replace(":", "__").replace("/", "_")
@@ -150,20 +149,21 @@ class MediaWikiIngestionJob(IngestionJob):
         """Provide MediaWiki-specific metadata for the page.
 
         Args:
-            item: IngestionItem containing page metadata
+            item: IngestionItem with page_record in source_ref
             content: Raw page content (unused)
             metadata: Standard metadata dictionary (do not return keys that overlap with it)
 
         Returns:
             dict: Additional metadata (title, url, page_id, namespace)
         """
+        page_record = item.source_ref
         extra: dict[str, Any] = {
-            "title": item.source_ref,
-            "page_id": item.pageid,
-            "namespace": item.namespace,
+            "title": page_record.title,
+            "page_id": page_record.pageid,
+            "namespace": page_record.namespace,
         }
-        if item.url:
-            extra["url"] = item.url
+        if page_record.url:
+            extra["url"] = page_record.url
         else:
-            logger.warning(f"URL not found for page: {item.source_ref}")
+            logger.warning(f"URL not found for page: {page_record.title}")
         return extra
