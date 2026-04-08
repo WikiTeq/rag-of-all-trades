@@ -41,16 +41,15 @@ You still need PostgreSQL with pgvector and Redis running, plus valid `.env` and
 
 ## Running tests
 
-Tests use the standard library `unittest` module.
-
 ```bash
-python -m unittest
+source .venv/bin/activate
+python -m pytest tests/ -v
 ```
 
 To run a single test file:
 
 ```bash
-python -m unittest tests.test_mediawiki_ingestion
+python -m pytest tests/test_mediawiki_ingestion.py -v
 ```
 
 ## Migrations

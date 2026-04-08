@@ -202,17 +202,16 @@ class TestWebIngestionGetDocumentMetadata(_WebIngestionTestCase):
         item = IngestionItem(id="web:https://example.com/p", source_ref="https://example.com/p")
         item._metadata_cache["url"] = "https://example.com/p"
         item._metadata_cache["title"] = "My Page"
-        metadata = job.get_document_metadata(item, "example_com_p", "abc123", 1, None)
-        self.assertEqual(metadata["url"], "https://example.com/p")
-        self.assertEqual(metadata["title"], "My Page")
-        self.assertEqual(metadata["source"], "web")
+        extra = job.get_extra_metadata(item=item, content="", metadata={})
+        self.assertEqual(extra["url"], "https://example.com/p")
+        self.assertEqual(extra["title"], "My Page")
 
     def test_metadata_missing_cache_uses_empty_string(self):
         job = self._make_job(urls=["https://example.com"])
         item = IngestionItem(id="web:https://example.com/p", source_ref="https://example.com/p")
-        metadata = job.get_document_metadata(item, "example_com_p", "abc123", 1, None)
-        self.assertEqual(metadata["url"], "")
-        self.assertEqual(metadata["title"], "")
+        extra = job.get_extra_metadata(item=item, content="", metadata={})
+        self.assertEqual(extra["url"], "")
+        self.assertEqual(extra["title"], "")
 
 
 if __name__ == "__main__":

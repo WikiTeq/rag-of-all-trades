@@ -196,35 +196,22 @@ class JiraIngestionJob(IngestionJob):
         safe = re.sub(r"[^\w\-]", "_", key)
         return safe[:255]
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: Any,
-    ) -> dict[str, Any]:
-        """Build metadata dict with all required Jira-specific fields."""
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return Jira-specific metadata fields."""
         issue = item.source_ref
         fields = issue.fields
 
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
-
-        # Extend with Jira-specific fields
-        metadata.update(
-            {
-                "url": item._metadata_cache.get("issue_url", ""),
-                "title": getattr(fields, "summary", "") or "",
-                "id": issue.id,
-                "assignee": self._safe_display_name(getattr(fields, "assignee", None)),
-                "reporter": self._safe_display_name(getattr(fields, "reporter", None)),
-                "status": self._safe_get(fields, "status", "name") or "",
-                "labels": list(getattr(fields, "labels", []) or []),
-                "project": self._safe_get(fields, "project", "name") or "",
-                "priority": self._safe_get(fields, "priority", "name") or "",
-            }
-        )
-        return metadata
+        return {
+            "url": item._metadata_cache.get("issue_url", ""),
+            "title": getattr(fields, "summary", "") or "",
+            "id": issue.id,
+            "assignee": self._safe_display_name(getattr(fields, "assignee", None)),
+            "reporter": self._safe_display_name(getattr(fields, "reporter", None)),
+            "status": self._safe_get(fields, "status", "name") or "",
+            "labels": list(getattr(fields, "labels", []) or []),
+            "project": self._safe_get(fields, "project", "name") or "",
+            "priority": self._safe_get(fields, "priority", "name") or "",
+        }
 
     # ------------------------------------------------------------------
     # Internal helpers
