@@ -103,7 +103,7 @@ class PipedriveClient:
             resp.raise_for_status()
             return resp.json()
 
-        return {}
+        raise RuntimeError(f"Pipedrive request to {path} failed after {self._max_retries} retries")
 
     def paginate(self, path: str, params: dict | None = None, limit: int | None = None) -> Iterator[dict]:
         """Yield all records from a paginated Pipedrive endpoint."""
@@ -242,9 +242,14 @@ class PipedriveIngestionJob(IngestionJob):
 
         # Global per-entity limit
         raw_max = cfg.get("max_items")
-        self.max_items: int | None = int(raw_max) if raw_max is not None else None
+        if raw_max is not None:
+            try:
+                self.max_items: int | None = int(raw_max)
+            except (ValueError, TypeError) as exc:
+                raise ValueError(f"Invalid max_items value {raw_max!r}: {exc}") from exc
+        else:
+            self.max_items = None
 
-        self.request_delay = float(cfg.get("request_delay", 0.0))
         self.max_retries = int(cfg.get("max_retries", 3))
 
         # Mail folder filter
@@ -295,6 +300,8 @@ class PipedriveIngestionJob(IngestionJob):
 
                 try:
                     for record in self._client.paginate(endpoint, params=params, limit=self.max_items):
+                        # paginate() enforces limit per folder; this guard accumulates
+                        # across folders (e.g. mails) so the total stays within max_items.
                         if self.max_items is not None and count >= self.max_items:
                             break
                         # Client-side stage filter for multi-stage deal configs
@@ -316,8 +323,11 @@ class PipedriveIngestionJob(IngestionJob):
                         count += 1
                     if self.max_items is not None and count >= self.max_items:
                         break
-                except Exception as exc:
+                except requests.RequestException as exc:
                     logger.error(f"[{self.source_name}] Failed to list {entity_type}: {exc}")
+                except (KeyError, TypeError) as exc:
+                    logger.error(f"[{self.source_name}] Failed to parse {entity_type} response: {exc}")
+                    raise
 
     def get_raw_content(self, item: IngestionItem) -> str:
         """Build Markdown-formatted content for a Pipedrive record."""
@@ -651,11 +661,17 @@ class PipedriveIngestionJob(IngestionJob):
             if recipients:
                 parts.append(f"**To:** {', '.join(recipients)}")
 
-        body = record.get("body_text") or record.get("body_html") or record.get("snippet", "") or ""
-        # Strip basic HTML tags from body_html if body_text is not available
-        if body and record.get("body_html") and not record.get("body_text"):
-            body = re.sub(r"<[^>]+>", " ", body)
-            body = re.sub(r"\s+", " ", body).strip()
+        body_html = record.get("body_html")
+        body_text = record.get("body_text")
+        if body_text:
+            body = body_text
+        elif body_html:
+            h = html2text.HTML2Text()
+            h.ignore_links = True
+            h.ignore_images = True
+            body = h.handle(body_html).strip()
+        else:
+            body = record.get("snippet", "") or ""
         if body.strip():
             parts.append(f"\n{body}")
 
@@ -761,8 +777,11 @@ class PipedriveIngestionJob(IngestionJob):
         try:
             data = self._client.get(f"/notes/{note_id}/comments")
             comments = data.get("data") or []
-        except Exception as exc:
+        except requests.RequestException as exc:
             logger.warning(f"[{self.source_name}] Failed to fetch comments for note {note_id}: {exc}")
+            return ""
+        except (KeyError, TypeError) as exc:
+            logger.warning(f"[{self.source_name}] Failed to parse comments for note {note_id}: {exc}")
             return ""
 
         if not comments:
