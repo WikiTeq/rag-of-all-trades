@@ -224,14 +224,6 @@ class IngestionJob(ABC):
                     logger.warning(f"Skipping empty content for item: {item.id}")
                     return 0
 
-            # Fetch content for the fast path only after dedup checks pass —
-            # avoids the expensive API call when the item is unchanged or already seen.
-            if pre_checksum is not None:
-                raw_content = self.get_raw_content(item)
-                if not raw_content.strip():
-                    logger.warning(f"Skipping empty content for item: {item.id}")
-                    return 0
-
             if latest:
                 logger.info(f"Updating item {item_name} from version {latest.version}")
                 self.metadata_tracker.delete_previous_embeddings(item_name)

@@ -1,5 +1,4 @@
 import hashlib
-import unittest
 from datetime import datetime
 from unittest.mock import Mock, patch
 
@@ -35,7 +34,7 @@ def base_config():
     return {"name": "test-source"}
 
 
-class TestIngestionJob(unittest.TestCase):
+class TestIngestionJob:
     def test_standard_metadata_construction(self, base_config):
         """Standard metadata should be built correctly in process_item."""
         job = DummyIngestionJob(base_config)
@@ -198,7 +197,7 @@ class TestIngestionJob(unittest.TestCase):
     def test_get_item_checksum_default_returns_none(self):
         job = DummyIngestionJob(self.config)
         item = IngestionItem(id="item-1", source_ref="src")
-        self.assertIsNone(job.get_item_checksum(item))
+        assert job.get_item_checksum(item) is None
 
     def test_process_item_skips_when_pre_checksum_matches(self):
         """Pre-checksum matches DB record → get_raw_content is never called."""
@@ -214,7 +213,7 @@ class TestIngestionJob(unittest.TestCase):
         ):
             result = job.process_item(item)
 
-        self.assertEqual(result, 0)
+        assert result == 0
         mock_fetch.assert_not_called()
         job.vector_manager.insert_documents.assert_not_called()
 
@@ -235,7 +234,7 @@ class TestIngestionJob(unittest.TestCase):
         ):
             result = job.process_item(item)
 
-        self.assertEqual(result, 1)
+        assert result == 1
         job.vector_manager.insert_documents.assert_called_once()
         job.metadata_tracker.record_metadata.assert_called_once_with(
             "item-1",
@@ -246,7 +245,7 @@ class TestIngestionJob(unittest.TestCase):
             extra_metadata={"source_name": "test-source"},
         )
         _, kwargs = mock_document.call_args
-        self.assertEqual(kwargs["metadata"]["checksum"], "rev-42")
+        assert kwargs["metadata"]["checksum"] == "rev-42"
 
     def test_process_item_skips_when_seen_add_returns_false(self):
         """_seen_add returns False (duplicate checksum this run) → item skipped, content never fetched."""
@@ -263,7 +262,7 @@ class TestIngestionJob(unittest.TestCase):
         ):
             result = job.process_item(item)
 
-        self.assertEqual(result, 0)
+        assert result == 0
         mock_fetch.assert_not_called()
         job.vector_manager.insert_documents.assert_not_called()
 
