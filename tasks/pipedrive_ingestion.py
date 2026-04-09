@@ -3,7 +3,6 @@ import logging
 import re
 import time
 from collections.abc import Iterator
-from datetime import datetime
 from typing import Any
 
 # Third-party imports
@@ -13,6 +12,7 @@ import requests
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.datetime_utils import parse_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -306,7 +306,7 @@ class PipedriveIngestionJob(IngestionJob):
                         if record_id in seen_ids:
                             continue
                         seen_ids.add(record_id)
-                        updated_at = self._parse_timestamp(
+                        updated_at = parse_timestamp(
                             record.get("update_time") or record.get("updated_at") or record.get("add_time")
                         )
                         yield IngestionItem(
@@ -345,36 +345,26 @@ class PipedriveIngestionJob(IngestionJob):
         safe = re.sub(r"[^\w\-]", "_", f"pipedrive_{entity_type}_{record_id}")
         return safe[:255]
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: Any,
-    ) -> dict[str, Any]:
-        """Build metadata dict with Pipedrive-specific fields."""
+    def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return Pipedrive-specific metadata fields."""
         record = item.source_ref["data"]
         entity_type = item.source_ref["type"]
 
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
-        metadata.update(
-            {
-                "entity_type": entity_type,
-                "pipedrive_id": str(record.get("id", "")),
-                "title": self._record_title(entity_type, record),
-                "url": item._metadata_cache.get("record_url", ""),
-                "add_time": record.get("add_time", "") or "",
-                "update_time": record.get("update_time") or record.get("updated_at", "") or "",
-            }
-        )
+        extra = {
+            "entity_type": entity_type,
+            "pipedrive_id": str(record.get("id", "")),
+            "title": self._record_title(entity_type, record),
+            "url": item._metadata_cache.get("record_url", ""),
+            "add_time": record.get("add_time", "") or "",
+            "update_time": record.get("update_time") or record.get("updated_at", "") or "",
+        }
 
         # Entity-specific metadata extensions
         extender = getattr(self, f"_extend_{entity_type}_metadata", None)
         if extender:
-            metadata.update(extender(record))
+            extra.update(extender(record))
 
-        return metadata
+        return extra
 
     def _build_deals_content(self, record: dict) -> str:
         """Build Markdown content for a Deal record.
@@ -816,13 +806,3 @@ class PipedriveIngestionJob(IngestionJob):
             if val and isinstance(val, str):
                 return val[:120]
         return f"{entity_type}:{record.get('id', '')}"
-
-    @staticmethod
-    def _parse_timestamp(value: str | None) -> datetime | None:
-        """Parse a Pipedrive ISO-8601 timestamp string into a datetime object."""
-        if not value:
-            return None
-        try:
-            return datetime.fromisoformat(value)
-        except (ValueError, TypeError):
-            return None

@@ -4,10 +4,6 @@ from unittest.mock import patch
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.pipedrive_ingestion import PipedriveIngestionJob
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 
 def _make_config(**overrides):
     cfg = {
@@ -36,11 +32,6 @@ def _make_job(config=None, **overrides):
     return job
 
 
-# ---------------------------------------------------------------------------
-# Init / config validation
-# ---------------------------------------------------------------------------
-
-
 class TestPipedriveIngestionInit(unittest.TestCase):
     def test_init_success(self):
         job = _make_job()
@@ -58,13 +49,7 @@ class TestPipedriveIngestionInit(unittest.TestCase):
 
     def test_default_load_types_all(self):
         job = _make_job(load_types=None)
-        # Should load all supported entity types
         self.assertGreater(len(job.load_types), 5)
-
-
-# ---------------------------------------------------------------------------
-# list_items
-# ---------------------------------------------------------------------------
 
 
 class TestPipedriveListItems(unittest.TestCase):
@@ -103,11 +88,6 @@ class TestPipedriveListItems(unittest.TestCase):
 
         items = list(job.list_items())
         self.assertLessEqual(len(items), 2)
-
-
-# ---------------------------------------------------------------------------
-# get_raw_content
-# ---------------------------------------------------------------------------
 
 
 class TestPipedriveGetRawContent(unittest.TestCase):
@@ -156,11 +136,6 @@ class TestPipedriveGetRawContent(unittest.TestCase):
         self.assertGreater(len(content), 0)
 
 
-# ---------------------------------------------------------------------------
-# get_item_name
-# ---------------------------------------------------------------------------
-
-
 class TestPipedriveGetItemName(unittest.TestCase):
     def test_item_name_format(self):
         job = _make_job()
@@ -175,22 +150,16 @@ class TestPipedriveGetItemName(unittest.TestCase):
         self.assertLessEqual(len(name), 255)
 
 
-# ---------------------------------------------------------------------------
-# get_document_metadata
-# ---------------------------------------------------------------------------
-
-
 class TestPipedriveGetDocumentMetadata(unittest.TestCase):
-    def test_metadata_includes_source_type(self):
+    def test_metadata_includes_pipedrive_id(self):
         job = _make_job()
         item = IngestionItem(
             id="pipedrive:deals:1",
             source_ref={"type": "deals", "data": {"id": 1, "title": "Deal"}},
             last_modified=None,
         )
-        item_name = job.get_item_name(item)
-        meta = job.get_document_metadata(item, item_name, "abc123", "1", None)
-        self.assertEqual(meta.get("source"), "pipedrive")
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta.get("pipedrive_id"), "1")
 
     def test_metadata_includes_entity_type(self):
         job = _make_job()
@@ -199,8 +168,7 @@ class TestPipedriveGetDocumentMetadata(unittest.TestCase):
             source_ref={"type": "persons", "data": {"id": 7, "name": "Alice"}},
             last_modified=None,
         )
-        item_name = job.get_item_name(item)
-        meta = job.get_document_metadata(item, item_name, "xyz", "1", None)
+        meta = job.get_extra_metadata(item, "", {})
         self.assertEqual(meta.get("entity_type"), "persons")
 
 
