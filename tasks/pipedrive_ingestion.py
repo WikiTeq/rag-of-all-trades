@@ -49,13 +49,12 @@ class PipedriveClient:
     """Thin wrapper around the Pipedrive REST API v1.
 
     Handles authentication (api_token query param), pagination
-    (start / more_items_in_collection), retries with backoff on
-    429 / 5xx responses, and optional per-request delay.
+    (start / more_items_in_collection), and retries with backoff on
+    429 / 5xx responses.
     """
 
-    def __init__(self, api_token: str, request_delay: float, max_retries: int):
+    def __init__(self, api_token: str, max_retries: int):
         self._token = api_token
-        self._delay = request_delay
         self._max_retries = max_retries
         self._session = requests.Session()
         self._session.params = {"api_token": api_token}  # type: ignore[assignment]
@@ -136,9 +135,6 @@ class PipedriveClient:
 
             start = pagination.get("next_start", start + len(records))
 
-            if self._delay > 0:
-                time.sleep(self._delay)
-
     def resolve_user(self, user_id: int | None) -> str:
         """Resolve a user ID to a display name, with caching."""
         if user_id is None:
@@ -205,7 +201,6 @@ class PipedriveIngestionJob(IngestionJob):
         - config.api_token: Pipedrive API token (required)
         - config.load_types: list of entity types to ingest (optional, default: all)
         - config.max_items: global per-entity fetch limit (optional, default: unlimited)
-        - config.request_delay: seconds between API requests (optional, default: 0)
         - config.max_retries: retry count for failed/rate-limited requests (optional, default: 3)
         - config.filter_mail_folders: mail folders to include (optional, default: [inbox])
         - config.filter_activities_updated_since: ISO date string (optional)
@@ -269,7 +264,6 @@ class PipedriveIngestionJob(IngestionJob):
 
         self._client = PipedriveClient(
             api_token=self.api_token,
-            request_delay=self.request_delay,
             max_retries=self.max_retries,
         )
 
