@@ -194,15 +194,15 @@ class TestIngestionJob:
         assert kwargs["metadata"]["version"] == 3
         assert kwargs["metadata"]["source"] == "dummy"
 
-    def test_get_item_checksum_default_returns_none(self):
-        job = DummyIngestionJob(self.config)
+    def test_get_item_checksum_default_returns_none(self, base_config):
+        job = DummyIngestionJob(base_config)
         item = IngestionItem(id="item-1", source_ref="src")
         assert job.get_item_checksum(item) is None
 
-    def test_process_item_skips_when_pre_checksum_matches(self):
+    def test_process_item_skips_when_pre_checksum_matches(self, base_config):
         """Pre-checksum matches DB record → get_raw_content is never called."""
         item = IngestionItem(id="item-1", source_ref="src")
-        job = DummyIngestionJob(self.config, items=[item], content_by_id={"item-1": "content"})
+        job = DummyIngestionJob(base_config, items=[item], content_by_id={"item-1": "content"})
         job.metadata_tracker = Mock()
         job.vector_manager = Mock()
         job.metadata_tracker.get_latest_record.return_value = Mock(checksum="rev-42", version=1)
@@ -218,12 +218,12 @@ class TestIngestionJob:
         job.vector_manager.insert_documents.assert_not_called()
 
     @patch("tasks.base.Document")
-    def test_process_item_stores_when_pre_checksum_differs(self, mock_document):
+    def test_process_item_stores_when_pre_checksum_differs(self, mock_document, base_config):
         """Pre-checksum differs from DB → content fetched, stored checksum is pre-checksum."""
         content = "new content"
         last_modified = datetime(2024, 6, 1)
         item = IngestionItem(id="item-1", source_ref="src", last_modified=last_modified)
-        job = DummyIngestionJob(self.config, items=[item], content_by_id={"item-1": content})
+        job = DummyIngestionJob(base_config, items=[item], content_by_id={"item-1": content})
         job.metadata_tracker = Mock()
         job.vector_manager = Mock()
         job.metadata_tracker.get_latest_record.return_value = Mock(checksum="rev-41", version=1)
@@ -247,10 +247,10 @@ class TestIngestionJob:
         _, kwargs = mock_document.call_args
         assert kwargs["metadata"]["checksum"] == "rev-42"
 
-    def test_process_item_skips_when_seen_add_returns_false(self):
+    def test_process_item_skips_when_seen_add_returns_false(self, base_config):
         """_seen_add returns False (duplicate checksum this run) → item skipped, content never fetched."""
         item = IngestionItem(id="item-1", source_ref="src")
-        job = DummyIngestionJob(self.config, items=[item], content_by_id={"item-1": "content"})
+        job = DummyIngestionJob(base_config, items=[item], content_by_id={"item-1": "content"})
         job.metadata_tracker = Mock()
         job.vector_manager = Mock()
         job.metadata_tracker.get_latest_record.return_value = Mock(checksum="rev-old", version=1)
@@ -266,7 +266,7 @@ class TestIngestionJob:
         mock_fetch.assert_not_called()
         job.vector_manager.insert_documents.assert_not_called()
 
-    def test_run_reports_totals(self):
+    def test_run_reports_totals(self, base_config):
         item1 = IngestionItem(id="item-1", source_ref="src")
         item2 = IngestionItem(id="item-2", source_ref="src")
         job = DummyIngestionJob(base_config, items=[item1, item2])
