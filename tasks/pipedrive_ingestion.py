@@ -30,7 +30,7 @@ _ENTITY_ENDPOINTS: dict[str, str] = {
     "projects": "/projects",
     "leads": "/leads",
     "tasks": "/tasks",
-    "mails": "/mailbox/mailMessages",
+    "mails": "/mailbox/mailThreads",
 }
 
 # Entity types that support the Pipedrive filter_id API param
@@ -276,21 +276,20 @@ class PipedriveIngestionJob(IngestionJob):
             endpoint = _ENTITY_ENDPOINTS[entity_type]
             base_params = self._build_list_params(entity_type)
 
-            # For mails, the Pipedrive API only accepts one folder_id per request;
+            # For mails, the API accepts one folder per request (string param);
             # iterate over each configured folder separately.
             if entity_type == "mails" and self.filter_mail_folders:
-                _folder_map = {"inbox": 1, "drafts": 2, "sent": 3, "archive": 4, "spam": 5, "trash": 6}
-                folder_ids = [str(_folder_map[f]) for f in self.filter_mail_folders if f in _folder_map]
+                folders = self.filter_mail_folders
             else:
-                folder_ids = [None]  # sentinel: run once without a folder_id override
+                folders = [None]  # sentinel: run once without a folder override
 
             seen_ids: set = set()
             count = 0
 
-            for folder_id in folder_ids:
+            for folder in folders:
                 params = dict(base_params)
-                if folder_id is not None:
-                    params["folder_id"] = folder_id
+                if folder is not None:
+                    params["folder"] = folder
 
                 try:
                     for record in self._client.paginate(endpoint, params=params, limit=self.max_items):
@@ -752,7 +751,7 @@ class PipedriveIngestionJob(IngestionJob):
                 if len(self.filter_deals_stages_ids) == 1:
                     params["stage_id"] = self.filter_deals_stages_ids[0]
 
-        # folder_id for mails is injected per-folder in list_items.
+        # folder param for mails is injected per-folder in list_items.
 
         return params
 
