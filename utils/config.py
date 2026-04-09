@@ -28,7 +28,9 @@ class EnvSettings(BaseSettings):
     @field_validator("MCP_API_KEY", mode="before")
     @classmethod
     def strip_mcp_api_key(cls, v: str) -> str:
-        return v.strip() if isinstance(v, str) else v
+        if not isinstance(v, str):
+            raise ValueError("MCP_API_KEY must be a string")
+        return v.strip()
 
     CELERY_CONCURRENCY: int = 2  # Default fallback
     MAX_TASK_CHILD: int = 50
@@ -40,7 +42,7 @@ class EnvSettings(BaseSettings):
 
     CORS_ORIGINS: list[str] = []
 
-    ENABLE_RATE_LIMIT: bool = True
+    ENABLE_RATE_LIMIT: bool = False
     CHUNK_RATE_LIMIT: str = "30/minute"
     REPHRASE_RATE_LIMIT: str = "20/minute"
 

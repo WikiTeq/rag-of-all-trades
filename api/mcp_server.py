@@ -8,6 +8,8 @@ from fastmcp.server.auth import StaticTokenVerifier
 from llama_index.core.llms import ChatMessage, MessageRole
 
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
+from api.v1.chunk_retrieval.schema import QueryRequest as ChunkQueryRequest
+from api.v1.rephrase_retrieval.schema import QueryRequest as RephraseQueryRequest
 from utils.api import format_chunks
 from utils.llm_embedding import llm
 
@@ -108,27 +110,23 @@ def create_mcp_server(app: FastAPI, api_key: str) -> FastMCP:
         name="retrieve_chunks",
         description="Retrieve top-k chunks from vector store with optional metadata filters.",
     )
-    async def retrieve_chunks(
-        query: str,
-        top_k: int = 20,
-        metadata_filters: dict[str, Any] | None = None,
-    ) -> dict[str, Any]:
+    async def retrieve_chunks(payload: ChunkQueryRequest) -> dict[str, Any]:
         return await retrieve_chunks_response(
             rag_engine=get_rag_engine(),
-            query=query,
-            top_k=top_k,
-            metadata_filters=metadata_filters,
+            query=payload.query,
+            top_k=payload.top_k,
+            metadata_filters=payload.metadata_filters,
         )
 
     @mcp.tool(
         name="rephrase_chunks",
         description="Generate concise answer from top-k chunks using configured LLM.",
     )
-    async def rephrase_chunks(query: str, top_k: int = 20) -> dict[str, Any]:
+    async def rephrase_chunks(payload: RephraseQueryRequest) -> dict[str, Any]:
         return await rephrase_chunks_response(
             rag_engine=get_rag_engine(),
-            query=query,
-            top_k=top_k,
+            query=payload.query,
+            top_k=payload.top_k,
         )
 
     return mcp
