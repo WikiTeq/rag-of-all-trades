@@ -127,7 +127,7 @@ class TestIngestionJob:
 
     def test_process_item_skips_unchanged_content(self, base_config):
         content = "same content"
-        checksum = hashlib.md5(content.encode("utf-8")).hexdigest()
+        checksum = hashlib.md5(content.encode("utf-8"), usedforsecurity=False).hexdigest()
         item = IngestionItem(id="item-1", source_ref="src")
         job = DummyIngestionJob(
             base_config,
@@ -153,7 +153,7 @@ class TestIngestionJob:
     @patch("tasks.base.Document")
     def test_process_item_updates_version_and_records_metadata(self, mock_document, base_config):
         content = "updated content"
-        checksum = hashlib.md5(content.encode("utf-8")).hexdigest()
+        checksum = hashlib.md5(content.encode("utf-8"), usedforsecurity=False).hexdigest()
         last_modified = datetime(2024, 1, 2, 3, 4, 5)
         item = IngestionItem(
             id="item-1",
@@ -193,6 +193,78 @@ class TestIngestionJob:
         assert kwargs["metadata"]["checksum"] == checksum
         assert kwargs["metadata"]["version"] == 3
         assert kwargs["metadata"]["source"] == "dummy"
+
+    def test_get_item_checksum_default_returns_none(self, base_config):
+        job = DummyIngestionJob(base_config)
+        item = IngestionItem(id="item-1", source_ref="src")
+        assert job.get_item_checksum(item) is None
+
+    def test_process_item_skips_when_pre_checksum_matches(self, base_config):
+        """Pre-checksum matches DB record → get_raw_content is never called."""
+        item = IngestionItem(id="item-1", source_ref="src")
+        job = DummyIngestionJob(base_config, items=[item], content_by_id={"item-1": "content"})
+        job.metadata_tracker = Mock()
+        job.vector_manager = Mock()
+        job.metadata_tracker.get_latest_record.return_value = Mock(checksum="rev-42", version=1)
+
+        with (
+            patch.object(job, "get_item_checksum", return_value="rev-42"),
+            patch.object(job, "get_raw_content") as mock_fetch,
+        ):
+            result = job.process_item(item)
+
+        assert result == 0
+        mock_fetch.assert_not_called()
+        job.vector_manager.insert_documents.assert_not_called()
+
+    @patch("tasks.base.Document")
+    def test_process_item_stores_when_pre_checksum_differs(self, mock_document, base_config):
+        """Pre-checksum differs from DB → content fetched, stored checksum is pre-checksum."""
+        content = "new content"
+        last_modified = datetime(2024, 6, 1)
+        item = IngestionItem(id="item-1", source_ref="src", last_modified=last_modified)
+        job = DummyIngestionJob(base_config, items=[item], content_by_id={"item-1": content})
+        job.metadata_tracker = Mock()
+        job.vector_manager = Mock()
+        job.metadata_tracker.get_latest_record.return_value = Mock(checksum="rev-41", version=1)
+
+        with (
+            patch.object(job, "get_item_checksum", return_value="rev-42"),
+            patch.object(job, "_seen_add", return_value=True),
+        ):
+            result = job.process_item(item)
+
+        assert result == 1
+        job.vector_manager.insert_documents.assert_called_once()
+        job.metadata_tracker.record_metadata.assert_called_once_with(
+            "item-1",
+            "rev-42",  # stored checksum is the pre-computed one, not MD5
+            2,
+            1,
+            last_modified,
+            extra_metadata={"source_name": "test-source"},
+        )
+        _, kwargs = mock_document.call_args
+        assert kwargs["metadata"]["checksum"] == "rev-42"
+
+    def test_process_item_skips_when_seen_add_returns_false(self, base_config):
+        """_seen_add returns False (duplicate checksum this run) → item skipped, content never fetched."""
+        item = IngestionItem(id="item-1", source_ref="src")
+        job = DummyIngestionJob(base_config, items=[item], content_by_id={"item-1": "content"})
+        job.metadata_tracker = Mock()
+        job.vector_manager = Mock()
+        job.metadata_tracker.get_latest_record.return_value = Mock(checksum="rev-old", version=1)
+
+        with (
+            patch.object(job, "get_item_checksum", return_value="rev-42"),
+            patch.object(job, "_seen_add", return_value=False),
+            patch.object(job, "get_raw_content") as mock_fetch,
+        ):
+            result = job.process_item(item)
+
+        assert result == 0
+        mock_fetch.assert_not_called()
+        job.vector_manager.insert_documents.assert_not_called()
 
     def test_run_reports_totals(self, base_config):
         item1 = IngestionItem(id="item-1", source_ref="src")
