@@ -43,6 +43,10 @@ class EnvSettings(BaseSettings):
     ORT_DISABLE_GPU: int = 1
     ORT_DYLD_DISABLE_GPU: int = 1
 
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_HOST: str = "http://localhost:3000"
+
     CORS_ORIGINS: list[str] = []
 
     ENABLE_RATE_LIMIT: bool = False
@@ -146,6 +150,15 @@ class Settings:
                     {"type": src_type, "name": name, "config": config, "schedule": schedule_seconds, "enabled": enabled}
                 )
         return sources
+
+    @property
+    def OBSERVABILITY(self) -> dict:
+        return {
+            "enabled": self.yaml.get("observability", {}).get("enabled", False),
+            "public_key": self.env.LANGFUSE_PUBLIC_KEY,
+            "secret_key": self.env.LANGFUSE_SECRET_KEY,
+            "host": self.env.LANGFUSE_HOST,
+        }
 
     @property
     def LLM(self):

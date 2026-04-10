@@ -160,6 +160,9 @@ sources:
   #    schedules: "${IMAP1_SCHEDULES}"
   #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
+# observability:
+#   enabled: false   # set to true to enable Langfuse tracing
+
 embedding:
   provider: openrouter
   model_config: sentence-transformers/all-mpnet-base-v2
