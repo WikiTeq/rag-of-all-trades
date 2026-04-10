@@ -40,8 +40,8 @@ class TestSetupObservability(unittest.TestCase):
 
         mock_set_handler.assert_called_once_with(
             "langfuse",
-            public_key="pk-lf-test",
-            secret_key="sk-lf-test",
+            public_key=config["public_key"],
+            secret_key=config["secret_key"],
             host="https://cloud.langfuse.com",
         )
         self.assertIsNotNone(Settings.callback_manager)
