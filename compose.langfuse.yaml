@@ -1,0 +1,42 @@
+# compose.langfuse.yaml
+# Extends compose.yaml to include a self-hosted Langfuse instance.
+# Usage: docker compose -f compose.yml -f compose.langfuse.yaml up -d
+#
+# After startup, open http://localhost:3000 to access the Langfuse UI.
+# Create a project and copy the public/secret keys into your .env file.
+
+services:
+  langfuse-server:
+    image: langfuse/langfuse:2
+    depends_on:
+      langfuse-db:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${LANGFUSE_DB_USER:-langfuse}:${LANGFUSE_DB_PASSWORD:-langfuse}@langfuse-db/${LANGFUSE_DB_NAME:-langfuse}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-changeme}
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
+      SALT: ${LANGFUSE_SALT:-changeme}
+    restart: unless-stopped
+
+  langfuse-db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ${LANGFUSE_DB_USER:-langfuse}
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD:-langfuse}
+      POSTGRES_DB: ${LANGFUSE_DB_NAME:-langfuse}
+    volumes:
+      - langfuse_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${LANGFUSE_DB_USER:-langfuse}"]
+      interval: 5s
+      retries: 10
+      timeout: 5s
+      start_period: 5s
+    restart: unless-stopped
+
+volumes:
+  langfuse_db_data:
