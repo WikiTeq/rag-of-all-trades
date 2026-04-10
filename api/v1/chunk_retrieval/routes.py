@@ -3,6 +3,7 @@ from functools import wraps
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from utils.api import format_chunks
 from utils.config import settings
 
 from .modules import RAGQueryEngine
@@ -46,10 +47,6 @@ async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RA
     Retrieve top-k chunks from vector store without LLM answer.
     """
     try:
-        # Validate query
-        if not payload.query or not payload.query.strip():
-            raise HTTPException(status_code=400, detail="Query cannot be empty")
-
         # Retrieve top-k nodes directly from vector store
         metadata_filters = payload.metadata_filters or {}
 
@@ -57,8 +54,7 @@ async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RA
             query=payload.query, top_k=payload.top_k, metadata=metadata_filters
         )
 
-        # Format chunks as list of strings with optional scores
-        chunks: list[str] = [f"Score: {n.score:.4f} | Text: {n.node.get_text()}" for n in nodes_with_score]
+        chunks = format_chunks(nodes_with_score)
 
         # Build source references from retrieved nodes
         source_refs = RAGQueryEngine.build_references(nodes_with_score)

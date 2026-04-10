@@ -8,7 +8,13 @@ class QueryRequest(BaseModel):
     top_k: int = 20
     metadata_filters: dict[str, Any] | None = None
 
-    # Validator for top_k
+    @field_validator("query")
+    @classmethod
+    def validate_query(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("Query cannot be empty")
+        return value
+
     @field_validator("top_k")
     @classmethod
     def validate_top_k(cls, value: int) -> int:
