@@ -6,6 +6,7 @@ from celery_singleton import Singleton
 
 from utils.config import settings
 from utils.db import engine
+from utils.observability import setup_observability
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -41,6 +42,7 @@ celery_app.conf.beat_schedule = {}
 @worker_process_init.connect
 def init_worker(**kwargs):
     engine.dispose()
+    setup_observability(settings.OBSERVABILITY)
 
 
 @worker_process_shutdown.connect
