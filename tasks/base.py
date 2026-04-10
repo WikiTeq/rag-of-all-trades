@@ -251,7 +251,7 @@ class IngestionJob(ABC):
 
             doc = Document(text=raw_content, metadata=metadata)
 
-            self.vector_manager.insert_documents([doc])
+            self.vector_manager.insert_documents([doc], source_name=self.source_name)
 
             self.metadata_tracker.record_metadata(
                 item_name,
