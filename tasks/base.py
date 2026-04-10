@@ -1,6 +1,7 @@
 import gc
 import hashlib
 import logging
+import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
@@ -294,6 +295,8 @@ class IngestionJob(ABC):
                     continue
 
                 total += count
+                if self.request_delay > 0:
+                    time.sleep(self.request_delay)
 
             result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
             logger.info(result_msg)
