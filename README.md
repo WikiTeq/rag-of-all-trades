@@ -102,6 +102,37 @@ You can use the [MCP Inspector](https://github.com/modelcontextprotocol/inspecto
 ```
 
 This starts the inspector in Docker and prints a URL with pre-filled connection settings.
+## Observability (Langfuse)
+
+ROAT supports optional tracing via [Langfuse](https://langfuse.com). When enabled, every query and ingestion job produces full traces in the Langfuse dashboard — retrieved chunks, LLM calls, embeddings, and latencies.
+
+### Enabling Langfuse
+
+**1.** Set `observability.enabled: true` in `config.yaml`:
+
+```yaml
+observability:
+  enabled: true
+```
+
+**2.** Add your Langfuse credentials to `.env`:
+
+```env
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=https://cloud.langfuse.com  # or your self-hosted URL
+```
+
+### Self-hosted Langfuse
+
+To run a local Langfuse instance alongside ROAT, use the provided Compose override:
+
+```bash
+docker compose -f compose.yml -f compose.langfuse.yaml up -d
+```
+
+Then open `http://localhost:3000`, create a project, and copy the public/secret keys into `.env`.
+Set `LANGFUSE_HOST=http://langfuse-server:3000` (the Docker service hostname) so the API and worker containers can reach it.
 
 ## Connectors
 
