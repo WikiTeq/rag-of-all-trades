@@ -54,12 +54,11 @@ async def test_retrieve_chunks_response_returns_expected_shape():
 
 
 @pytest.mark.asyncio
-async def test_retrieve_chunks_response_validates_inputs():
+async def test_retrieve_chunks_response_calls_engine():
     rag_engine = Mock()
-    with pytest.raises(ValueError):
-        await mcp_server.retrieve_chunks_response(rag_engine=rag_engine, query="", top_k=5)
-    with pytest.raises(ValueError):
-        await mcp_server.retrieve_chunks_response(rag_engine=rag_engine, query="ok", top_k=0)
+    rag_engine.retrieve_top_k.return_value = []
+    result = await mcp_server.retrieve_chunks_response(rag_engine=rag_engine, query="test", top_k=5)
+    assert result == {"references": [], "raw": []}
 
 
 @pytest.mark.asyncio

@@ -16,24 +16,12 @@ from utils.llm_embedding import llm
 logger = logging.getLogger(__name__)
 
 
-def _validate_query(query: str) -> None:
-    if not query or not query.strip():
-        raise ValueError("Query cannot be empty")
-
-
-def _validate_top_k(top_k: int) -> None:
-    if top_k < 1 or top_k > 100:
-        raise ValueError("top_k must be between 1 and 100")
-
-
 async def retrieve_chunks_response(
     rag_engine: RAGQueryEngine,
     query: str,
     top_k: int = 20,
     metadata_filters: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    _validate_query(query)
-    _validate_top_k(top_k)
     logger.info("MCP retrieve_chunks: top_k=%d has_filters=%s", top_k, bool(metadata_filters))
     nodes_with_score = await asyncio.to_thread(
         rag_engine.retrieve_top_k,
@@ -53,8 +41,6 @@ async def rephrase_chunks_response(
     query: str,
     top_k: int = 20,
 ) -> dict[str, Any]:
-    _validate_query(query)
-    _validate_top_k(top_k)
     if llm is None:
         raise RuntimeError("LLM is not configured. Please configure the LLM provider, API key, and model name.")
 
@@ -76,7 +62,7 @@ async def rephrase_chunks_response(
         ),
         ChatMessage(
             role=MessageRole.USER,
-            content=f"Query: {query}\n\nContent:\n\n{chunks_text}",
+            content=f"Original Query: {query}\n\nContent:\n\n{chunks_text}",
         ),
     ]
     llm_response = await asyncio.to_thread(llm.chat, messages)

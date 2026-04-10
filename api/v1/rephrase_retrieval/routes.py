@@ -55,10 +55,6 @@ async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RA
     Rephrase top-k chunks using LLM.
     """
     try:
-        # Validate query
-        if not payload.query or not payload.query.strip():
-            raise HTTPException(status_code=400, detail="Query cannot be empty")
-
         nodes_with_score = await asyncio.to_thread(rag_engine.retrieve_top_k, query=payload.query, top_k=payload.top_k)
 
         if not nodes_with_score:
@@ -72,7 +68,7 @@ async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RA
             ),
             ChatMessage(
                 role=MessageRole.USER,
-                content=f"Query: {payload.query}\n\nContent:\n\n{chunks_text}",
+                content=f"Original Query: {payload.query}\n\nContent:\n\n{chunks_text}",
             ),
         ]
         llm_response = await asyncio.to_thread(llm.chat, messages)

@@ -47,10 +47,6 @@ async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RA
     Retrieve top-k chunks from vector store without LLM answer.
     """
     try:
-        # Validate query
-        if not payload.query or not payload.query.strip():
-            raise HTTPException(status_code=400, detail="Query cannot be empty")
-
         # Retrieve top-k nodes directly from vector store
         metadata_filters = payload.metadata_filters or {}
 
