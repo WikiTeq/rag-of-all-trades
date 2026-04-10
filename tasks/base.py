@@ -293,8 +293,9 @@ class IngestionJob(ABC):
                 if count == 0:
                     skipped += 1
                     continue
+
                 total += count
-                if self.request_delay:
+                if self.request_delay > 0:
                     time.sleep(self.request_delay)
 
             result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
