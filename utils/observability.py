@@ -23,19 +23,25 @@ def setup_observability(config: dict) -> None:
         logger.info("Observability disabled")
         return
 
-    os.environ["LANGFUSE_PUBLIC_KEY"] = config["public_key"]
-    os.environ["LANGFUSE_SECRET_KEY"] = config["secret_key"]
-    os.environ["LANGFUSE_HOST"] = config["host"]
+    public_key = config.get("public_key", "")
+    secret_key = config.get("secret_key", "")
+    host = config.get("host", "")
+    if not public_key or not secret_key or not host:
+        raise ValueError("Observability enabled but Langfuse credentials/host are missing")
+
+    os.environ["LANGFUSE_PUBLIC_KEY"] = public_key
+    os.environ["LANGFUSE_SECRET_KEY"] = secret_key
+    os.environ["LANGFUSE_HOST"] = host
 
     set_global_handler(
         "langfuse",
-        public_key=config["public_key"],
-        secret_key=config["secret_key"],
-        host=config["host"],
+        public_key=public_key,
+        secret_key=secret_key,
+        host=host,
     )
     # Reset the callback manager so that the global handler set above is picked
     # up by any LlamaIndex component that was already initialized before this
     # function was called (e.g. LLM/embed model set in utils/llm_embedding.py).
     Settings.callback_manager = CallbackManager()
 
-    logger.info("Langfuse observability enabled, host=%s", config["host"])
+    logger.info("Langfuse observability enabled, host=%s", host)

@@ -11,9 +11,16 @@ from utils.observability import setup_observability
 class TestSetupObservability(unittest.TestCase):
     def setUp(self):
         # Ensure a clean LlamaIndex global handler state before each test
-
         li_core.global_handler = None
         Settings._callback_manager = None
+        for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"):
+            os.environ.pop(key, None)
+
+    def tearDown(self):
+        li_core.global_handler = None
+        Settings._callback_manager = None
+        for key in ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST"):
+            os.environ.pop(key, None)
 
     @patch("utils.observability.set_global_handler")
     def test_setup_observability_disabled(self, mock_set_handler):
@@ -56,6 +63,13 @@ class TestSetupObservability(unittest.TestCase):
     @patch("utils.observability.set_global_handler")
     def test_setup_observability_missing_enabled_key(self, mock_set_handler):
         setup_observability({})
+
+        mock_set_handler.assert_not_called()
+
+    @patch("utils.observability.set_global_handler")
+    def test_setup_observability_raises_on_missing_credentials(self, mock_set_handler):
+        with self.assertRaises(ValueError):
+            setup_observability({"enabled": True, "public_key": "", "secret_key": "", "host": ""})
 
         mock_set_handler.assert_not_called()
 
