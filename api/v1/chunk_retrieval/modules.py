@@ -1,3 +1,5 @@
+from contextlib import nullcontext
+
 from llama_index.core import Settings, VectorStoreIndex
 from llama_index.core.schema import NodeWithScore
 from llama_index.core.vector_stores.types import (
@@ -10,6 +12,7 @@ from llama_index.core.vector_stores.types import (
 
 from api.v1.chunk_retrieval.schema import MetadataFilterItem
 from utils.llm_embedding import embed_model, llm
+from utils.observability import get_instrumentor
 
 Settings.llm = llm
 Settings.embed_model = embed_model
@@ -91,5 +94,8 @@ class RAGQueryEngine:
             filters=metadata_filters,
         )
 
-        nodes = retriever.retrieve(query)
+        instrumentor = get_instrumentor()
+        ctx = instrumentor.observe(trace_name="Query", update_parent=True) if instrumentor else nullcontext()
+        with ctx:
+            nodes = retriever.retrieve(query)
         return nodes

@@ -1,7 +1,8 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
-from utils.observability import setup_observability
+import utils.observability
+from utils.observability import get_instrumentor, setup_observability
 
 
 class TestSetupObservability(unittest.TestCase):
@@ -16,19 +17,9 @@ class TestSetupObservability(unittest.TestCase):
         mock_instrumentor = MagicMock()
         mock_instrumentor_cls.return_value = mock_instrumentor
 
-        config = {
-            "enabled": True,
-            "public_key": "pk-lf-test",
-            "secret_key": "sk-lf-test",
-            "host": "https://cloud.langfuse.com",
-        }
-        setup_observability(config)
+        setup_observability({"enabled": True})
 
-        mock_instrumentor_cls.assert_called_once_with(
-            public_key="pk-lf-test",
-            secret_key="sk-lf-test",
-            host="https://cloud.langfuse.com",
-        )
+        mock_instrumentor_cls.assert_called_once_with()
         mock_instrumentor.start.assert_called_once()
 
     @patch("utils.observability.LlamaIndexInstrumentor")
@@ -37,12 +28,20 @@ class TestSetupObservability(unittest.TestCase):
 
         mock_instrumentor_cls.assert_not_called()
 
-    @patch("utils.observability.LlamaIndexInstrumentor")
-    def test_setup_observability_raises_on_missing_credentials(self, mock_instrumentor_cls):
-        with self.assertRaises(ValueError):
-            setup_observability({"enabled": True, "public_key": "", "secret_key": "", "host": ""})
+    def test_get_instrumentor_returns_none_when_disabled(self):
+        utils.observability._instrumentor = None
+        self.assertIsNone(get_instrumentor())
 
-        mock_instrumentor_cls.assert_not_called()
+    @patch("utils.observability.LlamaIndexInstrumentor")
+    def test_get_instrumentor_returns_instance_when_enabled(self, mock_instrumentor_cls):
+        mock_instrumentor = MagicMock()
+        mock_instrumentor_cls.return_value = mock_instrumentor
+        utils.observability._instrumentor = None
+
+        setup_observability({"enabled": True})
+
+        self.assertIs(get_instrumentor(), mock_instrumentor)
+        utils.observability._instrumentor = None
 
 
 if __name__ == "__main__":
