@@ -38,9 +38,8 @@ class VectorStoreManager:
         self.storage_context = StorageContext.from_defaults(vector_store=self.vector_store)
         self._initialized = True
 
-    def insert_documents(self, docs: list, source_name: str = "unknown"):
+    def insert_documents(self, docs: list):
         self._init_if_needed()
-        from llama_index.core import Settings as LlamaSettings
         from llama_index.core import VectorStoreIndex
         from llama_index.core.ingestion import IngestionPipeline
         from llama_index.core.node_parser import SentenceSplitter
@@ -52,8 +51,6 @@ class VectorStoreManager:
             chunk_overlap=vector_store["chunk_overlap"],
         )
 
-        embed_model.callback_manager = LlamaSettings.callback_manager
-
         pipeline = IngestionPipeline(
             transformations=[
                 splitter,
@@ -61,9 +58,12 @@ class VectorStoreManager:
             ]
         )
 
-        with LlamaSettings.callback_manager.as_trace(f"ingestion_{source_name}"):
-            nodes = pipeline.run(documents=docs)
-            VectorStoreIndex(nodes=nodes, embed_model=embed_model, storage_context=self.storage_context)
+        nodes = pipeline.run(documents=docs)
+        VectorStoreIndex(
+            nodes=nodes,
+            embed_model=embed_model,
+            storage_context=self.storage_context,
+        )
 
         try:
             del docs

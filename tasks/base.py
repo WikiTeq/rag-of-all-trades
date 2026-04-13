@@ -5,6 +5,7 @@ import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
@@ -13,6 +14,7 @@ from llama_index.core import Document
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.helper_classes.metadata_tracker import MetadataTracker
 from tasks.helper_classes.vector_store import VectorStoreManager
+from utils.observability import get_instrumentor
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +253,7 @@ class IngestionJob(ABC):
 
             doc = Document(text=raw_content, metadata=metadata)
 
-            self.vector_manager.insert_documents([doc], source_name=self.source_name)
+            self.vector_manager.insert_documents([doc])
 
             self.metadata_tracker.record_metadata(
                 item_name,
@@ -282,27 +284,35 @@ class IngestionJob(ABC):
         Returns:
             str: Summary message indicating total items processed, skipped, and any errors
         """
-        total = 0
-        skipped = 0
+        instrumentor = get_instrumentor()
+        ctx = (
+            instrumentor.observe(trace_name=f"Ingestion: {self.source_name}", update_parent=True)
+            if instrumentor is not None
+            else nullcontext()
+        )
 
-        logger.info(f"[{self.source_name}] Starting ingestion job")
+        with ctx:
+            total = 0
+            skipped = 0
 
-        try:
-            for item in self.list_items():
-                count = self.process_item(item)
-                if count == 0:
-                    skipped += 1
-                    continue
+            logger.info(f"[{self.source_name}] Starting ingestion job")
 
-                total += count
-                if self.request_delay > 0:
-                    time.sleep(self.request_delay)
+            try:
+                for item in self.list_items():
+                    count = self.process_item(item)
+                    if count == 0:
+                        skipped += 1
+                        continue
 
-            result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
-            logger.info(result_msg)
-            return result_msg
+                    total += count
+                    if self.request_delay > 0:
+                        time.sleep(self.request_delay)
 
-        except Exception as e:
-            error_msg = f"[{self.source_name}] Job failed: {e}"
-            logger.exception(error_msg)
-            return f"{error_msg}. Partial results: {total} ingested, {skipped} skipped"
+                result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
+                logger.info(result_msg)
+                return result_msg
+
+            except Exception as e:
+                error_msg = f"[{self.source_name}] Job failed: {e}"
+                logger.exception(error_msg)
+                return f"{error_msg}. Partial results: {total} ingested, {skipped} skipped"
