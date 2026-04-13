@@ -43,9 +43,12 @@ async def test_rephrase_uses_to_thread_for_retrieval_and_achat_for_llm():
         patch.object(routes, "llm", llm_mock),
         patch("api.v1.rephrase_retrieval.routes.asyncio.to_thread", side_effect=fake_to_thread),
     ):
+        limiter_mock = Mock()
+        limiter_mock.limit.return_value = lambda f: f
+
         request = Mock()
         request.app.state.rag_engine = rag_engine
-        request.app.state.limiter = Mock()
+        request.app.state.limiter = limiter_mock
 
         payload = Mock()
         payload.query = "test query"
@@ -75,8 +78,13 @@ async def test_rephrase_passes_top_k_from_payload():
         payload.query = "test"
         payload.top_k = 42
 
+        limiter_mock = Mock()
+        limiter_mock.limit.return_value = lambda f: f
+        request = Mock()
+        request.app.state.limiter = limiter_mock
+
         await routes.query_endpoint(
-            request=Mock(),
+            request=request,
             payload=payload,
             rag_engine=rag_engine,
         )
