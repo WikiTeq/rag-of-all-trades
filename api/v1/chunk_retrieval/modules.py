@@ -1,6 +1,7 @@
 from contextlib import nullcontext
 from typing import Any
 
+from langfuse import get_client
 from llama_index.core import Settings, VectorStoreIndex
 from llama_index.core.schema import NodeWithScore
 from llama_index.core.vector_stores.types import (
@@ -12,7 +13,7 @@ from llama_index.core.vector_stores.types import (
 )
 
 from utils.llm_embedding import embed_model, llm
-from utils.observability import get_instrumentor
+from utils.observability import is_enabled
 
 Settings.llm = llm
 Settings.embed_model = embed_model
@@ -89,8 +90,7 @@ class RAGQueryEngine:
             filters=metadata_filters,
         )
 
-        instrumentor = get_instrumentor()
-        ctx = instrumentor.observe(trace_name="Query", update_parent=True) if instrumentor else nullcontext()
+        ctx = get_client().start_as_current_observation(as_type="span", name="Query") if is_enabled() else nullcontext()
         with ctx:
             nodes = retriever.retrieve(query)
         return nodes
