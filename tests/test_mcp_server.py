@@ -1,4 +1,4 @@
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -96,7 +96,7 @@ async def test_rephrase_chunks_response_success():
         )
     ]
     llm_mock = Mock()
-    llm_mock.chat.return_value = Mock(message=Mock(content="Rephrased output"))
+    llm_mock.achat = AsyncMock(return_value=Mock(message=Mock(content="Rephrased output")))
 
     with patch.object(mcp_server, "llm", llm_mock):
         result = await mcp_server.rephrase_chunks_response(

@@ -1,4 +1,4 @@
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -24,11 +24,11 @@ class _DummyNodeWithScore:
 
 
 @pytest.mark.asyncio
-async def test_rephrase_uses_asyncio_to_thread():
-    """retrieve_top_k and llm.chat must be called via asyncio.to_thread."""
+async def test_rephrase_uses_to_thread_for_retrieval_and_achat_for_llm():
+    """retrieve_top_k must be called via asyncio.to_thread; llm.achat called directly."""
     nodes = [_DummyNodeWithScore("content")]
     llm_mock = Mock()
-    llm_mock.chat.return_value = Mock(message=Mock(content="answer"))
+    llm_mock.achat = AsyncMock(return_value=Mock(message=Mock(content="answer")))
 
     to_thread_calls = []
 
@@ -54,7 +54,7 @@ async def test_rephrase_uses_asyncio_to_thread():
         await routes.query_endpoint(request=request, payload=payload, rag_engine=rag_engine)
 
     assert rag_engine.retrieve_top_k in to_thread_calls
-    assert llm_mock.chat in to_thread_calls
+    llm_mock.achat.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -62,7 +62,7 @@ async def test_rephrase_passes_top_k_from_payload():
     """top_k must come from payload, not be hardcoded."""
     nodes = [_DummyNodeWithScore("content")]
     llm_mock = Mock()
-    llm_mock.chat.return_value = Mock(message=Mock(content="answer"))
+    llm_mock.achat = AsyncMock(return_value=Mock(message=Mock(content="answer")))
 
     rag_engine = Mock()
     rag_engine.retrieve_top_k.return_value = nodes
