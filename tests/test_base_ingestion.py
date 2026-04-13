@@ -177,9 +177,7 @@ class TestIngestionJob:
 
         assert result == 1
         job.metadata_tracker.delete_previous_embeddings.assert_called_once_with("item-1")
-        job.vector_manager.insert_documents.assert_called_once_with(
-            [mock_document.return_value], source_name=job.source_name
-        )
+        job.vector_manager.insert_documents.assert_called_once_with([mock_document.return_value])
         job.metadata_tracker.record_metadata.assert_called_once_with(
             "item-1",
             checksum,
