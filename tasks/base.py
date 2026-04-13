@@ -9,12 +9,13 @@ from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
+from langfuse import get_client
 from llama_index.core import Document
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.helper_classes.metadata_tracker import MetadataTracker
 from tasks.helper_classes.vector_store import VectorStoreManager
-from utils.observability import get_instrumentor
+from utils.observability import is_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -284,10 +285,9 @@ class IngestionJob(ABC):
         Returns:
             str: Summary message indicating total items processed, skipped, and any errors
         """
-        instrumentor = get_instrumentor()
         ctx = (
-            instrumentor.observe(trace_name=f"Ingestion: {self.source_name}", update_parent=True)
-            if instrumentor is not None
+            get_client().start_as_current_observation(as_type="span", name=f"Ingestion: {self.source_name}")
+            if is_enabled()
             else nullcontext()
         )
 

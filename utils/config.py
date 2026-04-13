@@ -42,7 +42,7 @@ class EnvSettings(BaseSettings):
 
     LANGFUSE_PUBLIC_KEY: str = ""
     LANGFUSE_SECRET_KEY: str = ""
-    LANGFUSE_HOST: str = "http://localhost:3000"
+    LANGFUSE_BASE_URL: str = "https://cloud.langfuse.com"
 
     CORS_ORIGINS: list[str] = []
 
@@ -147,9 +147,6 @@ class Settings:
     def OBSERVABILITY(self) -> dict:
         return {
             "enabled": self.yaml.get("observability", {}).get("enabled", False),
-            "public_key": self.env.LANGFUSE_PUBLIC_KEY,
-            "secret_key": self.env.LANGFUSE_SECRET_KEY,
-            "host": self.env.LANGFUSE_HOST,
         }
 
     @property

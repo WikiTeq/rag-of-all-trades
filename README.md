@@ -120,7 +120,7 @@ observability:
 ```env
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_HOST=https://cloud.langfuse.com  # or your self-hosted URL
+LANGFUSE_BASE_URL=https://cloud.langfuse.com  # or your self-hosted URL
 ```
 
 ### Self-hosted Langfuse
@@ -132,7 +132,7 @@ docker compose -f compose.yml -f compose.langfuse.yaml up -d
 ```
 
 Then open `http://localhost:3000`, create a project, and copy the public/secret keys into `.env`.
-Set `LANGFUSE_HOST=http://langfuse-server:3000` (the Docker service hostname) so the API and worker containers can reach it.
+Set `LANGFUSE_BASE_URL=http://langfuse-web:3000` (the Docker service hostname) so the API and worker containers can reach it.
 
 ## Connectors
 
