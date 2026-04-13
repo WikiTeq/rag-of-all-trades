@@ -71,7 +71,7 @@ async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RA
                 content=f"Original Query: {payload.query}\n\nContent:\n\n{chunks_text}",
             ),
         ]
-        llm_response = await asyncio.to_thread(llm.chat, messages)
+        llm_response = await llm.achat(messages)
 
         source_refs = RAGQueryEngine.build_references(nodes_with_score)
 

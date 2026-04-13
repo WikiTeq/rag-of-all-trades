@@ -65,7 +65,7 @@ async def rephrase_chunks_response(
             content=f"Original Query: {query}\n\nContent:\n\n{chunks_text}",
         ),
     ]
-    llm_response = await asyncio.to_thread(llm.chat, messages)
+    llm_response = await llm.achat(messages)
     logger.info("MCP rephrase_chunks: num_results=%d", len(nodes_with_score))
     return {
         "answer": llm_response.message.content,
