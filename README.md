@@ -26,6 +26,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * SerpAPI
 * Jira
 * Web
+* Pipedrive
 
 ## Embeddings support
 
@@ -323,6 +324,55 @@ JIRA1_SCHEDULES=3600
 # JIRA1_SERVER_URL=https://jira.your-company.com
 # JIRA1_API_TOKEN=your-personal-access-token
 # (set auth_type: "token" in config.yaml; email is not needed)
+```
+
+### Pipedrive Connector
+
+The Pipedrive connector ingests CRM records from Pipedrive using the REST API v1. Supports activities,
+deals, notes, organizations, persons, products, projects, leads, tasks, and mails. Metadata collected
+per record includes type-specific fields such as linked entities, pipeline/stage names, assignees,
+authors, and timestamps.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "pipedrive"
+    name: "pipedrive1"
+    config:
+      api_token: "${PIPEDRIVE1_API_TOKEN}"
+      schedules: "${PIPEDRIVE1_SCHEDULES}"
+      # Optional: which entity types to load (default: all)
+      # load_types:
+      #   - activities
+      #   - deals
+      #   - notes
+      #   - organizations
+      #   - persons
+      #   - products
+      #   - projects
+      #   - leads
+      #   - tasks
+      #   - mails
+      # max_items: 500          # optional, global per-entity limit (default: unlimited)
+      # request_delay: 1        # optional, seconds between API requests (default: 0)
+      # max_retries: 3          # optional, retries on failure (default: 1)
+      # filter_deals_updated_since: "2025-01-01"
+      # filter_activities_updated_since: "2025-01-01"
+      # filter_deals_stages_ids:
+      #   - 1
+      # filter_deals_filter_id: "xxx"
+      # filter_organizations_filter_id: "xxx"
+      # filter_persons_filter_id: "xxx"
+      # filter_mail_folders:
+      #   - inbox
+```
+
+```dotenv
+# .env
+
+PIPEDRIVE1_API_TOKEN=your-pipedrive-api-token
+PIPEDRIVE1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
