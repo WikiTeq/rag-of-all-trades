@@ -612,3 +612,13 @@ Ruff configuration is in [pyproject.toml](pyproject.toml) under `[tool.ruff]`.
 ## ✨ Contributions
 
 Contributions, suggestions, bug reports, and fixes are welcome!
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=wikiteq%2Frag-of-all-trades&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=wikiteq/rag-of-all-trades&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=wikiteq/rag-of-all-trades&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=wikiteq/rag-of-all-trades&type=date&legend=top-left" />
+ </picture>
+</a>
