@@ -2,8 +2,9 @@
 import logging
 import re
 import time
+from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any
 
 # Third-party imports
 from slack_sdk import WebClient
@@ -52,38 +53,24 @@ class SlackIngestionJob(IngestionJob):
         if not self.token:
             raise ValueError("token is required in Slack connector config")
 
-        self.channel_ids: List[str] = self._parse_ids(cfg.get("channel_ids", ""))
-        self.channel_patterns: List[str] = self._parse_ids(
-            cfg.get("channel_patterns", "")
-        )
+        self.channel_ids: list[str] = self._parse_ids(cfg.get("channel_ids", ""))
+        self.channel_patterns: list[str] = self._parse_ids(cfg.get("channel_patterns", ""))
 
         if self.channel_ids and self.channel_patterns:
-            raise ValueError(
-                "channel_ids and channel_patterns are mutually exclusive in Slack connector config"
-            )
+            raise ValueError("channel_ids and channel_patterns are mutually exclusive in Slack connector config")
 
-        self.channel_types: str = cfg.get(
-            "channel_types", "public_channel,private_channel"
-        ).strip()
+        self.channel_types: str = cfg.get("channel_types", "public_channel,private_channel").strip()
 
         earliest_date_str = cfg.get("earliest_date", "").strip()
         latest_date_str = cfg.get("latest_date", "").strip()
 
-        self.earliest_date: Optional[datetime] = (
-            self._parse_date(earliest_date_str) if earliest_date_str else None
-        )
-        self.latest_date: Optional[datetime] = (
-            self._parse_date(latest_date_str) if latest_date_str else None
-        )
+        self.earliest_date: datetime | None = self._parse_date(earliest_date_str) if earliest_date_str else None
+        self.latest_date: datetime | None = self._parse_date(latest_date_str) if latest_date_str else None
 
         if self.latest_date and not self.earliest_date:
-            raise ValueError(
-                "earliest_date is required when latest_date is set in Slack connector config"
-            )
+            raise ValueError("earliest_date is required when latest_date is set in Slack connector config")
         if self.earliest_date and self.latest_date and self.latest_date < self.earliest_date:
-            raise ValueError(
-                "latest_date must be greater than or equal to earliest_date in Slack connector config"
-            )
+            raise ValueError("latest_date must be greater than or equal to earliest_date in Slack connector config")
 
         self._client = WebClient(token=self.token)
 
@@ -111,9 +98,7 @@ class SlackIngestionJob(IngestionJob):
 
         channel_ids = self._resolve_channel_ids()
 
-        logger.info(
-            f"[{self.source_name}] Total channels to ingest: {len(channel_ids)}"
-        )
+        logger.info(f"[{self.source_name}] Total channels to ingest: {len(channel_ids)}")
 
         for channel_id in channel_ids:
             yield from self._yield_messages(channel_id)
@@ -137,13 +122,11 @@ class SlackIngestionJob(IngestionJob):
         checksum: str,
         version: int,
         last_modified: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build metadata dict with Slack-specific fields."""
         channel_id = item.source_ref.get("channel_id", "")
         message_ts = item.source_ref.get("message_ts", "")
-        metadata = super().get_document_metadata(
-            item, item_name, checksum, version, last_modified
-        )
+        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
         # Convert ts "1234567890.123456" → "1234567890123456" for Slack URL anchor
         ts_anchor = message_ts.replace(".", "")
         metadata.update(
@@ -166,18 +149,12 @@ class SlackIngestionJob(IngestionJob):
         """
         client = self._client
         next_cursor = None
-        earliest_ts = (
-            str(self.earliest_date.timestamp()) if self.earliest_date else None
-        )
-        latest_ts = (
-            str(self.latest_date.timestamp())
-            if self.latest_date
-            else str(datetime.now(UTC).timestamp())
-        )
+        earliest_ts = str(self.earliest_date.timestamp()) if self.earliest_date else None
+        latest_ts = str(self.latest_date.timestamp()) if self.latest_date else str(datetime.now(UTC).timestamp())
 
         while True:
             try:
-                kwargs: Dict[str, Any] = {
+                kwargs: dict[str, Any] = {
                     "channel": channel_id,
                     "cursor": next_cursor,
                     "latest": latest_ts,
@@ -188,9 +165,7 @@ class SlackIngestionJob(IngestionJob):
                 result = client.conversations_history(**kwargs)
                 messages = result["messages"]
 
-                logger.info(
-                    f"[{self.source_name}] {len(messages)} message(s) fetched from {channel_id}"
-                )
+                logger.info(f"[{self.source_name}] {len(messages)} message(s) fetched from {channel_id}")
 
                 for message in messages:
                     # Skip thread reply broadcasts — they are not top-level messages
@@ -206,9 +181,7 @@ class SlackIngestionJob(IngestionJob):
                         text = self._fetch_message_with_replies(channel_id, ts)
                     else:
                         text = message.get("text", "") or ""
-                    last_modified = (
-                        datetime.fromtimestamp(float(ts)) if ts else None
-                    )
+                    last_modified = datetime.fromtimestamp(float(ts)) if ts else None
                     yield IngestionItem(
                         id=f"slack:{self.source_name}:{channel_id}:{ts}",
                         source_ref={
@@ -227,38 +200,26 @@ class SlackIngestionJob(IngestionJob):
                 error = e.response["error"]
                 if error == "ratelimited":
                     retry_after = int(e.response.headers.get("retry-after", 1))
-                    logger.error(
-                        f"[{self.source_name}] Rate limited, sleeping {retry_after}s"
-                    )
+                    logger.error(f"[{self.source_name}] Rate limited, sleeping {retry_after}s")
                     time.sleep(retry_after)
                 elif error == "not_in_channel":
-                    logger.error(
-                        f"[{self.source_name}] Bot not in channel {channel_id}, skipping"
-                    )
+                    logger.error(f"[{self.source_name}] Bot not in channel {channel_id}, skipping")
                     break
                 else:
-                    logger.error(
-                        f"[{self.source_name}] Error fetching messages from {channel_id}: {e}"
-                    )
+                    logger.error(f"[{self.source_name}] Error fetching messages from {channel_id}: {e}")
                     break
 
     def _fetch_message_with_replies(self, channel_id: str, message_ts: str) -> str:
         """Fetch a message and its thread replies, returning all text concatenated."""
         client = self._client
-        texts: List[str] = []
+        texts: list[str] = []
         next_cursor = None
-        earliest_ts = (
-            str(self.earliest_date.timestamp()) if self.earliest_date else None
-        )
-        latest_ts = (
-            str(self.latest_date.timestamp())
-            if self.latest_date
-            else str(datetime.now(UTC).timestamp())
-        )
+        earliest_ts = str(self.earliest_date.timestamp()) if self.earliest_date else None
+        latest_ts = str(self.latest_date.timestamp()) if self.latest_date else str(datetime.now(UTC).timestamp())
 
         while True:
             try:
-                kwargs: Dict[str, Any] = {
+                kwargs: dict[str, Any] = {
                     "channel": channel_id,
                     "ts": message_ts,
                     "cursor": next_cursor,
@@ -281,19 +242,15 @@ class SlackIngestionJob(IngestionJob):
                 error = e.response["error"]
                 if error == "ratelimited":
                     retry_after = int(e.response.headers.get("retry-after", 1))
-                    logger.error(
-                        f"[{self.source_name}] Rate limited, sleeping {retry_after}s"
-                    )
+                    logger.error(f"[{self.source_name}] Rate limited, sleeping {retry_after}s")
                     time.sleep(retry_after)
                 else:
-                    logger.error(
-                        f"[{self.source_name}] Error fetching replies for {message_ts}: {e}"
-                    )
+                    logger.error(f"[{self.source_name}] Error fetching replies for {message_ts}: {e}")
                     break
 
         return "\n\n".join(texts)
 
-    def _resolve_channel_ids(self) -> List[str]:
+    def _resolve_channel_ids(self) -> list[str]:
         """Return the list of channel IDs to ingest."""
         if self.channel_ids:
             return self.channel_ids
@@ -302,32 +259,26 @@ class SlackIngestionJob(IngestionJob):
             try:
                 ids = self._get_channel_ids_by_patterns(self.channel_patterns)
                 logger.info(
-                    f"[{self.source_name}] Resolved {len(ids)} channel(s) "
-                    f"from patterns {self.channel_patterns}"
+                    f"[{self.source_name}] Resolved {len(ids)} channel(s) from patterns {self.channel_patterns}"
                 )
                 return ids
             except Exception as e:  # noqa: BLE001
-                logger.error(
-                    f"[{self.source_name}] Failed to resolve channel patterns: {e}"
-                )
+                logger.error(f"[{self.source_name}] Failed to resolve channel patterns: {e}")
                 return []
 
-        logger.warning(
-            f"[{self.source_name}] No channel_ids or channel_patterns configured, "
-            "nothing to ingest"
-        )
+        logger.warning(f"[{self.source_name}] No channel_ids or channel_patterns configured, nothing to ingest")
         return []
 
-    def _get_channel_ids_by_patterns(self, patterns: List[str]) -> List[str]:
+    def _get_channel_ids_by_patterns(self, patterns: list[str]) -> list[str]:
         """List all accessible channels and return IDs matching the given patterns."""
         exact_names = [p for p in patterns if not re.search(r"[\\^$.*+?()[\]{}|]", p)]
         regex_patterns = [p for p in patterns if re.search(r"[\\^$.*+?()[\]{}|]", p)]
 
-        seen: Dict[str, None] = {}
+        seen: dict[str, None] = {}
         cursor = None
 
         while True:
-            kwargs: Dict[str, Any] = {"types": self.channel_types}
+            kwargs: dict[str, Any] = {"types": self.channel_types}
             if cursor:
                 kwargs["cursor"] = cursor
             result = self._client.conversations_list(**kwargs)
@@ -346,7 +297,7 @@ class SlackIngestionJob(IngestionJob):
         return list(seen)
 
     @staticmethod
-    def _parse_ids(value: Any) -> List[str]:
+    def _parse_ids(value: Any) -> list[str]:
         """Parse a comma-separated string or list into a list of stripped strings."""
         if not value:
             return []
@@ -360,7 +311,4 @@ class SlackIngestionJob(IngestionJob):
         try:
             return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
         except ValueError:
-            raise ValueError(
-                f"Invalid date format {value!r} in Slack connector config. "
-                "Expected YYYY-MM-DD."
-            )
+            raise ValueError(f"Invalid date format {value!r} in Slack connector config. Expected YYYY-MM-DD.")

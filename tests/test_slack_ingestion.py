@@ -70,13 +70,9 @@ class TestSlackIngestionJob(unittest.TestCase):
     def _setup_client(self, history_messages=None, replies_messages=None):
         """Wire up mock responses on the client."""
         if history_messages is not None:
-            self.mock_client.conversations_history.return_value = (
-                _make_history_result(history_messages)
-            )
+            self.mock_client.conversations_history.return_value = _make_history_result(history_messages)
         if replies_messages is not None:
-            self.mock_client.conversations_replies.return_value = (
-                _make_replies_result(replies_messages)
-            )
+            self.mock_client.conversations_replies.return_value = _make_replies_result(replies_messages)
         return self.mock_client
 
     # ------------------------------------------------------------------
@@ -128,14 +124,10 @@ class TestSlackIngestionJob(unittest.TestCase):
 
     def test_webclient_initialized_with_token(self):
         self._make_job(channel_ids="C123")
-        self.mock_webclient_class.assert_called_once_with(
-            token="xoxb-test-token"
-        )
+        self.mock_webclient_class.assert_called_once_with(token="xoxb-test-token")
 
     def test_custom_channel_types_stored(self):
-        job = self._make_job(
-            channel_ids="C123", channel_types="public_channel"
-        )
+        job = self._make_job(channel_ids="C123", channel_types="public_channel")
         self.assertEqual(job.channel_types, "public_channel")
 
     # ------------------------------------------------------------------
@@ -207,9 +199,7 @@ class TestSlackIngestionJob(unittest.TestCase):
         )
 
         items = list(job.list_items())
-        self.assertEqual(
-            items[0].id, "slack:test_slack:C111:1700000001.000001"
-        )
+        self.assertEqual(items[0].id, "slack:test_slack:C111:1700000001.000001")
 
     def test_list_items_source_ref_contains_channel_ts_text(self):
         job = self._make_job(channel_ids="C111")
@@ -231,25 +221,17 @@ class TestSlackIngestionJob(unittest.TestCase):
         job = self._make_job(channel_ids="C111")
         mock_client = self._setup_client()
         ts = "1700000001.000001"
-        mock_client.conversations_history.return_value = _make_history_result(
-            [_make_message(ts, "msg")]
-        )
-        mock_client.conversations_replies.return_value = _make_replies_result(
-            [_make_message(ts, "msg")]
-        )
+        mock_client.conversations_history.return_value = _make_history_result([_make_message(ts, "msg")])
+        mock_client.conversations_replies.return_value = _make_replies_result([_make_message(ts, "msg")])
 
         items = list(job.list_items())
         self.assertIsInstance(items[0].last_modified, datetime)
-        self.assertAlmostEqual(
-            items[0].last_modified.timestamp(), float(ts), places=0
-        )
+        self.assertAlmostEqual(items[0].last_modified.timestamp(), float(ts), places=0)
 
     def test_list_items_empty_channel_yields_nothing(self):
         job = self._make_job(channel_ids="C111")
         mock_client = self._setup_client()
-        mock_client.conversations_history.return_value = _make_history_result(
-            []
-        )
+        mock_client.conversations_history.return_value = _make_history_result([])
 
         items = list(job.list_items())
         self.assertEqual(items, [])
@@ -278,24 +260,20 @@ class TestSlackIngestionJob(unittest.TestCase):
                 {"id": "C002", "name": "eng-backend"},
             ]
         }
-        self.mock_client.conversations_history.return_value = (
-            _make_history_result([_make_message("1700000001.000001", "msg")])
+        self.mock_client.conversations_history.return_value = _make_history_result(
+            [_make_message("1700000001.000001", "msg")]
         )
-        self.mock_client.conversations_replies.return_value = (
-            _make_replies_result([_make_message("1700000001.000001", "msg")])
+        self.mock_client.conversations_replies.return_value = _make_replies_result(
+            [_make_message("1700000001.000001", "msg")]
         )
 
         job = self._make_job(channel_patterns="general,eng.*")
         items = list(job.list_items())
         self.assertEqual(len(items), 2)
-        self.mock_client.conversations_list.assert_called_once_with(
-            types="public_channel,private_channel"
-        )
+        self.mock_client.conversations_list.assert_called_once_with(types="public_channel,private_channel")
 
     def test_list_items_pattern_resolution_failure_returns_empty(self):
-        self.mock_client.conversations_list.side_effect = Exception(
-            "API error"
-        )
+        self.mock_client.conversations_list.side_effect = Exception("API error")
 
         job = self._make_job(channel_patterns="general")
         items = list(job.list_items())
@@ -449,9 +427,7 @@ class TestSlackIngestionJob(unittest.TestCase):
 
     def test_get_channel_ids_by_patterns_no_match(self):
         job = self._make_job(channel_patterns="nonexistent")
-        self.mock_client.conversations_list.return_value = {
-            "channels": [{"id": "C001", "name": "general"}]
-        }
+        self.mock_client.conversations_list.return_value = {"channels": [{"id": "C001", "name": "general"}]}
         ids = job._get_channel_ids_by_patterns(["nonexistent"])
         self.assertEqual(ids, [])
 
@@ -538,13 +514,11 @@ class TestSlackIngestionJob(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_fetch_message_with_replies_concatenates_thread(self):
-        self.mock_client.conversations_replies.return_value = (
-            _make_replies_result(
-                [
-                    _make_message("1700000001.000001", "parent msg"),
-                    _make_message("1700000001.000002", "reply 1"),
-                ]
-            )
+        self.mock_client.conversations_replies.return_value = _make_replies_result(
+            [
+                _make_message("1700000001.000001", "parent msg"),
+                _make_message("1700000001.000002", "reply 1"),
+            ]
         )
         job = self._make_job(channel_ids="C123")
         text = job._fetch_message_with_replies("C123", "1700000001.000001")
@@ -552,15 +526,13 @@ class TestSlackIngestionJob(unittest.TestCase):
         self.assertIn("reply 1", text)
 
     def test_fetch_message_with_replies_skips_messages_without_text(self):
-        self.mock_client.conversations_replies.return_value = (
-            _make_replies_result(
-                [
-                    _make_message("1700000001.000001", "parent msg"),
-                    {"ts": "1700000001.000002"},
-                    {"ts": "1700000001.000003", "text": ""},
-                    _make_message("1700000001.000004", "reply with text"),
-                ]
-            )
+        self.mock_client.conversations_replies.return_value = _make_replies_result(
+            [
+                _make_message("1700000001.000001", "parent msg"),
+                {"ts": "1700000001.000002"},
+                {"ts": "1700000001.000003", "text": ""},
+                _make_message("1700000001.000004", "reply with text"),
+            ]
         )
         job = self._make_job(channel_ids="C123")
         text = job._fetch_message_with_replies("C123", "1700000001.000001")
@@ -584,12 +556,8 @@ class TestSlackIngestionJob(unittest.TestCase):
         job.vector_manager.insert_documents = Mock()
 
         with (
-            patch.object(
-                job.metadata_tracker, "get_latest_record", return_value=None
-            ),
-            patch.object(
-                job.metadata_tracker, "record_metadata"
-            ) as mock_record,
+            patch.object(job.metadata_tracker, "get_latest_record", return_value=None),
+            patch.object(job.metadata_tracker, "record_metadata") as mock_record,
             patch.object(job.metadata_tracker, "delete_previous_embeddings"),
         ):
             result = job.process_item(item)
@@ -611,9 +579,7 @@ class TestSlackIngestionJob(unittest.TestCase):
         job._seen_add = Mock(return_value=False)
         job.vector_manager.insert_documents = Mock()
 
-        with patch.object(
-            job.metadata_tracker, "get_latest_record", return_value=None
-        ):
+        with patch.object(job.metadata_tracker, "get_latest_record", return_value=None):
             with patch.object(job.metadata_tracker, "record_metadata"):
                 result = job.process_item(item)
 
