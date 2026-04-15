@@ -40,6 +40,10 @@ class EnvSettings(BaseSettings):
     ORT_DISABLE_GPU: int = 1
     ORT_DYLD_DISABLE_GPU: int = 1
 
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_BASE_URL: str = "https://cloud.langfuse.com"
+
     CORS_ORIGINS: list[str] = []
 
     ENABLE_RATE_LIMIT: bool = False
@@ -138,6 +142,12 @@ class Settings:
                 schedule_seconds = int(schedules[0]) if schedules else 3600
                 sources.append({"type": src_type, "name": name, "config": config, "schedule": schedule_seconds})
         return sources
+
+    @property
+    def OBSERVABILITY(self) -> dict:
+        return {
+            "enabled": self.yaml.get("observability", {}).get("enabled", False),
+        }
 
     @property
     def LLM(self):
