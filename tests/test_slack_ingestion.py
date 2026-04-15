@@ -99,6 +99,14 @@ class TestSlackIngestionJob(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._make_job(latest_date="2025-01-01")
 
+    def test_inverted_date_range_raises(self):
+        with self.assertRaises(ValueError):
+            self._make_job(
+                channel_ids="C123",
+                earliest_date="2025-01-01",
+                latest_date="2024-01-01",
+            )
+
     def test_valid_date_range_does_not_raise(self):
         job = self._make_job(
             channel_ids="C123",
@@ -464,6 +472,22 @@ class TestSlackIngestionJob(unittest.TestCase):
         text = job._fetch_message_with_replies("C123", "1700000001.000001")
         self.assertIn("parent msg", text)
         self.assertIn("reply 1", text)
+
+    def test_fetch_message_with_replies_skips_messages_without_text(self):
+        self.mock_client.conversations_replies.return_value = (
+            _make_replies_result(
+                [
+                    _make_message("1700000001.000001", "parent msg"),
+                    {"ts": "1700000001.000002"},
+                    {"ts": "1700000001.000003", "text": ""},
+                    _make_message("1700000001.000004", "reply with text"),
+                ]
+            )
+        )
+        job = self._make_job(channel_ids="C123")
+        text = job._fetch_message_with_replies("C123", "1700000001.000001")
+        self.assertIn("parent msg", text)
+        self.assertIn("reply with text", text)
 
     # ------------------------------------------------------------------
     # Integration: process_item

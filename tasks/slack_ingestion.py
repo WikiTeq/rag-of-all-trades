@@ -80,6 +80,10 @@ class SlackIngestionJob(IngestionJob):
             raise ValueError(
                 "earliest_date is required when latest_date is set in Slack connector config"
             )
+        if self.earliest_date and self.latest_date and self.latest_date < self.earliest_date:
+            raise ValueError(
+                "latest_date must be greater than or equal to earliest_date in Slack connector config"
+            )
 
         self._client = WebClient(token=self.token)
 
@@ -140,7 +144,7 @@ class SlackIngestionJob(IngestionJob):
         metadata = super().get_document_metadata(
             item, item_name, checksum, version, last_modified
         )
-        # Convert ts "1234567890.123456" → "12345678901234​56" for Slack URL anchor
+        # Convert ts "1234567890.123456" → "1234567890123456" for Slack URL anchor
         ts_anchor = message_ts.replace(".", "")
         metadata.update(
             {
@@ -253,7 +257,10 @@ class SlackIngestionJob(IngestionJob):
                     kwargs["oldest"] = earliest_ts
 
                 result = client.conversations_replies(**kwargs)
-                texts.extend(m["text"] for m in result["messages"])
+                for m in result.get("messages", []):
+                    text = m.get("text")
+                    if text:
+                        texts.append(text)
 
                 if not result["has_more"]:
                     break
