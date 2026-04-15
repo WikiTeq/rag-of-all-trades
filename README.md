@@ -633,7 +633,7 @@ docker compose down -v
 docker compose up postgres -d
 
 # 4. Wait for it to be healthy, then restore
-docker compose exec -T postgres psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} < pgdump_pg15.sql
+docker compose exec -T postgres psql -U ${POSTGRES_USER} < pgdump_pg15.sql
 
 # 5. Start everything else
 docker compose up -d
