@@ -2,7 +2,7 @@
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Dict, Iterator, List, Optional
 
 # Third-party imports
@@ -172,7 +172,7 @@ class SlackIngestionJob(IngestionJob):
         latest_ts = (
             str(self.latest_date.timestamp())
             if self.latest_date
-            else str(datetime.now().timestamp())
+            else str(datetime.now(UTC).timestamp())
         )
 
         while True:
@@ -193,8 +193,19 @@ class SlackIngestionJob(IngestionJob):
                 )
 
                 for message in messages:
+                    # Skip thread reply broadcasts — they are not top-level messages
+                    if message.get("subtype") == "thread_broadcast":
+                        continue
+                    # Skip thread replies appearing in channel history
                     ts = message.get("ts", "")
-                    text = self._fetch_message_with_replies(channel_id, ts)
+                    thread_ts = message.get("thread_ts")
+                    if thread_ts and thread_ts != ts:
+                        continue
+                    has_replies = int(message.get("reply_count", 0)) > 0
+                    if has_replies:
+                        text = self._fetch_message_with_replies(channel_id, ts)
+                    else:
+                        text = message.get("text", "") or ""
                     last_modified = (
                         datetime.fromtimestamp(float(ts)) if ts else None
                     )
@@ -242,7 +253,7 @@ class SlackIngestionJob(IngestionJob):
         latest_ts = (
             str(self.latest_date.timestamp())
             if self.latest_date
-            else str(datetime.now().timestamp())
+            else str(datetime.now(UTC).timestamp())
         )
 
         while True:
@@ -309,21 +320,30 @@ class SlackIngestionJob(IngestionJob):
 
     def _get_channel_ids_by_patterns(self, patterns: List[str]) -> List[str]:
         """List all accessible channels and return IDs matching the given patterns."""
-        result = self._client.conversations_list(types=self.channel_types)
-        channels = result.get("channels", [])
-
-        matched: List[str] = []
         exact_names = [p for p in patterns if not re.search(r"[\\^$.*+?()[\]{}|]", p)]
         regex_patterns = [p for p in patterns if re.search(r"[\\^$.*+?()[\]{}|]", p)]
 
-        for channel in channels:
-            name = channel.get("name", "")
-            if name in exact_names:
-                matched.append(channel["id"])
-            elif any(re.match(pat, name) for pat in regex_patterns):
-                matched.append(channel["id"])
+        seen: Dict[str, None] = {}
+        cursor = None
 
-        return list(set(matched))
+        while True:
+            kwargs: Dict[str, Any] = {"types": self.channel_types}
+            if cursor:
+                kwargs["cursor"] = cursor
+            result = self._client.conversations_list(**kwargs)
+            channels = result.get("channels", [])
+
+            for channel in channels:
+                name = channel.get("name", "")
+                channel_id = channel["id"]
+                if name in exact_names or any(re.match(pat, name) for pat in regex_patterns):
+                    seen[channel_id] = None
+
+            cursor = result.get("response_metadata", {}).get("next_cursor")
+            if not cursor:
+                break
+
+        return list(seen)
 
     @staticmethod
     def _parse_ids(value: Any) -> List[str]:
@@ -338,7 +358,7 @@ class SlackIngestionJob(IngestionJob):
     def _parse_date(value: str) -> datetime:
         """Parse a date string (YYYY-MM-DD) into a datetime object."""
         try:
-            return datetime.strptime(value, "%Y-%m-%d")
+            return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
         except ValueError:
             raise ValueError(
                 f"Invalid date format {value!r} in Slack connector config. "

@@ -1,5 +1,5 @@
 import unittest
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, Mock, patch
 
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -166,7 +166,7 @@ class TestSlackIngestionJob(unittest.TestCase):
 
     def test_parse_date_valid(self):
         result = SlackIngestionJob._parse_date("2024-06-15")
-        self.assertEqual(result, datetime(2024, 6, 15))
+        self.assertEqual(result, datetime(2024, 6, 15, tzinfo=UTC))
 
     def test_parse_date_invalid_raises(self):
         with self.assertRaises(ValueError):
@@ -454,6 +454,84 @@ class TestSlackIngestionJob(unittest.TestCase):
         }
         ids = job._get_channel_ids_by_patterns(["nonexistent"])
         self.assertEqual(ids, [])
+
+    def test_get_channel_ids_by_patterns_paginates(self):
+        job = self._make_job(channel_patterns="general")
+        self.mock_client.conversations_list.side_effect = [
+            {
+                "channels": [{"id": "C001", "name": "general"}],
+                "response_metadata": {"next_cursor": "cursor1"},
+            },
+            {
+                "channels": [{"id": "C002", "name": "general-2"}],
+                "response_metadata": {"next_cursor": ""},
+            },
+        ]
+        ids = job._get_channel_ids_by_patterns(["general"])
+        self.assertEqual(ids, ["C001"])
+        self.assertEqual(self.mock_client.conversations_list.call_count, 2)
+
+    def test_get_channel_ids_by_patterns_preserves_discovery_order(self):
+        job = self._make_job(channel_patterns="eng.*")
+        self.mock_client.conversations_list.return_value = {
+            "channels": [
+                {"id": "C001", "name": "eng-backend"},
+                {"id": "C002", "name": "eng-frontend"},
+                {"id": "C001", "name": "eng-backend"},  # duplicate
+            ]
+        }
+        ids = job._get_channel_ids_by_patterns(["eng.*"])
+        self.assertEqual(ids, ["C001", "C002"])
+
+    # ------------------------------------------------------------------
+    # _yield_messages — thread broadcast / threadless skip
+    # ------------------------------------------------------------------
+
+    def test_yield_messages_skips_thread_broadcasts(self):
+        job = self._make_job(channel_ids="C123")
+        self.mock_client.conversations_history.return_value = _make_history_result(
+            [
+                _make_message("1700000001.000001", "top-level msg"),
+                {
+                    "ts": "1700000001.000002",
+                    "text": "broadcast",
+                    "subtype": "thread_broadcast",
+                    "thread_ts": "1700000001.000001",
+                },
+            ]
+        )
+        self.mock_client.conversations_replies.return_value = _make_replies_result(
+            [_make_message("1700000001.000001", "top-level msg")]
+        )
+        items = list(job.list_items())
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].source_ref["message_ts"], "1700000001.000001")
+
+    def test_yield_messages_skips_thread_replies_in_channel(self):
+        job = self._make_job(channel_ids="C123")
+        self.mock_client.conversations_history.return_value = _make_history_result(
+            [
+                _make_message("1700000001.000001", "top-level msg"),
+                {
+                    "ts": "1700000001.000002",
+                    "text": "reply",
+                    "thread_ts": "1700000001.000001",  # different from ts → reply
+                },
+            ]
+        )
+        self.mock_client.conversations_replies.return_value = _make_replies_result(
+            [_make_message("1700000001.000001", "top-level msg")]
+        )
+        items = list(job.list_items())
+        self.assertEqual(len(items), 1)
+
+    def test_yield_messages_skips_replies_api_call_when_no_replies(self):
+        job = self._make_job(channel_ids="C123")
+        self.mock_client.conversations_history.return_value = _make_history_result(
+            [{"ts": "1700000001.000001", "text": "msg no replies", "reply_count": 0}]
+        )
+        list(job.list_items())
+        self.mock_client.conversations_replies.assert_not_called()
 
     # ------------------------------------------------------------------
     # _fetch_message_with_replies — thread concatenation
