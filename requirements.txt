@@ -37,7 +37,7 @@ jira==3.10.5
 # Web connector
 llama-index-readers-web==0.6.0
 # Slack connector
-slack-sdk==3.35.0
+slack-sdk==3.41.0
 
 # Environment management
 python-dotenv==1.2.1

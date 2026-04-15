@@ -373,10 +373,10 @@ class TestSlackIngestionJob(unittest.TestCase):
         self.assertLessEqual(len(job.get_item_name(item)), 255)
 
     # ------------------------------------------------------------------
-    # get_document_metadata
+    # get_extra_metadata
     # ------------------------------------------------------------------
 
-    def test_get_document_metadata_contains_channel_id_ts_and_url(self):
+    def test_get_extra_metadata_contains_channel_id_ts_and_url(self):
         job = self._make_job(channel_ids="C123456")
         item = IngestionItem(
             id="slack:test_slack:C123456:1700000001.000001",
@@ -386,17 +386,11 @@ class TestSlackIngestionJob(unittest.TestCase):
                 "text": "msg",
             },
         )
-        metadata = job.get_document_metadata(
-            item=item,
-            item_name="C123456_1700000001_000001",
-            checksum="abc123",
-            version=1,
-            last_modified=None,
-        )
+        extra = job.get_extra_metadata(item=item, content="msg", metadata={})
 
-        self.assertEqual(metadata["channel_id"], "C123456")
-        self.assertEqual(metadata["message_ts"], "1700000001.000001")
-        self.assertIn("C123456", metadata["url"])
+        self.assertEqual(extra["channel_id"], "C123456")
+        self.assertEqual(extra["message_ts"], "1700000001.000001")
+        self.assertIn("C123456", extra["url"])
 
     # ------------------------------------------------------------------
     # _get_channel_ids_by_patterns

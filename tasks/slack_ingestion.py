@@ -32,7 +32,6 @@ class SlackIngestionJob(IngestionJob):
             default "public_channel,private_channel" (optional, only with channel_patterns)
         - config.earliest_date: Earliest date to fetch messages from, e.g. "2024-01-01" (optional)
         - config.latest_date: Latest date to fetch messages up to, e.g. "2025-01-01" (optional)
-        - config.schedules: Celery schedule in seconds (optional)
 
     Constraints:
         - channel_ids and channel_patterns are mutually exclusive
@@ -115,28 +114,17 @@ class SlackIngestionJob(IngestionJob):
         safe = re.sub(r"[^\w\-]", "_", raw)
         return safe[:255]
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: Any,
-    ) -> dict[str, Any]:
-        """Build metadata dict with Slack-specific fields."""
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return Slack-specific metadata fields."""
         channel_id = item.source_ref.get("channel_id", "")
         message_ts = item.source_ref.get("message_ts", "")
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
         # Convert ts "1234567890.123456" → "1234567890123456" for Slack URL anchor
         ts_anchor = message_ts.replace(".", "")
-        metadata.update(
-            {
-                "channel_id": channel_id,
-                "message_ts": message_ts,
-                "url": f"https://slack.com/app_redirect?channel={channel_id}&message_ts={ts_anchor}",
-            }
-        )
-        return metadata
+        return {
+            "channel_id": channel_id,
+            "message_ts": message_ts,
+            "url": f"https://slack.com/app_redirect?channel={channel_id}&message_ts={ts_anchor}",
+        }
 
     # ------------------------------------------------------------------
     # Internal helpers
