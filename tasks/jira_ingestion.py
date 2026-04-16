@@ -175,10 +175,10 @@ class JiraIngestionJob(IngestionJob):
         parts.append(f"# {summary}\n")
 
         description = getattr(issue.fields, "description", "") or ""
-        if description.strip():
-            md_description = self.convert_text_to_markdown(description)
-            if md_description.strip():
-                parts.append(md_description)
+        if isinstance(description, dict):
+            description = self._extract_adf_text(description)
+        if md_description := self.convert_text_to_markdown(description).strip():
+            parts.append(md_description)
 
         if self.load_comments:
             comments_md = self._build_comments_section(issue)
@@ -234,9 +234,38 @@ class JiraIngestionJob(IngestionJob):
             body = getattr(comment, "body", "") or ""
             if isinstance(body, dict):
                 body = self._extract_adf_text(body)
+            if body.strip():
+                body = self.convert_text_to_markdown(body)
             lines.append(f"**{author}** ({created}):\n{body}")
 
         return "\n\n".join(lines)
+
+    @staticmethod
+    def _extract_adf_text(adf: dict) -> str:
+        """Recursively extract plain text from an Atlassian Document Format (ADF) node."""
+        text_parts: list[str] = []
+
+        def walk(node: Any) -> None:
+            if isinstance(node, dict):
+                node_type = node.get("type", "")
+                if node_type == "text":
+                    text_parts.append(node.get("text", ""))
+                    return
+                if node_type == "heading":
+                    level = node.get("attrs", {}).get("level", 1)
+                    prefix = "#" * level + " "
+                    for child in node.get("content", []):
+                        if child.get("type") == "text":
+                            text_parts.append(prefix + child.get("text", ""))
+                    return
+                for child in node.get("content", []):
+                    walk(child)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(adf)
+        return "\n".join(text_parts)
 
     @staticmethod
     def _safe_display_name(obj: Any) -> str:

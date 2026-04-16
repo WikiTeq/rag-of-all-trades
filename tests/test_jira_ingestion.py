@@ -103,6 +103,14 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.mock_md = Mock()
         self.mock_md_class.return_value = self.mock_md
 
+        # By default, convert_stream returns the input text unchanged
+        def _passthrough(stream):
+            result = Mock()
+            result.text_content = stream.read().decode("utf-8")
+            return result
+
+        self.mock_md.convert_stream.side_effect = _passthrough
+
     def tearDown(self):
         self.jira_patcher.stop()
         self.markitdown_patcher.stop()
@@ -565,6 +573,66 @@ class TestJiraIngestionJob(unittest.TestCase):
             self.assertEqual(result, 1)
             job.vector_manager.insert_documents.assert_called_once()
             mock_record.assert_called_once()
+
+    def test_get_raw_content_extracts_text_from_adf_description(self):
+        issue = _make_issue(
+            key="TEST-ADF-1",
+            description={
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": "ADF description text"}],
+                    }
+                ],
+            },
+        )
+        item = IngestionItem(id="jira:TEST-ADF-1", source_ref=issue)
+
+        job = self._make_job()
+        raw_content = job.get_raw_content(item)
+
+        self.assertIn("ADF description text", raw_content)
+
+    def test_get_raw_content_includes_adf_comment_body_when_comments_enabled(self):
+        issue = _make_issue(
+            key="TEST-ADF-2",
+            description={
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": "ADF issue description"}],
+                    }
+                ],
+            },
+        )
+
+        comment = Mock()
+        comment.author = Mock(displayName="Alice Example")
+        comment.created = "2024-06-15T10:30:00.000+0000"
+        comment.body = {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": "ADF comment body"}],
+                }
+            ],
+        }
+        self.mock_jira.comments.return_value = [comment]
+
+        item = IngestionItem(id="jira:TEST-ADF-2", source_ref=issue)
+        job = self._make_job(load_comments=True, max_comments=5)
+
+        raw_content = job.get_raw_content(item)
+
+        self.assertIn("ADF issue description", raw_content)
+        self.assertIn("ADF comment body", raw_content)
+        self.assertIn("Alice Example", raw_content)
 
     def test_process_item_skips_duplicate_checksum(self):
         issue = _make_issue(key="TEST-99", description="same content")
