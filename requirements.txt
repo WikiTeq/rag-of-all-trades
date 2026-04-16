@@ -37,6 +37,9 @@ jira==3.10.5
 # Web connector
 llama-index-readers-web==0.6.0
 
+# Trello connector
+py-trello==0.20.1
+
 # Environment management
 python-dotenv==1.2.1
 
