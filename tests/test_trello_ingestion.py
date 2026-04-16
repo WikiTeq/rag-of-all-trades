@@ -99,6 +99,16 @@ class TestTrelloIngestionInit(unittest.TestCase):
         job = _make_job(config=cfg)
         self.assertEqual(job.board_ids, ["abc", "def"])
 
+    def test_init_with_mixed_board_ids(self):
+        cfg = _make_config()
+        cfg["config"]["board_ids"] = ["abc", 123, True, "  "]
+        job = _make_job(config=cfg)
+        self.assertTrue(all(isinstance(x, str) for x in job.board_ids))
+        self.assertIn("abc", job.board_ids)
+        self.assertIn("123", job.board_ids)
+        self.assertIn("True", job.board_ids)
+        self.assertNotIn("  ", job.board_ids)
+
     def test_init_with_comments(self):
         job = _make_job(load_comments=True, max_comments=5)
         self.assertTrue(job.load_comments)
@@ -221,6 +231,16 @@ class TestTrelloListItems(unittest.TestCase):
         last_modified = items[0].last_modified
         self.assertIsInstance(last_modified, datetime)
         self.assertEqual(last_modified.tzinfo, UTC)
+
+    def test_malformed_timestamp_falls_back_to_none(self):
+        job = _make_job()
+        card = _make_card(date_last_activity="not-a-date")
+        board = _make_board(cards=[card])
+        job._client.list_boards.return_value = [board]
+
+        items = list(job.list_items())
+        self.assertTrue(items)
+        self.assertIsNone(items[0].last_modified)
 
 
 class TestTrelloGetRawContent(unittest.TestCase):
