@@ -2,8 +2,9 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
-from dropbox.exceptions import ApiError, AuthError
+from dropbox.exceptions import ApiError, AuthError, HttpError
 from dropbox.files import FileMetadata, FolderMetadata, ListFolderResult
+from markitdown import MarkItDownException
 
 from tasks.dropbox_ingestion import DropboxIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -272,6 +273,18 @@ class TestDropboxListItems(unittest.TestCase):
 
         self.mock_dbx.files_list_folder.assert_called_once_with("/Docs/Engineering", recursive=True)
 
+    def test_list_items_root_file_bypasses_directory_filter(self):
+        entry = _make_file_entry("/file.md", path_lower="/file.md", file_id="id:root")
+        self.mock_dbx.files_list_folder.return_value = self._make_result([entry])
+
+        job = DropboxIngestionJob(_make_config({"paths": ["/"], "include_directories": "docs"}))
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].id, "id:root")
+        self.assertEqual(items[0].source_ref, "/file.md")
+        self.mock_dbx.files_list_folder.assert_called_once_with("", recursive=True)
+
 
 class TestDropboxGetRawContent(unittest.TestCase):
     def setUp(self):
@@ -314,7 +327,7 @@ class TestDropboxGetRawContent(unittest.TestCase):
 
     def test_falls_back_on_conversion_error(self):
         self._mock_download(b"raw fallback")
-        self.mock_md.convert_stream.side_effect = ValueError("bad conversion")
+        self.mock_md.convert_stream.side_effect = MarkItDownException("bad conversion")
 
         job = DropboxIngestionJob(_make_config())
         result = job.get_raw_content(self._make_item())
@@ -330,8 +343,8 @@ class TestDropboxGetRawContent(unittest.TestCase):
 
         self.assertEqual(result, "")
 
-    def test_returns_empty_on_unexpected_error(self):
-        self.mock_dbx.files_download.side_effect = Exception("boom")
+    def test_returns_empty_on_http_error(self):
+        self.mock_dbx.files_download.side_effect = HttpError("req", 500, "Internal Server Error")
 
         job = DropboxIngestionJob(_make_config())
         result = job.get_raw_content(self._make_item())

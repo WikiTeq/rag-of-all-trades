@@ -6,9 +6,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 from dropbox import Dropbox
-from dropbox.exceptions import ApiError, AuthError
+from dropbox.exceptions import ApiError, AuthError, HttpError
 from dropbox.files import FileMetadata, ListFolderResult
-from markitdown import MarkItDown
+from markitdown import MarkItDown, MarkItDownException
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -39,26 +39,14 @@ class DropboxIngestionJob(IngestionJob):
         self.paths: list[str] = paths or [""]  # "" means Dropbox root
 
         # Extension filters (mutually exclusive)
-        include_ext = cfg.get("include_extensions", "")
-        exclude_ext = cfg.get("exclude_extensions", "")
-        self.include_extensions: set[str] | None = (
-            {e.strip().lstrip(".").lower() for e in include_ext.split(",") if e.strip()} if include_ext else None
-        )
-        self.exclude_extensions: set[str] | None = (
-            {e.strip().lstrip(".").lower() for e in exclude_ext.split(",") if e.strip()} if exclude_ext else None
-        )
+        self.include_extensions: set[str] | None = self._parse_str_filter(cfg.get("include_extensions"), ext=True)
+        self.exclude_extensions: set[str] | None = self._parse_str_filter(cfg.get("exclude_extensions"), ext=True)
         if self.include_extensions and self.exclude_extensions:
             raise ValueError("Dropbox connector: 'include_extensions' and 'exclude_extensions' are mutually exclusive")
 
         # Directory filters (mutually exclusive)
-        include_dirs = cfg.get("include_directories", "")
-        exclude_dirs = cfg.get("exclude_directories", "")
-        self.include_directories: set[str] | None = (
-            {d.strip().lower() for d in include_dirs.split(",") if d.strip()} if include_dirs else None
-        )
-        self.exclude_directories: set[str] | None = (
-            {d.strip().lower() for d in exclude_dirs.split(",") if d.strip()} if exclude_dirs else None
-        )
+        self.include_directories: set[str] | None = self._parse_str_filter(cfg.get("include_directories"))
+        self.exclude_directories: set[str] | None = self._parse_str_filter(cfg.get("exclude_directories"))
         if self.include_directories and self.exclude_directories:
             raise ValueError(
                 "Dropbox connector: 'include_directories' and 'exclude_directories' are mutually exclusive"
@@ -66,6 +54,27 @@ class DropboxIngestionJob(IngestionJob):
 
         self.dbx = Dropbox(access_token)
         self.md = MarkItDown()
+
+    @staticmethod
+    def _parse_str_filter(value, ext: bool = False) -> set[str] | None:
+        """Parse a filter value from config into a set of normalized strings.
+
+        Accepts a comma-separated string or a list/tuple/set. Returns None when
+        value is falsy. Raises ValueError for unsupported types.
+        """
+        if not value:
+            return None
+        if isinstance(value, str):
+            items = [v.strip() for v in value.split(",") if v.strip()]
+        elif isinstance(value, list | tuple | set):
+            items = [str(v).strip() for v in value if str(v).strip()]
+        else:
+            raise ValueError(f"Invalid filter config type {type(value).__name__!r}: expected str or list")
+        if not items:
+            return None
+        if ext:
+            return {item.lstrip(".").lower() for item in items}
+        return {item.lower() for item in items}
 
     # ------------------------------------------------------------------
     # Filtering helpers
@@ -161,11 +170,8 @@ class DropboxIngestionJob(IngestionJob):
         try:
             _, response = self.dbx.files_download(path)
             content_bytes: bytes = response.content
-        except ApiError as e:
+        except (ApiError, HttpError) as e:
             logger.error(f"[{path}] Dropbox download failed: {e}")
-            return ""
-        except Exception as e:
-            logger.error(f"[{path}] Unexpected error downloading file: {e}")
             return ""
 
         stream = io.BytesIO(content_bytes)
@@ -176,7 +182,7 @@ class DropboxIngestionJob(IngestionJob):
                 return text
             logger.debug(f"[{path}] Empty markdown result, falling back to raw text")
             return content_bytes.decode("utf-8", errors="ignore")
-        except Exception as conversion_error:
+        except MarkItDownException as conversion_error:
             logger.warning(f"[{path}] Markdown conversion failed: {conversion_error}. Using raw text.")
             return content_bytes.decode("utf-8", errors="ignore")
 
