@@ -73,7 +73,7 @@ class TrelloIngestionJob(IngestionJob):
 
         raw_board_ids = cfg.get("board_ids", "")
         if isinstance(raw_board_ids, list):
-            self.board_ids: list[str] = [b.strip() for b in raw_board_ids if str(b).strip()]
+            self.board_ids: list[str] = [s for b in raw_board_ids if (s := str(b).strip())]
         elif raw_board_ids:
             self.board_ids = [b.strip() for b in str(raw_board_ids).split(",") if b.strip()]
         else:
@@ -115,10 +115,14 @@ class TrelloIngestionJob(IngestionJob):
                     continue
 
                 raw_ts = card.dateLastActivity
-                if isinstance(raw_ts, str):
-                    last_modified = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
-                else:
-                    last_modified = raw_ts
+                try:
+                    if isinstance(raw_ts, str):
+                        last_modified = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                    else:
+                        last_modified = raw_ts
+                except (ValueError, TypeError):
+                    logger.warning(f"[{self.source_name}] Malformed timestamp for card {card.id!r}: {raw_ts!r}")
+                    last_modified = None
                 trello_list = lists_by_id.get(card.list_id)
 
                 item = IngestionItem(
@@ -133,7 +137,7 @@ class TrelloIngestionJob(IngestionJob):
 
     def get_raw_content(self, item: IngestionItem) -> str:
         """Build Markdown content from a Trello card."""
-        board, card, trello_list = item.source_ref
+        _board, card, trello_list = item.source_ref
 
         parts: list[str] = []
 
