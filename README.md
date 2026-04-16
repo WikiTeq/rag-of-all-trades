@@ -15,6 +15,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Ingestion from MediaWiki with Wiki-to-Markdown conversion via [html2text](https://github.com/Alir3z4/html2text)
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
+* Dropbox ingestion — files and folders from Dropbox using the official Dropbox SDK with flexible path and extension filters
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -26,6 +27,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * SerpAPI
 * Jira
 * Web
+* Dropbox
 
 ## Embeddings support
 
@@ -323,6 +325,42 @@ JIRA1_SCHEDULES=3600
 # JIRA1_SERVER_URL=https://jira.your-company.com
 # JIRA1_API_TOKEN=your-personal-access-token
 # (set auth_type: "token" in config.yaml; email is not needed)
+```
+
+### Dropbox Connector
+
+The Dropbox connector ingests files from Dropbox using the [official Dropbox Python SDK](https://pypi.org/project/dropbox/).
+Supports ingesting from specific paths or the entire account root, with optional extension and directory filters.
+Content is extracted with [MarkItDown](https://github.com/microsoft/markitdown) and falls back to raw text.
+
+Authentication requires a [Dropbox access token](https://www.dropbox.com/developers/apps) with `files.content.read` scope.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "dropbox"
+    name: "dropbox1"
+    config:
+      access_token: "${DROPBOX1_ACCESS_TOKEN}"
+      # Paths to ingest (optional). If omitted, ingests everything from root recursively.
+      paths:
+        - "/Documents/Engineering"
+        - "/Shared/Wiki"
+      # Extension filters (mutually exclusive, optional):
+      #include_extensions: "md,docx,pdf"   # only these extensions
+      #exclude_extensions: "png,jpg,gif"   # all except these
+      # Directory name filters (mutually exclusive, optional):
+      #include_directories: "source,docs"  # only these folder names
+      #exclude_directories: "archive,tmp"  # all except these folder names
+      schedules: "${DROPBOX1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+DROPBOX1_ACCESS_TOKEN=sl.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+DROPBOX1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
