@@ -325,7 +325,7 @@ class TestTrelloGetItemName(unittest.TestCase):
         self.assertLessEqual(len(job.get_item_name(item)), 255)
 
 
-class TestTrelloGetDocumentMetadata(unittest.TestCase):
+class TestTrelloGetExtraMetadata(unittest.TestCase):
     def test_metadata_contains_required_fields(self):
         job = _make_job()
         lst = _make_list("list1", "Done")
@@ -342,7 +342,7 @@ class TestTrelloGetDocumentMetadata(unittest.TestCase):
             source_ref=(board, card, lst),
         )
 
-        meta = job.get_document_metadata(item, "trello_card_abc", "checksum123", 1, None)
+        meta = job.get_extra_metadata(item, "", {})
 
         self.assertEqual(meta["card_id"], card.id)
         self.assertEqual(meta["card_title"], "My Card")
@@ -353,14 +353,13 @@ class TestTrelloGetDocumentMetadata(unittest.TestCase):
         self.assertEqual(meta["list_id"], "list1")
         self.assertEqual(meta["list_name"], "Done")
         self.assertIn("creation_date", meta)
-        self.assertEqual(meta["source"], "trello")
 
     def test_metadata_with_no_list(self):
         job = _make_job()
         card = _make_card()
         board = _make_board()
         item = IngestionItem(id="trello:card:x", source_ref=(board, card, None))
-        meta = job.get_document_metadata(item, "name", "cs", 1, None)
+        meta = job.get_extra_metadata(item, "", {})
         self.assertEqual(meta["list_id"], "")
         self.assertEqual(meta["list_name"], "")
 
