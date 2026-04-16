@@ -327,6 +327,42 @@ JIRA1_SCHEDULES=3600
 # (set auth_type: "token" in config.yaml; email is not needed)
 ```
 
+### Dropbox Connector
+
+The Dropbox connector ingests files from Dropbox using the [official Dropbox Python SDK](https://pypi.org/project/dropbox/).
+Supports ingesting from specific paths or the entire account root, with optional extension and directory filters.
+Content is extracted with [MarkItDown](https://github.com/microsoft/markitdown) and falls back to raw text.
+
+Authentication requires a [Dropbox access token](https://www.dropbox.com/developers/apps) with `files.content.read` scope.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "dropbox"
+    name: "dropbox1"
+    config:
+      access_token: "${DROPBOX1_ACCESS_TOKEN}"
+      # Paths to ingest (optional). If omitted, ingests everything from root recursively.
+      paths:
+        - "/Documents/Engineering"
+        - "/Shared/Wiki"
+      # Extension filters (mutually exclusive, optional):
+      #include_extensions: "md,docx,pdf"   # only these extensions
+      #exclude_extensions: "png,jpg,gif"   # all except these
+      # Directory name filters (mutually exclusive, optional):
+      #include_directories: "source,docs"  # only these folder names
+      #exclude_directories: "archive,tmp"  # all except these folder names
+      schedules: "${DROPBOX1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+DROPBOX1_ACCESS_TOKEN=sl.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+DROPBOX1_SCHEDULES=3600
+```
+
 ## Reference of the `config.yaml`
 
 The `config.yaml` file contains the main configuration of the service.
@@ -375,42 +411,6 @@ vector_store:
     hnsw_ef_construction: 64 # ef construction parameter for HNSW
     hnsw_ef_search: 40 # ef search parameter for HNSW
     hnsw_dist_method: vector_cosine_ops # distance metric for HNSW
-```
-
-### Dropbox Connector
-
-The Dropbox connector ingests files from Dropbox using the [official Dropbox Python SDK](https://pypi.org/project/dropbox/).
-Supports ingesting from specific paths or the entire account root, with optional extension and directory filters.
-Content is extracted with [MarkItDown](https://github.com/microsoft/markitdown) and falls back to raw text.
-
-Authentication requires a [Dropbox access token](https://www.dropbox.com/developers/apps) with `files.content.read` scope.
-
-```yaml
-# config.yaml
-
-sources:
-  - type: "dropbox"
-    name: "dropbox1"
-    config:
-      access_token: "${DROPBOX1_ACCESS_TOKEN}"
-      # Paths to ingest (optional). If omitted, ingests everything from root recursively.
-      paths:
-        - "/Documents/Engineering"
-        - "/Shared/Wiki"
-      # Extension filters (mutually exclusive, optional):
-      #include_extensions: "md,docx,pdf"   # only these extensions
-      #exclude_extensions: "png,jpg,gif"   # all except these
-      # Directory name filters (mutually exclusive, optional):
-      #include_directories: "source,docs"  # only these folder names
-      #exclude_directories: "archive,tmp"  # all except these folder names
-      schedules: "${DROPBOX1_SCHEDULES}"
-```
-
-```dotenv
-# .env
-
-DROPBOX1_ACCESS_TOKEN=sl.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-DROPBOX1_SCHEDULES=3600
 ```
 
 ## Embeddings and Inference configuration examples

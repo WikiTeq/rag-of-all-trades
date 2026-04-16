@@ -87,12 +87,12 @@ class DropboxIngestionJob(IngestionJob):
         return True
 
     def _directory_allowed(self, folder_path: str) -> bool:
-        """Return True if the folder name passes the configured directory filter."""
-        folder_name = folder_path.rsplit("/", 1)[-1].lower()
+        """Return True if any ancestor folder name passes the configured directory filter."""
+        parts = {p.lower() for p in folder_path.split("/") if p}
         if self.include_directories is not None:
-            return folder_name in self.include_directories
+            return bool(parts & self.include_directories)
         if self.exclude_directories is not None:
-            return folder_name not in self.exclude_directories
+            return not (parts & self.exclude_directories)
         return True
 
     # ------------------------------------------------------------------
@@ -115,8 +115,8 @@ class DropboxIngestionJob(IngestionJob):
         while True:
             for entry in result.entries:
                 if isinstance(entry, FileMetadata):
-                    parent = entry.path_lower.rsplit("/", 1)[0] or "/"
-                    if not self._directory_allowed(parent):
+                    parent = entry.path_lower.rsplit("/", 1)[0]
+                    if parent and not self._directory_allowed(parent):
                         continue
                     if not self._extension_allowed(entry.path_lower):
                         continue
@@ -211,15 +211,6 @@ class DropboxIngestionJob(IngestionJob):
     # Metadata
     # ------------------------------------------------------------------
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: Any,
-    ) -> dict[str, Any]:
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
-        metadata["file_path"] = item.source_ref
-        return metadata
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        return {"file_path": item.source_ref}
 
