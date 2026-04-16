@@ -1,5 +1,5 @@
 import unittest
-from datetime import UTC
+from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -218,7 +218,9 @@ class TestTrelloListItems(unittest.TestCase):
         job._client.list_boards.return_value = [board]
 
         items = list(job.list_items())
-        self.assertIsNotNone(items[0].last_modified)
+        last_modified = items[0].last_modified
+        self.assertIsInstance(last_modified, datetime)
+        self.assertEqual(last_modified.tzinfo, UTC)
 
 
 class TestTrelloGetRawContent(unittest.TestCase):
