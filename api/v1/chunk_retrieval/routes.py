@@ -3,6 +3,7 @@ from functools import wraps
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
+from api.dependencies import require_api_key
 from utils.api import format_chunks
 from utils.config import settings
 
@@ -42,7 +43,12 @@ def limit(func):
 # Query endpoint
 @router.post("/", response_model=QueryResponse)
 @limit
-async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RAGQueryEngine = Depends(get_rag_engine)):
+async def query_endpoint(
+    request: Request,
+    payload: QueryRequest,
+    rag_engine: RAGQueryEngine = Depends(get_rag_engine),
+    _auth: None = Depends(require_api_key),
+):
     """
     Retrieve top-k chunks from vector store without LLM answer.
     """
