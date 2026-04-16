@@ -373,24 +373,16 @@ class TestDropboxGetItemName(unittest.TestCase):
         self.assertEqual(name, "dropbox_file")
 
 
-class TestDropboxGetDocumentMetadata(unittest.TestCase):
+class TestDropboxGetExtraMetadata(unittest.TestCase):
 
     def setUp(self):
         with patch("tasks.dropbox_ingestion.Dropbox"), \
              patch("tasks.dropbox_ingestion.MarkItDown"):
             self.job = DropboxIngestionJob(_make_config())
 
-    def test_metadata_includes_base_fields(self):
-        item = IngestionItem(id="id:1", source_ref="/Docs/file.md")
-        meta = self.job.get_document_metadata(item, "Docs_file.md", "abc123", 1, None)
-        self.assertEqual(meta["source"], "dropbox")
-        self.assertEqual(meta["key"], "Docs_file.md")
-        self.assertEqual(meta["checksum"], "abc123")
-        self.assertEqual(meta["version"], 1)
-
     def test_metadata_includes_file_path(self):
         item = IngestionItem(id="id:2", source_ref="/Engineering/notes.md")
-        meta = self.job.get_document_metadata(item, "Engineering_notes.md", "def456", 1, None)
+        meta = self.job.get_extra_metadata(item, "", {})
         self.assertEqual(meta["file_path"], "/Engineering/notes.md")
 
 
