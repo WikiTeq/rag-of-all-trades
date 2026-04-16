@@ -1,3 +1,5 @@
+import secrets
+
 from fastapi import HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
@@ -13,5 +15,5 @@ def require_api_key(
     expected = settings.env.API_KEY
     if not expected:
         return
-    if credentials is None or credentials.credentials != expected:
+    if credentials is None or not secrets.compare_digest(expected, credentials.credentials):
         raise HTTPException(status_code=401, detail="Unauthorized")
