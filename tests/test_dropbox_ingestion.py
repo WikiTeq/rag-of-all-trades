@@ -1,11 +1,12 @@
 import unittest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import Mock, patch
-from dropbox.exceptions import AuthError, ApiError
+
+from dropbox.exceptions import ApiError, AuthError
 from dropbox.files import FileMetadata, FolderMetadata, ListFolderResult
 
-from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.dropbox_ingestion import DropboxIngestionJob
+from tasks.helper_classes.ingestion_item import IngestionItem
 
 
 def _make_config(extra=None):
@@ -20,7 +21,7 @@ def _make_file_entry(path_display, path_lower=None, file_id="id:abc123", client_
     entry.path_display = path_display
     entry.path_lower = path_lower or path_display.lower()
     entry.id = file_id
-    entry.client_modified = client_modified or datetime(2024, 6, 1, tzinfo=timezone.utc)
+    entry.client_modified = client_modified or datetime(2024, 6, 1, tzinfo=UTC)
     return entry
 
 
@@ -69,10 +70,14 @@ class TestDropboxIngestionInit(unittest.TestCase):
 
     def test_include_and_exclude_extensions_raises(self):
         with self.assertRaises(ValueError):
-            DropboxIngestionJob(_make_config({
-                "include_extensions": "md",
-                "exclude_extensions": "png",
-            }))
+            DropboxIngestionJob(
+                _make_config(
+                    {
+                        "include_extensions": "md",
+                        "exclude_extensions": "png",
+                    }
+                )
+            )
 
     def test_include_directories_parsed(self):
         job = DropboxIngestionJob(_make_config({"include_directories": "source, test"}))
@@ -85,17 +90,19 @@ class TestDropboxIngestionInit(unittest.TestCase):
 
     def test_include_and_exclude_directories_raises(self):
         with self.assertRaises(ValueError):
-            DropboxIngestionJob(_make_config({
-                "include_directories": "src",
-                "exclude_directories": "test",
-            }))
+            DropboxIngestionJob(
+                _make_config(
+                    {
+                        "include_directories": "src",
+                        "exclude_directories": "test",
+                    }
+                )
+            )
 
 
 class TestDropboxExtensionFilter(unittest.TestCase):
-
     def setUp(self):
-        with patch("tasks.dropbox_ingestion.Dropbox"), \
-             patch("tasks.dropbox_ingestion.MarkItDown"):
+        with patch("tasks.dropbox_ingestion.Dropbox"), patch("tasks.dropbox_ingestion.MarkItDown"):
             self.job_include = DropboxIngestionJob(_make_config({"include_extensions": "md,docx"}))
             self.job_exclude = DropboxIngestionJob(_make_config({"exclude_extensions": "png,jpg"}))
             self.job_none = DropboxIngestionJob(_make_config())
@@ -121,16 +128,10 @@ class TestDropboxExtensionFilter(unittest.TestCase):
 
 
 class TestDropboxDirectoryFilter(unittest.TestCase):
-
     def setUp(self):
-        with patch("tasks.dropbox_ingestion.Dropbox"), \
-             patch("tasks.dropbox_ingestion.MarkItDown"):
-            self.job_include = DropboxIngestionJob(
-                _make_config({"include_directories": "source,test"})
-            )
-            self.job_exclude = DropboxIngestionJob(
-                _make_config({"exclude_directories": "node_modules"})
-            )
+        with patch("tasks.dropbox_ingestion.Dropbox"), patch("tasks.dropbox_ingestion.MarkItDown"):
+            self.job_include = DropboxIngestionJob(_make_config({"include_directories": "source,test"}))
+            self.job_exclude = DropboxIngestionJob(_make_config({"exclude_directories": "node_modules"}))
             self.job_none = DropboxIngestionJob(_make_config())
 
     def test_include_allows_matching(self):
@@ -151,7 +152,6 @@ class TestDropboxDirectoryFilter(unittest.TestCase):
 
 
 class TestDropboxListItems(unittest.TestCase):
-
     def _make_result(self, entries, has_more=False, cursor="cursor1"):
         result = Mock(spec=ListFolderResult)
         result.entries = entries
@@ -182,7 +182,7 @@ class TestDropboxListItems(unittest.TestCase):
         self.assertEqual(items[0].source_ref, "/Docs/file.md")
 
     def test_list_items_last_modified_set(self):
-        lm = datetime(2024, 3, 15, tzinfo=timezone.utc)
+        lm = datetime(2024, 3, 15, tzinfo=UTC)
         entry = _make_file_entry("/file.md", file_id="id:2", client_modified=lm)
         self.mock_dbx.files_list_folder.return_value = self._make_result([entry])
 
@@ -274,7 +274,6 @@ class TestDropboxListItems(unittest.TestCase):
 
 
 class TestDropboxGetRawContent(unittest.TestCase):
-
     def setUp(self):
         self.dropbox_patcher = patch("tasks.dropbox_ingestion.Dropbox")
         self.md_patcher = patch("tasks.dropbox_ingestion.MarkItDown")
@@ -341,10 +340,8 @@ class TestDropboxGetRawContent(unittest.TestCase):
 
 
 class TestDropboxGetItemName(unittest.TestCase):
-
     def setUp(self):
-        with patch("tasks.dropbox_ingestion.Dropbox"), \
-             patch("tasks.dropbox_ingestion.MarkItDown"):
+        with patch("tasks.dropbox_ingestion.Dropbox"), patch("tasks.dropbox_ingestion.MarkItDown"):
             self.job = DropboxIngestionJob(_make_config())
 
     def _item(self, path):
@@ -374,10 +371,8 @@ class TestDropboxGetItemName(unittest.TestCase):
 
 
 class TestDropboxGetExtraMetadata(unittest.TestCase):
-
     def setUp(self):
-        with patch("tasks.dropbox_ingestion.Dropbox"), \
-             patch("tasks.dropbox_ingestion.MarkItDown"):
+        with patch("tasks.dropbox_ingestion.Dropbox"), patch("tasks.dropbox_ingestion.MarkItDown"):
             self.job = DropboxIngestionJob(_make_config())
 
     def test_metadata_includes_file_path(self):
