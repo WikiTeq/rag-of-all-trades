@@ -61,6 +61,24 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Access the API at `:8000`
 * Access the API docs at `:8000/docs`
 
+## API Authentication
+
+By default, the API endpoints require no authentication.
+
+To enable Bearer token authorization, set `API_KEY` in your `.env` file:
+
+```dotenv
+API_KEY=your-strong-api-key
+```
+
+When set, all requests to the API must include the key as a Bearer token:
+
+```http
+Authorization: Bearer <API_KEY>
+```
+
+Requests without the header or with a wrong token will receive a `401 Unauthorized` response.
+
 ## MCP endpoint
 
 The service includes an optional MCP (Model Context Protocol) server at `/mcp/` (trailing slash required).
