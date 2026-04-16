@@ -173,37 +173,25 @@ class TrelloIngestionJob(IngestionJob):
         safe = re.sub(r"[^\w\-]", "_", card.id)
         return f"trello_card_{safe}"[:255]
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: Any,
-    ) -> dict[str, Any]:
-        """Build metadata dict with Trello-specific fields."""
+    def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return Trello-specific metadata fields."""
         board, card, trello_list = item.source_ref
-
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
 
         label_names = [lbl.name for lbl in (card.labels or []) if lbl.name]
         creation_date = self._id_to_creation_date(card.id)
 
-        metadata.update(
-            {
-                "card_id": card.id,
-                "card_title": card.name,
-                "board_id": board.id,
-                "board_name": board.name,
-                "url": card.url,
-                "labels": label_names,
-                "due_date": str(getattr(card, "due_date", None) or getattr(card, "due", None) or ""),
-                "creation_date": str(creation_date) if creation_date else "",
-                "list_id": trello_list.id if trello_list else "",
-                "list_name": trello_list.name if trello_list else "",
-            }
-        )
-        return metadata
+        return {
+            "card_id": card.id,
+            "card_title": card.name,
+            "board_id": board.id,
+            "board_name": board.name,
+            "url": card.url,
+            "labels": label_names,
+            "due_date": str(getattr(card, "due_date", None) or getattr(card, "due", None) or ""),
+            "creation_date": str(creation_date) if creation_date else "",
+            "list_id": trello_list.id if trello_list else "",
+            "list_name": trello_list.name if trello_list else "",
+        }
 
     def _get_boards(self):
         """Return the list of Board objects to ingest."""
