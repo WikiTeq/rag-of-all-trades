@@ -1,12 +1,12 @@
 import io
 import logging
-import unicodedata
 import re
-from datetime import datetime, timezone
-from typing import Any, Optional
+import unicodedata
+from datetime import UTC, datetime
+from typing import Any
 
 from dropbox import Dropbox
-from dropbox.exceptions import AuthError, ApiError
+from dropbox.exceptions import ApiError, AuthError
 from dropbox.files import FileMetadata, ListFolderResult
 from markitdown import MarkItDown
 
@@ -41,29 +41,23 @@ class DropboxIngestionJob(IngestionJob):
         # Extension filters (mutually exclusive)
         include_ext = cfg.get("include_extensions", "")
         exclude_ext = cfg.get("exclude_extensions", "")
-        self.include_extensions: Optional[set[str]] = (
-            {e.strip().lstrip(".").lower() for e in include_ext.split(",") if e.strip()}
-            if include_ext else None
+        self.include_extensions: set[str] | None = (
+            {e.strip().lstrip(".").lower() for e in include_ext.split(",") if e.strip()} if include_ext else None
         )
-        self.exclude_extensions: Optional[set[str]] = (
-            {e.strip().lstrip(".").lower() for e in exclude_ext.split(",") if e.strip()}
-            if exclude_ext else None
+        self.exclude_extensions: set[str] | None = (
+            {e.strip().lstrip(".").lower() for e in exclude_ext.split(",") if e.strip()} if exclude_ext else None
         )
         if self.include_extensions and self.exclude_extensions:
-            raise ValueError(
-                "Dropbox connector: 'include_extensions' and 'exclude_extensions' are mutually exclusive"
-            )
+            raise ValueError("Dropbox connector: 'include_extensions' and 'exclude_extensions' are mutually exclusive")
 
         # Directory filters (mutually exclusive)
         include_dirs = cfg.get("include_directories", "")
         exclude_dirs = cfg.get("exclude_directories", "")
-        self.include_directories: Optional[set[str]] = (
-            {d.strip().lower() for d in include_dirs.split(",") if d.strip()}
-            if include_dirs else None
+        self.include_directories: set[str] | None = (
+            {d.strip().lower() for d in include_dirs.split(",") if d.strip()} if include_dirs else None
         )
-        self.exclude_directories: Optional[set[str]] = (
-            {d.strip().lower() for d in exclude_dirs.split(",") if d.strip()}
-            if exclude_dirs else None
+        self.exclude_directories: set[str] | None = (
+            {d.strip().lower() for d in exclude_dirs.split(",") if d.strip()} if exclude_dirs else None
         )
         if self.include_directories and self.exclude_directories:
             raise ValueError(
@@ -102,9 +96,7 @@ class DropboxIngestionJob(IngestionJob):
     def _list_folder_recursive(self, folder_path: str):
         """Yield FileMetadata entries recursively under folder_path using cursor pagination."""
         try:
-            result: ListFolderResult = self.dbx.files_list_folder(
-                folder_path, recursive=True
-            )
+            result: ListFolderResult = self.dbx.files_list_folder(folder_path, recursive=True)
         except AuthError as e:
             logger.error(f"Dropbox auth error while listing '{folder_path}': {e}")
             return
@@ -147,11 +139,11 @@ class DropboxIngestionJob(IngestionJob):
                     continue
                 seen_ids.add(entry.id)
 
-                last_modified: Optional[datetime] = None
+                last_modified: datetime | None = None
                 if entry.client_modified:
                     lm = entry.client_modified
                     if lm.tzinfo is None:
-                        lm = lm.replace(tzinfo=timezone.utc)
+                        lm = lm.replace(tzinfo=UTC)
                     last_modified = lm
 
                 yield IngestionItem(
@@ -185,9 +177,7 @@ class DropboxIngestionJob(IngestionJob):
             logger.debug(f"[{path}] Empty markdown result, falling back to raw text")
             return content_bytes.decode("utf-8", errors="ignore")
         except Exception as conversion_error:
-            logger.warning(
-                f"[{path}] Markdown conversion failed: {conversion_error}. Using raw text."
-            )
+            logger.warning(f"[{path}] Markdown conversion failed: {conversion_error}. Using raw text.")
             return content_bytes.decode("utf-8", errors="ignore")
 
     # ------------------------------------------------------------------
@@ -205,7 +195,6 @@ class DropboxIngestionJob(IngestionJob):
 
     def get_item_name(self, item: IngestionItem) -> str:
         return self._sanitize_path(item.source_ref)
-    
 
     # ------------------------------------------------------------------
     # Metadata
@@ -213,4 +202,3 @@ class DropboxIngestionJob(IngestionJob):
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         return {"file_path": item.source_ref}
-
