@@ -114,7 +114,11 @@ class TrelloIngestionJob(IngestionJob):
                 if card.closed:
                     continue
 
-                last_modified = card.dateLastActivity
+                raw_ts = card.dateLastActivity
+                if isinstance(raw_ts, str):
+                    last_modified = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+                else:
+                    last_modified = raw_ts
                 trello_list = lists_by_id.get(card.list_id)
 
                 item = IngestionItem(
