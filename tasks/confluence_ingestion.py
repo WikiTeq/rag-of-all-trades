@@ -2,7 +2,7 @@
 import logging
 import re
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 # Third-party imports
@@ -75,6 +75,8 @@ class ConfluenceIngestionJob(IngestionJob):
             raise ValueError("Confluence connector config requires either api_token or username+password")
         if self.api_token and self.password:
             raise ValueError("api_token and password are mutually exclusive in Confluence connector config")
+        if self.password and not self.username:
+            raise ValueError("username is required when using password authentication")
 
         self.cloud: bool = bool(cfg.get("cloud", True))
 
@@ -112,7 +114,7 @@ class ConfluenceIngestionJob(IngestionJob):
         try:
             documents = self._reader.load_data(**self._build_load_data_kwargs())
         except Exception as e:
-            logger.error(f"[{self.source_name}] Failed to load Confluence pages: {e}")
+            logger.exception(f"[{self.source_name}] Failed to load Confluence pages: {e}")
             return
 
         logger.info(f"[{self.source_name}] Loaded {len(documents)} page(s)")
@@ -174,7 +176,7 @@ class ConfluenceIngestionJob(IngestionJob):
                 return datetime.fromisoformat(when_str.replace("Z", "+00:00"))
         except Exception as e:
             logger.warning(f"[{self.source_name}] Could not fetch version.when for page {page_id}: {e}")
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     def _build_reader(self) -> ConfluenceReader:
         """Construct an authenticated ConfluenceReader.
