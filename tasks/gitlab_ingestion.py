@@ -140,7 +140,7 @@ class GitLabIngestionJob(IngestionJob):
                 for doc in docs:
                     file_path = doc.extra_info.get("file_path", doc.doc_id)
                     yield IngestionItem(
-                        id=f"gitlab:{self.project_id}:file:{file_path}",
+                        id=f"gitlab:{self.project_id}:{self.ref}:file:{file_path}",
                         source_ref=doc,
                         last_modified=datetime.now(
                             UTC
