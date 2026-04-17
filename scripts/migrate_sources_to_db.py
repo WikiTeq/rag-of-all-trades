@@ -18,16 +18,10 @@ matching the expansion logic that was previously in settings.SOURCES.
 import sys
 from pathlib import Path
 
-from sqlalchemy.exc import IntegrityError
-
 # Ensure project root is on sys.path when run directly
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import yaml  # noqa: E402
-
-from models.connector_instance import ConnectorInstance  # noqa: E402
-from utils.db import get_db_session  # noqa: E402
-from utils.encryption import encrypt_secret  # noqa: E402
 
 # Config keys treated as secrets — stripped from config JSONB and stored encrypted.
 _SECRET_KEYS = frozenset(
@@ -35,6 +29,7 @@ _SECRET_KEYS = frozenset(
         "access_key",
         "secret_key",
         "api_key",
+        "api_token",
         "token",
         "password",
         "private_token",
@@ -62,12 +57,17 @@ def _extract_secrets(config: dict) -> tuple[dict, dict]:
 
 
 def _load_yaml(path: Path) -> dict:
-    """Load a YAML file with ${ENV_VAR} interpolation from os.environ."""
-    with open(path) as f:
-        raw = f.read()
+    """Load a YAML file with ${ENV_VAR} interpolation from os.environ and .env."""
     import os
 
-    for key, value in os.environ.items():
+    from dotenv import dotenv_values
+
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    env_vars = {**dotenv_values(env_path), **os.environ}
+
+    with open(path) as f:
+        raw = f.read()
+    for key, value in env_vars.items():
         raw = raw.replace(f"${{{key}}}", value)
     return yaml.safe_load(raw)
 
@@ -118,6 +118,12 @@ def _expand_sources(raw_sources: list) -> list[dict]:
 
 def main() -> None:
     """Read sources: from config.yaml and insert them as ConnectorInstance rows."""
+    from sqlalchemy.exc import IntegrityError  # noqa: E402
+
+    from models.connector_instance import ConnectorInstance  # noqa: E402
+    from utils.db import get_db_session  # noqa: E402
+    from utils.encryption import encrypt_secret  # noqa: E402
+
     yaml_path = Path(__file__).resolve().parent.parent / "config.yaml"
     if not yaml_path.exists():
         print(f"config.yaml not found at {yaml_path}. Nothing to migrate.")

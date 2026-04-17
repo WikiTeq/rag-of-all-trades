@@ -157,8 +157,15 @@ class TestSyncToBeatSchedule(unittest.TestCase):
                 with patch("celery_app.celery_app", mock_app, create=True):
                     import utils.scheduler as sched
 
+                    _orig = sched.sync_to_beat_schedule.__globals__.get("celery_app")
                     sched.sync_to_beat_schedule.__globals__["celery_app"] = mock_app
-                    sched.sync_to_beat_schedule()  # must not raise
+                    try:
+                        sched.sync_to_beat_schedule()  # must not raise
+                    finally:
+                        if _orig is None:
+                            sched.sync_to_beat_schedule.__globals__.pop("celery_app", None)
+                        else:
+                            sched.sync_to_beat_schedule.__globals__["celery_app"] = _orig
 
 
 class TestRunIngestionTask(unittest.TestCase):
