@@ -128,6 +128,14 @@ class ConfluenceIngestionJob(IngestionJob):
                 last_modified=last_modified,
             )
 
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        # ConfluenceReader embeds non-deterministic CSS (random colorid attributes)
+        # in page content, causing MD5 checksums to differ on every fetch even when
+        # the page hasn't changed. Using version.when as the checksum avoids this.
+        if item.last_modified:
+            return item.last_modified.isoformat()
+        return None
+
     def get_raw_content(self, item: IngestionItem) -> str:
         """Return the page text produced by ConfluenceReader."""
         doc = item.source_ref
