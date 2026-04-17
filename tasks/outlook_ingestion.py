@@ -58,7 +58,7 @@ class OutlookIngestionJob(IngestionJob):
         if not self.user_email:
             raise ValueError("user_email is required in Outlook connector config")
 
-        self.folder = cfg.get("folder", "Inbox")
+        self.folder = str(cfg.get("folder", "Inbox")).strip() or "Inbox"
         self.num_mails = int(cfg.get("num_mails", 10))
         if self.num_mails <= 0:
             raise ValueError("num_mails must be positive in Outlook connector config")
