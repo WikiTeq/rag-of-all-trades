@@ -209,16 +209,22 @@ class OutlookIngestionJob(IngestionJob):
         """Fetch emails directly by folder ID, bypassing the LlamaIndex reader.
 
         Used as a fallback after _resolve_folder_id() resolves a custom folder
-        display name to its Graph API folder ID.
+        display name to its Graph API folder ID. Paginates via opaque
+        @odata.nextLink until num_mails is reached or no further pages exist.
         """
-        response = requests.get(
-            f"{self._user_mail_folders_url()}/mailFolders/{quote(folder_id, safe='')}/messages",
-            headers=headers,
-            params={"$top": self.num_mails},
-            timeout=REQUEST_TIMEOUT,
-        )
-        response.raise_for_status()
-        return response.json().get("value", [])
+        url: str | None = f"{self._user_mail_folders_url()}/mailFolders/{quote(folder_id, safe='')}/messages"
+        params: dict | None = {"$top": self.num_mails}
+        results: list[dict[str, Any]] = []
+
+        while url and len(results) < self.num_mails:
+            response = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT)
+            response.raise_for_status()
+            payload = response.json()
+            results.extend(payload.get("value", []))
+            url = payload.get("@odata.nextLink")
+            params = None
+
+        return results[: self.num_mails]
 
     def _user_mail_folders_url(self) -> str:
         """Base Graph API URL for this user's mailbox."""
