@@ -190,11 +190,11 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertEqual(call_kwargs["path"], "docs")
         self.assertFalse(call_kwargs["recursive"])
 
-    def test_list_items_file_error_yields_nothing(self):
+    def test_list_items_file_error_raises(self):
         self.mock_repo_reader.load_data.side_effect = Exception("API error")
         job = self._make_job()
-        items = list(job.list_items())
-        self.assertEqual(items, [])
+        with self.assertRaises(Exception):
+            list(job.list_items())
 
     # ------------------------------------------------------------------
     # list_items — issues
@@ -241,12 +241,12 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertIn("bug", call_kwargs["labels"])
         self.assertIn("docs", call_kwargs["labels"])
 
-    def test_list_items_issue_error_yields_nothing(self):
+    def test_list_items_issue_error_raises(self):
         self.mock_repo_reader.load_data.return_value = []
         self.mock_issues_reader.load_data.side_effect = Exception("403 Forbidden")
         job = self._make_job(include_issues=True)
-        items = list(job.list_items())
-        self.assertEqual(items, [])
+        with self.assertRaises(Exception):
+            list(job.list_items())
 
     # ------------------------------------------------------------------
     # get_raw_content
@@ -295,47 +295,46 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertLessEqual(len(job.get_item_name(item)), 255)
 
     # ------------------------------------------------------------------
-    # get_document_metadata — files
+    # get_extra_metadata — files
     # ------------------------------------------------------------------
 
-    def test_get_document_metadata_file(self):
+    def test_get_extra_metadata_file(self):
         doc = _make_file_doc(file_path="README.md")
         item = IngestionItem(id="gitlab:12345:file:README.md", source_ref=doc)
         job = self._make_job(project_id=12345)
-        meta = job.get_document_metadata(item, "README.md", "abc", 1, None)
-        self.assertEqual(meta["source"], "gitlab")
+        meta = job.get_extra_metadata(item, "", {})
         self.assertEqual(meta["item_type"], "file")
         self.assertEqual(meta["file_path"], "README.md")
         self.assertEqual(meta["gitlab_url"], "https://gitlab.com")
 
     # ------------------------------------------------------------------
-    # get_document_metadata — issues
+    # get_extra_metadata — issues
     # ------------------------------------------------------------------
 
-    def test_get_document_metadata_issue(self):
+    def test_get_extra_metadata_issue(self):
         doc = _make_issue_doc(iid="7", state="opened", labels=["bug"])
         item = IngestionItem(id="gitlab:12345:issue:7", source_ref=doc)
         job = self._make_job(project_id=12345, include_issues=True)
-        meta = job.get_document_metadata(item, "gitlab_issue_12345_7", "xyz", 1, None)
+        meta = job.get_extra_metadata(item, "", {})
         self.assertEqual(meta["item_type"], "issue")
         self.assertEqual(meta["issue_number"], "7")
         self.assertEqual(meta["state"], "opened")
         self.assertIn("bug", meta["labels"])
         self.assertIn("gitlab.com", meta["url"])
 
-    def test_get_document_metadata_issue_assignee_present(self):
+    def test_get_extra_metadata_issue_assignee_present(self):
         doc = _make_issue_doc(iid="8")
         doc.extra_info["assignee"] = "octocat"
         item = IngestionItem(id="gitlab:12345:issue:8", source_ref=doc)
         job = self._make_job(project_id=12345, include_issues=True)
-        meta = job.get_document_metadata(item, "gitlab_issue_12345_8", "xyz", 1, None)
+        meta = job.get_extra_metadata(item, "", {})
         self.assertEqual(meta["assignee"], "octocat")
 
-    def test_get_document_metadata_issue_no_assignee(self):
+    def test_get_extra_metadata_issue_no_assignee(self):
         doc = _make_issue_doc(iid="9")
         item = IngestionItem(id="gitlab:12345:issue:9", source_ref=doc)
         job = self._make_job(project_id=12345, include_issues=True)
-        meta = job.get_document_metadata(item, "gitlab_issue_12345_9", "xyz", 1, None)
+        meta = job.get_extra_metadata(item, "", {})
         self.assertNotIn("assignee", meta)
 
     # ------------------------------------------------------------------
@@ -523,6 +522,26 @@ class TestGitLabIngestionJob(unittest.TestCase):
     def test_parse_bool_flows_through_issues_get_all(self):
         job = self._make_job(issues_get_all="true")
         self.assertTrue(job.issues_get_all)
+
+    # ------------------------------------------------------------------
+    # _parse_bool_optional
+    # ------------------------------------------------------------------
+
+    def test_parse_bool_optional_none_returns_none(self):
+        self.assertIsNone(GitLabIngestionJob._parse_bool_optional(None))
+
+    def test_parse_bool_optional_true_values(self):
+        for v in [True, "true", "1", "yes", "on"]:
+            self.assertTrue(GitLabIngestionJob._parse_bool_optional(v), msg=f"expected True for {v!r}")
+
+    def test_parse_bool_optional_false_values(self):
+        for v in [False, "false", "0", "no", "off"]:
+            self.assertFalse(GitLabIngestionJob._parse_bool_optional(v), msg=f"expected False for {v!r}")
+
+    def test_parse_bool_optional_flows_through_confidential(self):
+        job = self._make_job(include_issues=True)
+        job.issues_confidential = GitLabIngestionJob._parse_bool_optional("true")
+        self.assertTrue(job.issues_confidential)
 
     # ------------------------------------------------------------------
     # Fail-fast: group_id only + include_issues=False raises ValueError
