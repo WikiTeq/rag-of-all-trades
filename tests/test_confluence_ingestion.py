@@ -4,6 +4,7 @@ from unittest.mock import Mock, patch
 from tasks.confluence_ingestion import ConfluenceIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
+
 def _make_config(
     base_url="https://example.atlassian.net/wiki",
     api_token="token123",
@@ -45,6 +46,7 @@ def _make_config(
         cfg["page_status"] = page_status
     return {"name": "test_confluence", "config": cfg}
 
+
 def _make_doc(
     page_id="123",
     title="My Page",
@@ -62,6 +64,7 @@ def _make_doc(
     }
     return doc
 
+
 class TestConfluenceIngestionJob(unittest.TestCase):
     def setUp(self):
         self.reader_patcher = patch("tasks.confluence_ingestion.ConfluenceReader")
@@ -77,30 +80,38 @@ class TestConfluenceIngestionJob(unittest.TestCase):
 
     def test_missing_base_url_raises(self):
         with self.assertRaises(ValueError):
-            ConfluenceIngestionJob(
-                {"name": "x", "config": {"api_token": "t", "space_key": "ENG"}}
-            )
+            ConfluenceIngestionJob({"name": "x", "config": {"api_token": "t", "space_key": "ENG"}})
 
     def test_no_auth_raises(self):
         with self.assertRaises(ValueError):
             ConfluenceIngestionJob(
-                {"name": "x", "config": {
-                    "base_url": "https://x.atlassian.net/wiki",
-                    "space_key": "ENG",
-                }}
+                {
+                    "name": "x",
+                    "config": {
+                        "base_url": "https://x.atlassian.net/wiki",
+                        "space_key": "ENG",
+                    },
+                }
             )
 
     def test_api_token_and_password_mutually_exclusive(self):
         with self.assertRaises(ValueError):
             self._make_job(api_token="tok", password="pass")
 
+    def test_password_without_username_raises(self):
+        with self.assertRaises(ValueError):
+            self._make_job(api_token=None, username=None, password="secret")
+
     def test_no_discovery_mode_raises(self):
         with self.assertRaises(ValueError):
             ConfluenceIngestionJob(
-                {"name": "x", "config": {
-                    "base_url": "https://x.atlassian.net/wiki",
-                    "api_token": "t",
-                }}
+                {
+                    "name": "x",
+                    "config": {
+                        "base_url": "https://x.atlassian.net/wiki",
+                        "api_token": "t",
+                    },
+                }
             )
 
     def test_multiple_discovery_modes_raises(self):
@@ -170,9 +181,7 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         self.mock_reader.load_data.return_value = []
         job = self._make_job(space_key="ENG", page_status="current")
         list(job.list_items())
-        self.mock_reader.load_data.assert_called_once_with(
-            max_num_results=50, space_key="ENG", page_status="current"
-        )
+        self.mock_reader.load_data.assert_called_once_with(max_num_results=50, space_key="ENG", page_status="current")
 
     def test_page_ids_mode_passes_correct_kwargs(self):
         self.mock_reader.load_data.return_value = []
@@ -186,25 +195,19 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         self.mock_reader.load_data.return_value = []
         job = self._make_job(space_key=None, page_label="my-label")
         list(job.list_items())
-        self.mock_reader.load_data.assert_called_once_with(
-            max_num_results=50, label="my-label"
-        )
+        self.mock_reader.load_data.assert_called_once_with(max_num_results=50, label="my-label")
 
     def test_cql_mode_passes_correct_kwargs(self):
         self.mock_reader.load_data.return_value = []
         job = self._make_job(space_key=None, cql="space = 'TEST'")
         list(job.list_items())
-        self.mock_reader.load_data.assert_called_once_with(
-            max_num_results=50, cql="space = 'TEST'"
-        )
+        self.mock_reader.load_data.assert_called_once_with(max_num_results=50, cql="space = 'TEST'")
 
     def test_folder_id_mode_passes_correct_kwargs(self):
         self.mock_reader.load_data.return_value = []
         job = self._make_job(space_key=None, folder_id="12345")
         list(job.list_items())
-        self.mock_reader.load_data.assert_called_once_with(
-            max_num_results=50, folder_id="12345"
-        )
+        self.mock_reader.load_data.assert_called_once_with(max_num_results=50, folder_id="12345")
 
     def test_get_raw_content_returns_doc_text(self):
         doc = _make_doc(text="Hello Confluence!")
@@ -273,9 +276,7 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         doc.metadata = {"page_id": "5", "title": "T", "space_key": "ENG"}  # no url key
         item = IngestionItem(id="confluence:5", source_ref=doc)
         job = self._make_job()
-        metadata = job.get_document_metadata(
-            item=item, item_name="x", checksum="c", version=1, last_modified=None
-        )
+        metadata = job.get_document_metadata(item=item, item_name="x", checksum="c", version=1, last_modified=None)
         self.assertEqual(metadata["url"], "")
 
     def test_parse_page_ids(self):
@@ -283,6 +284,7 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         self.assertEqual(ConfluenceIngestionJob.parse_page_ids([111, 222]), ["111", "222"])
         self.assertIsNone(ConfluenceIngestionJob.parse_page_ids(None))
         self.assertIsNone(ConfluenceIngestionJob.parse_page_ids(""))
+
 
 if __name__ == "__main__":
     unittest.main()
