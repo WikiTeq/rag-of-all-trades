@@ -71,6 +71,7 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         self.mock_reader_class = self.reader_patcher.start()
         self.mock_reader = Mock()
         self.mock_reader_class.return_value = self.mock_reader
+        self.mock_reader.confluence.get_page_by_id.return_value = {"version": {"when": "2024-01-01T00:00:00.000Z"}}
 
     def tearDown(self):
         self.reader_patcher.stop()

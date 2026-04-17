@@ -27,9 +27,9 @@ class ConfluenceIngestionJob(IngestionJob):
     objects, and surface them to the base ``IngestionJob`` pipeline.
 
     Supported auth (mutually exclusive):
-        - ``api_token`` alone  — Cloud token auth (recommended for Cloud)
+        - ``api_token`` alone  — Bearer token (Server / Data Center PAT)
         - ``username`` + ``password``  — Basic auth (Server / Data Center)
-        - ``username`` + ``api_token``  — Token-based basic auth (Cloud)
+        - ``username`` + ``api_token``  — Basic auth (Cloud: email + API token)
 
     Discovery modes (exactly one required):
         - ``space_key``   — all pages in a space
@@ -97,7 +97,10 @@ class ConfluenceIngestionJob(IngestionJob):
 
         self.page_status: str | None = cfg.get("page_status") or None
         self.include_children: bool = bool(cfg.get("include_children", False))
-        self.max_pages: int = int(cfg.get("max_pages", 50))
+        try:
+            self.max_pages: int = int(cfg.get("max_pages", 50))
+        except (TypeError, ValueError):
+            raise ValueError("max_pages must be an integer")
         if self.max_pages <= 0:
             raise ValueError("max_pages must be positive")
 
@@ -171,7 +174,7 @@ class ConfluenceIngestionJob(IngestionJob):
             when_str = page.get("version", {}).get("when")
             if when_str:
                 return datetime.fromisoformat(when_str.replace("Z", "+00:00"))
-        except Exception as e:
+        except (OSError, ValueError, KeyError, AttributeError) as e:
             logger.warning(f"[{self.source_name}] Could not fetch version.when for page {page_id}: {e}")
         return datetime.now(UTC)
 
