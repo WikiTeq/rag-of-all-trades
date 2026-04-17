@@ -142,25 +142,14 @@ class ConfluenceIngestionJob(IngestionJob):
         safe = re.sub(r"[^\w\-]", "_", raw)
         return safe[:255]
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: Any,
-    ) -> dict[str, Any]:
+    def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
         doc = item.source_ref
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
-        metadata.update(
-            {
-                "url": doc.metadata.get("url", "") or "",
-                "title": doc.metadata.get("title", "") or "",
-                "page_id": doc.metadata.get("page_id") or doc.metadata.get("id", "") or "",
-                "space_key": doc.metadata.get("space_key", "") or "",
-            }
-        )
-        return metadata
+        return {
+            "url": doc.metadata.get("url", "") or "",
+            "title": doc.metadata.get("title", "") or "",
+            "page_id": doc.metadata.get("page_id") or doc.metadata.get("id", "") or "",
+            "space_key": doc.metadata.get("space_key", "") or "",
+        }
 
     def _fetch_last_modified(self, page_id: str) -> datetime:
         """Fetch the last-modified timestamp for a page via the Confluence REST API.
