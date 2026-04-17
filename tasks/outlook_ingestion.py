@@ -1,4 +1,5 @@
 import logging
+from collections import deque
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -63,6 +64,8 @@ class OutlookIngestionJob(IngestionJob):
         if self.num_mails <= 0:
             raise ValueError("num_mails must be positive in Outlook connector config")
 
+        self._resolved_folder_id: str | None = None
+
         self._reader = OutlookEmailReader(
             client_id=self.client_id,
             client_secret=self.client_secret,
@@ -116,13 +119,17 @@ class OutlookIngestionJob(IngestionJob):
         When a 400 is returned, fall back to resolving the folder display name
         to a folder ID via _resolve_folder_id() and retry with the ID.
         """
+        headers = self._get_reader_headers(reader)
+
+        if self._resolved_folder_id:
+            return self._fetch_emails_from_folder_id(headers, self._resolved_folder_id)
+
         try:
             return reader._fetch_emails()
         except requests.HTTPError as exc:
             if exc.response is None or exc.response.status_code != 400:
                 raise
 
-            headers = self._get_reader_headers(reader)
             folder_id = self._resolve_folder_id(headers)
             if not folder_id:
                 logger.error(
@@ -138,6 +145,7 @@ class OutlookIngestionJob(IngestionJob):
                 self.folder,
                 folder_id,
             )
+            self._resolved_folder_id = folder_id
             return self._fetch_emails_from_folder_id(headers, folder_id)
 
     def _get_reader_headers(self, reader: OutlookEmailReader) -> dict[str, str]:
@@ -163,9 +171,9 @@ class OutlookIngestionJob(IngestionJob):
             return None
 
         # BFS over the folder tree; queue starts with the top-level mailFolders endpoint
-        queue = [f"{self._user_mail_folders_url()}/mailFolders"]
+        queue: deque[str] = deque([f"{self._user_mail_folders_url()}/mailFolders"])
         while queue:
-            base_url = queue.pop(0)
+            base_url = queue.popleft()
             url: str | None = base_url
             # follow @odata.nextLink pagination within each level;
             # params are only sent on the initial request — nextLink URLs are opaque
