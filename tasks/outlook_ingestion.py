@@ -237,26 +237,15 @@ class OutlookIngestionJob(IngestionJob):
     def get_item_name(self, item: IngestionItem) -> str:
         return f"outlook_{item.id.removeprefix('outlook:')}"[:255]
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: Any,
-    ) -> dict[str, Any]:
+    def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
         email = item.source_ref
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
-        metadata.update(
-            {
-                "user_email": self.user_email,
-                "folder": self.folder,
-                "subject": email.get("subject") or "",
-                "sender": self._extract_sender(email),
-                "received_at": email.get("receivedDateTime") or "",
-            }
-        )
-        return metadata
+        return {
+            "user_email": self.user_email,
+            "folder": self.folder,
+            "subject": email.get("subject") or "",
+            "sender": self._extract_sender(email),
+            "received_at": email.get("receivedDateTime") or "",
+        }
 
     @staticmethod
     def _extract_sender(email: dict) -> str:
