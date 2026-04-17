@@ -256,19 +256,11 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         doc = _make_doc(page_id="10", title="My Page", url=page_url, space_key="ENG")
         item = IngestionItem(id="confluence:10", source_ref=doc)
         job = self._make_job()
-        metadata = job.get_document_metadata(
-            item=item,
-            item_name="confluence_10_My_Page",
-            checksum="abc",
-            version=1,
-            last_modified=None,
-        )
-        self.assertEqual(metadata["source"], "confluence")
+        metadata = job.get_extra_metadata(item=item, _content="", _metadata={})
         self.assertEqual(metadata["title"], "My Page")
         self.assertEqual(metadata["page_id"], "10")
         self.assertEqual(metadata["space_key"], "ENG")
         self.assertEqual(metadata["url"], page_url)
-        self.assertEqual(metadata["source_name"], "test_confluence")
 
     def test_get_document_metadata_missing_url_falls_back_to_empty_string(self):
         doc = Mock()
@@ -276,7 +268,7 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         doc.metadata = {"page_id": "5", "title": "T", "space_key": "ENG"}  # no url key
         item = IngestionItem(id="confluence:5", source_ref=doc)
         job = self._make_job()
-        metadata = job.get_document_metadata(item=item, item_name="x", checksum="c", version=1, last_modified=None)
+        metadata = job.get_extra_metadata(item=item, _content="", _metadata={})
         self.assertEqual(metadata["url"], "")
 
     def test_parse_page_ids(self):
