@@ -171,9 +171,9 @@ class TestGitLabIngestionJob(unittest.TestCase):
 
     def test_list_items_file_id_format(self):
         self.mock_repo_reader.load_data.return_value = [_make_file_doc("docs/guide.md")]
-        job = self._make_job(project_id=12345)
+        job = self._make_job(project_id=12345, ref="main")
         items = list(job.list_items())
-        self.assertEqual(items[0].id, "gitlab:12345:file:docs/guide.md")
+        self.assertEqual(items[0].id, "gitlab:12345:main:file:docs/guide.md")
 
     def test_list_items_passes_ref_to_reader(self):
         self.mock_repo_reader.load_data.return_value = []
