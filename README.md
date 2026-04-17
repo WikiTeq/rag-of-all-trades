@@ -409,8 +409,9 @@ Exactly one discovery mode is required per source:
 - `folder_id` — all pages inside a folder
 
 Supported auth (mutually exclusive):
-- `api_token` (+ optional `username`) — token auth, recommended for Cloud
-- `username` + `password` — basic auth, for Server / Data Center
+- `api_token` alone — Bearer token (Server / Data Center PAT)
+- `username` + `api_token` — basic auth (Cloud: email + API token)
+- `username` + `password` — basic auth (Server / Data Center)
 
 ```yaml
 # config.yaml
