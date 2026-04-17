@@ -239,5 +239,20 @@ class TestOutlookGetExtraMetadata(unittest.TestCase):
         self.assertEqual(meta["received_at"], RECEIVED)
 
 
+class TestOutlookEmailReaderPrivateAPI(unittest.TestCase):
+    """Regression guard: fail loudly if the LlamaIndex OutlookEmailReader removes
+    or renames private members that the connector relies on."""
+
+    def test_required_private_symbols_exist(self):
+        from llama_index.readers.microsoft_outlook_emails import OutlookEmailReader
+
+        for symbol in ("_ensure_token", "_fetch_emails", "_authorization_headers"):
+            self.assertTrue(
+                hasattr(OutlookEmailReader, symbol),
+                f"OutlookEmailReader is missing required symbol {symbol!r} — "
+                "update the connector if the library changed its private API",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
