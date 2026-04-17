@@ -122,6 +122,59 @@ class TestOutlookListItems(unittest.TestCase):
         self.assertEqual(items[0].id, "outlook:id1")
         self.assertEqual(mock_get.call_count, 2)
 
+    def test_resolves_display_name_folder_across_paginated_folder_listing(self):
+        email = _make_email("id1")
+        response_400 = MagicMock(status_code=400)
+        reader = self._mock_reader([])
+        reader._fetch_emails.side_effect = requests.HTTPError(response=response_400)
+
+        page1 = MagicMock()
+        page1.json.return_value = {
+            "value": [{"id": "other-id", "displayName": "Other", "childFolderCount": 0}],
+            "@odata.nextLink": "https://graph.microsoft.com/v1.0/users/u/mailFolders?$skiptoken=abc",
+        }
+        page2 = MagicMock()
+        page2.json.return_value = {
+            "value": [{"id": "folder-id-page2", "displayName": "Proba", "childFolderCount": 0}],
+        }
+        messages_lookup = MagicMock()
+        messages_lookup.json.return_value = {"value": [email]}
+
+        job = _make_job(folder="Proba")
+        job._reader = reader
+
+        with patch("tasks.outlook_ingestion.requests.get", side_effect=[page1, page2, messages_lookup]):
+            items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].id, "outlook:id1")
+
+    def test_resolves_display_name_folder_in_nested_child_folder(self):
+        email = _make_email("id1")
+        response_400 = MagicMock(status_code=400)
+        reader = self._mock_reader([])
+        reader._fetch_emails.side_effect = requests.HTTPError(response=response_400)
+
+        top_level = MagicMock()
+        top_level.json.return_value = {
+            "value": [{"id": "parent-id", "displayName": "Parent", "childFolderCount": 1}],
+        }
+        child_level = MagicMock()
+        child_level.json.return_value = {
+            "value": [{"id": "child-id", "displayName": "Proba", "childFolderCount": 0}],
+        }
+        messages_lookup = MagicMock()
+        messages_lookup.json.return_value = {"value": [email]}
+
+        job = _make_job(folder="Proba")
+        job._reader = reader
+
+        with patch("tasks.outlook_ingestion.requests.get", side_effect=[top_level, child_level, messages_lookup]):
+            items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].id, "outlook:id1")
+
     def test_raises_original_error_when_folder_display_name_cannot_be_resolved(self):
         response_400 = MagicMock(status_code=400)
         reader = self._mock_reader([])
