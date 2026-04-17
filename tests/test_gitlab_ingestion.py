@@ -57,7 +57,7 @@ def _make_file_doc(file_path="README.md", text="File content"):
     doc = Mock()
     doc.doc_id = "abc123"
     doc.text = text
-    doc.extra_info = {"file_path": file_path, "file_name": file_path.split("/")[-1], "url": ""}
+    doc.metadata = {"file_path": file_path, "file_name": file_path.split("/")[-1], "url": ""}
     return doc
 
 
@@ -65,7 +65,7 @@ def _make_issue_doc(iid="42", text="Issue title\nIssue body", state="opened", la
     doc = Mock()
     doc.doc_id = iid
     doc.text = text
-    doc.extra_info = {
+    doc.metadata = {
         "state": state,
         "labels": labels or [],
         "created_at": "2024-01-15T10:00:00Z",
@@ -283,7 +283,7 @@ class TestGitLabIngestionJob(unittest.TestCase):
     def test_get_item_name_file_no_doc_id_or_file_path_falls_back_to_item_id(self):
         doc = Mock()
         doc.doc_id = None
-        doc.extra_info = {}
+        doc.metadata = {}
         item = IngestionItem(id="gitlab:1:file:fallback", source_ref=doc)
         job = self._make_job()
         self.assertEqual(job.get_item_name(item), "gitlab:1:file:fallback")
@@ -324,7 +324,7 @@ class TestGitLabIngestionJob(unittest.TestCase):
 
     def test_get_extra_metadata_issue_assignee_present(self):
         doc = _make_issue_doc(iid="8")
-        doc.extra_info["assignee"] = "octocat"
+        doc.metadata["assignee"] = "octocat"
         item = IngestionItem(id="gitlab:12345:issue:8", source_ref=doc)
         job = self._make_job(project_id=12345, include_issues=True)
         meta = job.get_extra_metadata(item, "", {})
@@ -567,7 +567,7 @@ class TestGitLabIngestionJob(unittest.TestCase):
 
     def test_list_items_issue_last_modified_uses_created_at(self):
         doc = _make_issue_doc("5")
-        doc.extra_info["created_at"] = "2024-03-10T08:00:00Z"
+        doc.metadata["created_at"] = "2024-03-10T08:00:00Z"
         self.mock_repo_reader.load_data.return_value = []
         self.mock_issues_reader.load_data.return_value = [doc]
         job = self._make_job(include_issues=True)

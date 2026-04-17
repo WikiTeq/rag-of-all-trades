@@ -138,7 +138,7 @@ class GitLabIngestionJob(IngestionJob):
                     recursive=self.recursive,
                 )
                 for doc in docs:
-                    file_path = doc.extra_info.get("file_path", doc.doc_id)
+                    file_path = doc.metadata.get("file_path", doc.doc_id)
                     yield IngestionItem(
                         id=f"gitlab:{self.project_id}:{self.ref}:file:{file_path}",
                         source_ref=doc,
@@ -176,13 +176,13 @@ class GitLabIngestionJob(IngestionJob):
                 for doc in docs:
                     # Use global id (unique across instance) for group mode; iid is project-scoped only
                     issue_id = (
-                        doc.extra_info.get("id") or doc.doc_id if self.group_id and not self.project_id else doc.doc_id
+                        doc.metadata.get("id") or doc.doc_id if self.group_id and not self.project_id else doc.doc_id
                     )
                     yield IngestionItem(
                         id=f"gitlab:{self.project_id or self.group_id}:issue:{issue_id}",
                         source_ref=doc,
                         last_modified=self._parse_timestamp(
-                            doc.extra_info.get("created_at")  # GitLabIssuesReader does not expose updated_at
+                            doc.metadata.get("created_at")  # GitLabIssuesReader does not expose updated_at
                         ),
                     )
             except Exception:
@@ -195,7 +195,7 @@ class GitLabIngestionJob(IngestionJob):
 
     def get_item_name(self, item: IngestionItem) -> str:
         doc = item.source_ref
-        extra = doc.extra_info or {}
+        extra = doc.metadata or {}
 
         if ":issue:" in item.id:
             iid = doc.doc_id
@@ -208,7 +208,7 @@ class GitLabIngestionJob(IngestionJob):
 
     def get_extra_metadata(self, item: IngestionItem, _content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         doc = item.source_ref
-        extra = doc.extra_info or {}
+        extra = doc.metadata or {}
         item_name = metadata.get("key", "")
 
         result: dict[str, Any] = {"gitlab_url": self.gitlab_url}
