@@ -262,7 +262,19 @@ class OutlookIngestionJob(IngestionJob):
         if not value:
             return None
         try:
-            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            normalized = value.replace("Z", "+00:00")
+            # Graph API timestamps can have 7 fractional-second digits; fromisoformat
+            # supports only up to 6, so truncate the excess digits before parsing.
+            if "." in normalized:
+                dot_pos = normalized.index(".")
+                tz_pos = normalized.find("+", dot_pos)
+                if tz_pos == -1:
+                    tz_pos = normalized.find("-", dot_pos)
+                frac = normalized[dot_pos + 1 : tz_pos] if tz_pos != -1 else normalized[dot_pos + 1 :]
+                if len(frac) > 6:
+                    tz_suffix = normalized[tz_pos:] if tz_pos != -1 else ""
+                    normalized = normalized[: dot_pos + 1] + frac[:6] + tz_suffix
+            dt = datetime.fromisoformat(normalized)
             return dt.astimezone(UTC)
         except (ValueError, TypeError):
             return None
