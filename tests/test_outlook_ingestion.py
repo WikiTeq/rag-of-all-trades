@@ -226,18 +226,17 @@ class TestOutlookGetItemName(unittest.TestCase):
         self.assertEqual(len(_make_job().get_item_name(item)), 255)
 
 
-class TestOutlookGetDocumentMetadata(unittest.TestCase):
+class TestOutlookGetExtraMetadata(unittest.TestCase):
     def test_includes_outlook_fields(self):
         email = _make_email(subject="Status Update", sender="bob@example.com")
         item = IngestionItem(id="outlook:id1", source_ref=email, last_modified=RECEIVED_DT)
-        meta = _make_job().get_document_metadata(item, "outlook_id1", "checksum", 1, RECEIVED_DT)
+        meta = _make_job().get_extra_metadata(item, "", {})
 
         self.assertEqual(meta["user_email"], "user@company.com")
         self.assertEqual(meta["folder"], "Inbox")
         self.assertEqual(meta["subject"], "Status Update")
         self.assertEqual(meta["sender"], "bob@example.com")
         self.assertEqual(meta["received_at"], RECEIVED)
-        self.assertEqual(meta["source"], "outlook")
 
 
 if __name__ == "__main__":
