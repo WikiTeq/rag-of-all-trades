@@ -19,6 +19,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * GitHub ingestion from repository files and issues via Personal Access Token or GitHub App
 * Notion ingestion from pages and databases via a Notion integration token
 * Dropbox ingestion — files and folders from Dropbox using the official Dropbox SDK with flexible path and extension filters
+* Confluence ingestion from Cloud and Server/Data Center instances via LlamaIndex reader
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -29,6 +30,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * MediaWiki
 * SerpAPI
 * Jira
+* Confluence
 * Web
 * Pipedrive
 * Slack
