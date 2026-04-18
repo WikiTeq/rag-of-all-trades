@@ -80,14 +80,14 @@ class GitLabIngestionJob(IngestionJob):
         self.issues_milestone: str | None = cfg.get("issues_milestone") or None
         self.issues_search: str | None = cfg.get("issues_search") or None
         self.issues_get_all: bool = self._parse_bool(cfg.get("issues_get_all"), default=False)
-        self.issues_confidential: bool | None = self._parse_bool_optional(cfg.get("issues_confidential"))
+        self.issues_confidential: bool | None = self._parse_bool(cfg.get("issues_confidential"), default=None)
         self.issues_created_after: datetime | None = self._parse_timestamp(cfg.get("issues_created_after"))
         self.issues_created_before: datetime | None = self._parse_timestamp(cfg.get("issues_created_before"))
         self.issues_updated_after: datetime | None = self._parse_timestamp(cfg.get("issues_updated_after"))
         self.issues_updated_before: datetime | None = self._parse_timestamp(cfg.get("issues_updated_before"))
         self.issues_iids: list[int] | None = cfg.get("issues_iids") or None
         self.issues_type: GitLabIssuesReader.IssueType | None = self._resolve_issue_type_enum(cfg.get("issues_type"))
-        self.issues_non_archived: bool | None = self._parse_bool_optional(cfg.get("issues_non_archived"))
+        self.issues_non_archived: bool | None = self._parse_bool(cfg.get("issues_non_archived"), default=None)
         self.issues_scope: GitLabIssuesReader.Scope | None = self._resolve_scope_enum(cfg.get("issues_scope"))
 
         gl = gitlab.Gitlab(self.gitlab_url, private_token=self.personal_token)
@@ -174,10 +174,8 @@ class GitLabIngestionJob(IngestionJob):
                     scope=self.issues_scope,
                 )
                 for doc in docs:
-                    # Use global id (unique across instance) for group mode; iid is project-scoped only
-                    issue_id = (
-                        doc.metadata.get("id") or doc.doc_id if self.group_id and not self.project_id else doc.doc_id
-                    )
+                    # Prefer global id (unique across instance) over project-scoped iid
+                    issue_id = doc.metadata.get("id") or doc.doc_id
                     yield IngestionItem(
                         id=f"gitlab:{self.project_id or self.group_id}:issue:{issue_id}",
                         source_ref=doc,
@@ -246,21 +244,13 @@ class GitLabIngestionJob(IngestionJob):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_bool(value: Any, default: bool = False) -> bool:
-        """Parse a config value to bool, safely handling string inputs like 'false'."""
+    def _parse_bool(value: Any, default: bool | None = False) -> bool | None:
+        """Parse a config value to bool, safely handling string inputs like 'false'.
+
+        Pass default=None to get None when value is unset (optional bool fields).
+        """
         if value is None:
             return default
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.strip().lower() in {"1", "true", "yes", "on"}
-        return bool(value)
-
-    @staticmethod
-    def _parse_bool_optional(value: Any) -> bool | None:
-        """Parse a config value to bool, returning None if not set."""
-        if value is None:
-            return None
         if isinstance(value, bool):
             return value
         if isinstance(value, str):

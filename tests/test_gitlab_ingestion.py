@@ -193,7 +193,7 @@ class TestGitLabIngestionJob(unittest.TestCase):
     def test_list_items_file_error_raises(self):
         self.mock_repo_reader.load_data.side_effect = Exception("API error")
         job = self._make_job()
-        with self.assertRaises(Exception):
+        with self.assertRaisesRegex(Exception, "API error"):
             list(job.list_items())
 
     # ------------------------------------------------------------------
@@ -524,23 +524,23 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertTrue(job.issues_get_all)
 
     # ------------------------------------------------------------------
-    # _parse_bool_optional
+    # _parse_bool with default=None (optional bool fields)
     # ------------------------------------------------------------------
 
-    def test_parse_bool_optional_none_returns_none(self):
-        self.assertIsNone(GitLabIngestionJob._parse_bool_optional(None))
+    def test_parse_bool_none_default_none_returns_none(self):
+        self.assertIsNone(GitLabIngestionJob._parse_bool(None, default=None))
 
     def test_parse_bool_optional_true_values(self):
         for v in [True, "true", "1", "yes", "on"]:
-            self.assertTrue(GitLabIngestionJob._parse_bool_optional(v), msg=f"expected True for {v!r}")
+            self.assertTrue(GitLabIngestionJob._parse_bool(v, default=None), msg=f"expected True for {v!r}")
 
     def test_parse_bool_optional_false_values(self):
         for v in [False, "false", "0", "no", "off"]:
-            self.assertFalse(GitLabIngestionJob._parse_bool_optional(v), msg=f"expected False for {v!r}")
+            self.assertFalse(GitLabIngestionJob._parse_bool(v, default=None), msg=f"expected False for {v!r}")
 
     def test_parse_bool_optional_flows_through_confidential(self):
         job = self._make_job(include_issues=True)
-        job.issues_confidential = GitLabIngestionJob._parse_bool_optional("true")
+        job.issues_confidential = GitLabIngestionJob._parse_bool("true", default=None)
         self.assertTrue(job.issues_confidential)
 
     # ------------------------------------------------------------------
@@ -562,7 +562,7 @@ class TestGitLabIngestionJob(unittest.TestCase):
             )
 
     # ------------------------------------------------------------------
-    # issue last_modified prefers updated_at over created_at
+    # issue last_modified uses created_at (updated_at not exposed by reader)
     # ------------------------------------------------------------------
 
     def test_list_items_issue_last_modified_uses_created_at(self):
