@@ -165,7 +165,7 @@ class TestOneDriveIngestionJob(unittest.TestCase):
 
         self.mock_reader_class.assert_called_once_with(
             client_id="test-client-id",
-            client_secret="test-client-secret",
+            client_secret="test-client-secret",  # noqa: S106
             tenant_id="test-tenant-id",
             userprincipalname="user@example.com",
             folder_id=None,
