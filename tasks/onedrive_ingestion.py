@@ -118,8 +118,13 @@ class OneDriveIngestionJob(IngestionJob):
                     f"[{self.source_name}] Could not parse last_modified_datetime for file_id={file_id!r}, using now"
                 )
                 last_modified = datetime.now(UTC)
+            # Multi-page files (e.g. PDFs) produce one Document per page, all sharing
+            # the same file_id. Appending page_label makes the item ID stable and unique
+            # per page so the base class dedup logic tracks each page independently.
+            page_label = doc.metadata.get("page_label") or ""
+            page_suffix = f":{page_label}" if page_label else ""
             yield IngestionItem(
-                id=f"onedrive:{file_id}",
+                id=f"onedrive:{file_id}{page_suffix}",
                 source_ref=doc,
                 last_modified=last_modified,
             )
@@ -138,9 +143,12 @@ class OneDriveIngestionJob(IngestionJob):
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe name for the OneDrive document."""
         doc: Document = item.source_ref
-        # Prefer the full file path for uniqueness; fall back to file_id or item id
+        # page_label is appended for the same reason as in list_items(): multi-page files
+        # share a file_path, so the name must include the page to be unique in the DB.
         file_path = doc.metadata.get("file_path") or doc.metadata.get("file_id") or item.id
-        safe = re.sub(r"[^\w-]", "_", file_path)
+        page_label = doc.metadata.get("page_label") or ""
+        suffix = f":{page_label}" if page_label else ""
+        safe = re.sub(r"[^\w-]", "_", f"{file_path}{suffix}")
         return safe[:255]
 
     def get_document_metadata(
