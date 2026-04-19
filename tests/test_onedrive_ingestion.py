@@ -93,6 +93,11 @@ class TestOneDriveIngestionJob(unittest.TestCase):
         job = self._make_job(recursive=False)
         self.assertFalse(job.recursive)
 
+    def test_recursive_string_values(self):
+        self.assertFalse(self._make_job(recursive="false").recursive)
+        self.assertFalse(self._make_job(recursive="0").recursive)
+        self.assertTrue(self._make_job(recursive="true").recursive)
+
     def test_list_items_yields_ingestion_items(self):
         doc1 = _make_doc(file_id="f1")
         doc2 = _make_doc(file_id="f2", file_name="notes.docx", file_path="/Notes/notes.docx")
@@ -129,9 +134,9 @@ class TestOneDriveIngestionJob(unittest.TestCase):
         self.assertEqual(items, [])
 
     def test_list_items_raises_on_reader_exception(self):
-        self.mock_reader.load_data.side_effect = Exception("auth error")
+        self.mock_reader.load_data.side_effect = RuntimeError("auth error")
         job = self._make_job()
-        with self.assertRaises(Exception):
+        with self.assertRaises(RuntimeError):
             list(job.list_items())
 
     def test_list_items_source_ref_is_document(self):
