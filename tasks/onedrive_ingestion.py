@@ -148,9 +148,10 @@ class OneDriveIngestionJob(IngestionJob):
         # share a file_path, so the name must include the page to be unique in the DB.
         file_path = doc.metadata.get("file_path") or doc.metadata.get("file_id") or item.id
         page_label = doc.metadata.get("page_label") or ""
-        suffix = f":{page_label}" if page_label else ""
-        safe = re.sub(r"[^\w-]", "_", f"{file_path}{suffix}")
-        return safe[:255]
+        safe_suffix = re.sub(r"[^\w-]", "_", f":{page_label}") if page_label else ""
+        safe_file = re.sub(r"[^\w-]", "_", file_path)
+        max_file_len = 255 - len(safe_suffix)
+        return safe_file[:max_file_len] + safe_suffix
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return OneDrive-specific metadata fields."""
