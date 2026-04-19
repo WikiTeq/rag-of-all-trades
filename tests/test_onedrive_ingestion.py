@@ -210,16 +210,17 @@ class TestOneDriveIngestionJob(unittest.TestCase):
         job = self._make_job()
         self.assertLessEqual(len(job.get_item_name(item)), 255)
 
-    def test_get_document_metadata_includes_file_fields(self):
+    def test_get_extra_metadata_includes_file_fields(self):
         doc = _make_doc(file_id="fmeta", file_name="meta.pdf", file_path="/meta.pdf")
-        item = IngestionItem(id="onedrive:fmeta", source_ref=doc)
+        doc.metadata["page_label"] = "3"
+        item = IngestionItem(id="onedrive:fmeta:3", source_ref=doc)
         job = self._make_job()
         job.get_raw_content(item)  # populate cache
-        metadata = job.get_document_metadata(item, "meta_pdf", "checksum123", 1, None)
-        self.assertEqual(metadata["file_id"], "fmeta")
-        self.assertEqual(metadata["file_name"], "meta.pdf")
-        self.assertEqual(metadata["file_path"], "/meta.pdf")
-        self.assertEqual(metadata["source"], "onedrive")
+        extra = job.get_extra_metadata(item, "some content", {})
+        self.assertEqual(extra["file_id"], "fmeta")
+        self.assertEqual(extra["file_name"], "meta.pdf")
+        self.assertEqual(extra["file_path"], "/meta.pdf")
+        self.assertEqual(extra["page_label"], "3")
 
 
 if __name__ == "__main__":

@@ -137,6 +137,7 @@ class OneDriveIngestionJob(IngestionJob):
         item._metadata_cache["file_path"] = doc.metadata.get("file_path") or ""
         item._metadata_cache["file_name"] = doc.metadata.get("file_name") or ""
         item._metadata_cache["file_id"] = doc.metadata.get("file_id") or ""
+        item._metadata_cache["page_label"] = doc.metadata.get("page_label") or ""
 
         return doc.text or ""
 
@@ -151,24 +152,14 @@ class OneDriveIngestionJob(IngestionJob):
         safe = re.sub(r"[^\w-]", "_", f"{file_path}{suffix}")
         return safe[:255]
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: Any,
-    ) -> dict[str, Any]:
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
-        # Extend base metadata with OneDrive-specific file fields
-        metadata.update(
-            {
-                "file_path": item._metadata_cache.get("file_path", ""),
-                "file_name": item._metadata_cache.get("file_name", ""),
-                "file_id": item._metadata_cache.get("file_id", ""),
-            }
-        )
-        return metadata
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return OneDrive-specific metadata fields."""
+        return {
+            "file_path": item._metadata_cache.get("file_path", ""),
+            "file_name": item._metadata_cache.get("file_name", ""),
+            "file_id": item._metadata_cache.get("file_id", ""),
+            "page_label": item._metadata_cache.get("page_label", ""),
+        }
 
     @staticmethod
     def _parse_last_modified(raw_ts: str | None) -> datetime | None:
