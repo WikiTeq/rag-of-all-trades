@@ -111,6 +111,20 @@ class TestOneDriveIngestionJob(unittest.TestCase):
         self.assertEqual(items[0].id, "onedrive:f1")
         self.assertEqual(items[1].id, "onedrive:f2")
 
+    def test_list_items_unique_ids_for_multipage_file(self):
+        doc1 = _make_doc(file_id="f1", text="page 1")
+        doc1.metadata["page_label"] = "1"
+        doc2 = _make_doc(file_id="f1", text="page 2")
+        doc2.metadata["page_label"] = "2"
+        self.mock_reader.load_data.return_value = [doc1, doc2]
+
+        job = self._make_job()
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0].id, "onedrive:f1:1")
+        self.assertEqual(items[1].id, "onedrive:f1:2")
+
     def test_list_items_passes_mime_types_and_recursive(self):
         self.mock_reader.load_data.return_value = []
         job = self._make_job(mime_types="application/pdf", recursive=False)
