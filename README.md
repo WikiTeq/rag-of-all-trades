@@ -26,6 +26,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * SerpAPI
 * Jira
 * Web
+* Box
 
 ## Embeddings support
 
@@ -323,6 +324,39 @@ JIRA1_SCHEDULES=3600
 # JIRA1_SERVER_URL=https://jira.your-company.com
 # JIRA1_API_TOKEN=your-personal-access-token
 # (set auth_type: "token" in config.yaml; email is not needed)
+```
+
+### Box Connector
+
+The Box connector ingests files from Box cloud storage using Client Credential Grant (CCG) authentication.
+Files can be selected by folder ID (with optional recursive traversal) or by explicit file IDs.
+
+> **Note:** This connector implements CCG (Client Credential Grant) authentication only. JWT and OAuth 2.0 flows are supported by the underlying `box-sdk-gen` SDK but not yet wired up in this connector.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "box"
+    name: "box1"
+    config:
+      box_client_id: "${BOX1_CLIENT_ID}"
+      box_client_secret: "${BOX1_CLIENT_SECRET}"
+      box_enterprise_id: "${BOX1_ENTERPRISE_ID}"
+      folder_id: "0"           # optional: Box folder ID ("0" = root); mutually exclusive with file_ids
+      is_recursive: true       # optional: traverse subfolders, default false
+      # file_ids: "123,456"    # optional: comma-separated file IDs
+      # box_user_id: ""        # optional: user ID for user-level CCG access
+      schedules: "${BOX1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+BOX1_CLIENT_ID=your-box-app-client-id
+BOX1_CLIENT_SECRET=your-box-app-client-secret
+BOX1_ENTERPRISE_ID=your-box-enterprise-id
+BOX1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
