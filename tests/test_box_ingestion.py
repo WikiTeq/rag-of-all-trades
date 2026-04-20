@@ -24,7 +24,7 @@ def _make_doc(
     name="report.pdf",
     path_collection="All Files/Reports",
     text="Hello world",
-    modified_at="2024-01-15T10:30:00Z",
+    modified_at="2024-01-15T10:30:00+00:00",
 ) -> Document:
     doc = Document(text=text)
     doc.metadata = {
@@ -82,6 +82,21 @@ class TestBoxIngestionJob(unittest.TestCase):
         with self.assertRaises(ValueError):
             BoxIngestionJob(
                 {"name": "x", "config": {"box_client_id": "id", "box_client_secret": "s", "folder_id": "0"}}
+            )
+
+    def test_both_folder_id_and_file_ids_raises(self):
+        with self.assertRaises(ValueError):
+            BoxIngestionJob(
+                {
+                    "name": "x",
+                    "config": {
+                        "box_client_id": "id",
+                        "box_client_secret": "s",
+                        "box_enterprise_id": "e",
+                        "folder_id": "0",
+                        "file_ids": "123",
+                    },
+                }
             )
 
     def test_missing_folder_and_file_ids_raises(self):
@@ -148,7 +163,7 @@ class TestBoxIngestionJob(unittest.TestCase):
             list(self._make_job().list_items())
 
     def test_list_items_parses_last_modified(self):
-        doc = _make_doc(modified_at="2024-06-01T12:00:00Z")
+        doc = _make_doc(modified_at="2024-06-01T12:00:00+00:00")
         self.mock_reader.load_data.return_value = [doc]
         items = list(self._make_job().list_items())
         self.assertEqual(items[0].last_modified, datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC))
@@ -158,8 +173,13 @@ class TestBoxIngestionJob(unittest.TestCase):
         doc.metadata.pop("modified_at", None)
         doc.metadata.pop("content_modified_at", None)
         self.mock_reader.load_data.return_value = [doc]
+        before = datetime.now(UTC)
         items = list(self._make_job().list_items())
-        self.assertIsNotNone(items[0].last_modified)
+        after = datetime.now(UTC)
+        self.assertIsNotNone(items[0].last_modified.tzinfo)
+        self.assertLessEqual(
+            abs((items[0].last_modified - before).total_seconds()), (after - before).total_seconds() + 1
+        )
 
     def test_list_items_page_label_suffix(self):
         doc = _make_doc(file_id="f1")

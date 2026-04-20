@@ -87,15 +87,6 @@ sources:
   #    # box_user_id: "${BOX1_USER_ID}"  # optional: user ID for user-level CCG access
   #    schedules: "${BOX1_SCHEDULES}"
 
-  #- type: "box"
-  #  name: "box2"
-  #  config:
-  #    box_client_id: "${BOX2_CLIENT_ID}"
-  #    box_client_secret: "${BOX2_CLIENT_SECRET}"
-  #    box_enterprise_id: "${BOX2_ENTERPRISE_ID}"
-  #    file_ids: "${BOX2_FILE_IDS}"  # comma-separated file IDs
-  #    schedules: "${BOX2_SCHEDULES}"
-
   #- type: "jira"
   #  name: "jira1"
   #  config:
