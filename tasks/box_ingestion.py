@@ -59,8 +59,8 @@ class BoxIngestionJob(IngestionJob):
         self.file_ids: list[str] | None = self._parse_config_list(cfg.get("file_ids"))
         self.is_recursive: bool = BoxIngestionJob._parse_bool(cfg.get("is_recursive"), default=False)
 
-        if self.folder_id is None and self.file_ids is None:
-            raise ValueError("Box connector requires either folder_id or file_ids in config")
+        if (self.folder_id is None) == (self.file_ids is None):
+            raise ValueError("Box connector config requires exactly one of folder_id or file_ids")
 
         ccg_config = CCGConfig(
             client_id=self.box_client_id,
@@ -98,7 +98,7 @@ class BoxIngestionJob(IngestionJob):
         logger.info(f"[{self.source_name}] Found {len(docs)} document(s)")
 
         for doc in docs:
-            file_id = doc.metadata.get("box_file_id") or doc.doc_id or ""
+            file_id = doc.metadata.get("box_file_id") or doc.id_ or ""
             last_modified = self._parse_last_modified(
                 doc.metadata.get("modified_at") or doc.metadata.get("content_modified_at")
             )
