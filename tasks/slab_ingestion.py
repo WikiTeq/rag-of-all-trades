@@ -89,7 +89,10 @@ class SlabGraphQLClient:
             try:
                 resp = requests.post(SLAB_GRAPHQL_URL, headers=self._headers, json=payload, timeout=60)
                 resp.raise_for_status()
-                return resp.json()
+                data = resp.json()
+                if data.get("errors"):
+                    raise requests.exceptions.HTTPError(f"GraphQL errors for {SLAB_GRAPHQL_URL}: {data['errors']}")
+                return data
             except (requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
                 last_exc = e
                 if attempt < self.max_retries - 1:
@@ -137,11 +140,21 @@ class SlabIngestionJob(IngestionJob):
         self.topic_ids: list[str] = list(raw_topics)
 
         self.search_batch_size = int(cfg.get("search_batch_size", 100))
+        if self.search_batch_size <= 0:
+            raise ValueError("search_batch_size must be > 0")
+
+        max_retries = int(cfg.get("max_retries", 3))
+        if max_retries < 1:
+            raise ValueError("max_retries must be >= 1")
+
+        retry_delay = float(cfg.get("retry_delay", 2))
+        if retry_delay < 0:
+            raise ValueError("retry_delay must be >= 0")
 
         self._client = SlabGraphQLClient(
             api_token=api_token,
-            max_retries=int(cfg.get("max_retries", 3)),
-            retry_delay=float(cfg.get("retry_delay", 2)),
+            max_retries=max_retries,
+            retry_delay=retry_delay,
             source_name=self.source_name,
         )
 
@@ -260,6 +273,8 @@ class SlabIngestionJob(IngestionJob):
             ops = json.loads(raw)
         except (ValueError, TypeError):
             return raw
+        if isinstance(ops, dict) and isinstance(ops.get("ops"), list):
+            ops = ops["ops"]
         if not isinstance(ops, list):
             return raw
         parts = []

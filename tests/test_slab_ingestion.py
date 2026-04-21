@@ -9,7 +9,15 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.slab_ingestion import SlabIngestionJob
 
 
-def _make_job(api_token="test-token", topic_ids=None):
+def _make_job_with_cfg(cfg: dict):
+    config = {"name": "slab-test", "config": cfg}
+    with patch("tasks.base.MetadataTracker"), patch("tasks.base.VectorStoreManager"):
+        return SlabIngestionJob(config)
+
+
+def _make_job(api_token=None, topic_ids=None):
+    if api_token is None:
+        api_token = "test-token"
     cfg: dict = {"api_token": api_token}
     if topic_ids is not None:
         cfg["topic_ids"] = topic_ids
@@ -34,6 +42,18 @@ class TestSlabIngestionInit(unittest.TestCase):
     def test_missing_api_token_raises(self):
         with self.assertRaises(ValueError, msg="api_token is required"):
             _make_job(api_token="")
+
+    def test_invalid_search_batch_size_raises(self):
+        with self.assertRaises(ValueError):
+            _make_job_with_cfg({"api_token": "t", "search_batch_size": 0})
+
+    def test_invalid_max_retries_raises(self):
+        with self.assertRaises(ValueError):
+            _make_job_with_cfg({"api_token": "t", "max_retries": 0})
+
+    def test_invalid_retry_delay_raises(self):
+        with self.assertRaises(ValueError):
+            _make_job_with_cfg({"api_token": "t", "retry_delay": -1})
 
 
 class TestSlabListItemsAllPosts(unittest.TestCase):
@@ -150,6 +170,16 @@ class TestSlabGetRawContent(unittest.TestCase):
         result = job.get_raw_content(item)
         self.assertIn("Hello world", result)
 
+    def test_quill_delta_dict_format(self):
+        job = _make_job()
+        delta = json.dumps({"ops": [{"insert": "Hello "}, {"insert": "world\n"}]})
+        item = IngestionItem(
+            id="p1",
+            source_ref={"id": "p1", "title": "Post", "content": delta},
+        )
+        result = job.get_raw_content(item)
+        self.assertIn("Hello world", result)
+
     def test_empty_content(self):
         job = _make_job()
         item = IngestionItem(id="p1", source_ref={"id": "p1", "title": "", "content": ""})
@@ -220,6 +250,15 @@ class TestSlabGetExtraMetadata(unittest.TestCase):
 
 
 class TestSlabGraphqlRetry(unittest.TestCase):
+    def test_raises_on_graphql_errors(self):
+        job = _make_job()
+        error_response = {"errors": [{"message": "Unauthorized"}], "data": None}
+        with patch("tasks.slab_ingestion.requests.post") as mock_post:
+            mock_post.return_value.raise_for_status = lambda: None
+            mock_post.return_value.json.return_value = error_response
+            with self.assertRaises(RuntimeError):
+                job._client.execute("{ test }")
+
     def test_retries_on_timeout(self):
         job = _make_job()
         with patch("tasks.slab_ingestion.requests.post") as mock_post, patch("tasks.slab_ingestion.time.sleep"):
