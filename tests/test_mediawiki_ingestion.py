@@ -316,26 +316,6 @@ class TestProcessItem:
                     job.metadata_tracker.record_metadata.assert_called_once()
                     job.vector_manager.insert_documents.assert_called_once()
 
-
-# ---------------------------------------------------------------------------
-# get_item_checksum
-# ---------------------------------------------------------------------------
-
-
-class TestGetItemChecksum:
-    @pytest.mark.parametrize(
-        "revision,expected",
-        [
-            (98765, "98765"),
-            (0, None),
-            (None, None),
-        ],
-    )
-    def test_get_item_checksum(self, base_wiki_job, revision, expected):
-        job, _ = base_wiki_job
-        item = _make_item("Page", revision=revision)
-        assert job.get_item_checksum(item) == expected
-
     def test_duplicate_content(self, base_wiki_job):
         job, reader = base_wiki_job
 
@@ -357,3 +337,23 @@ class TestGetItemChecksum:
                     assert result == 0
                     job.metadata_tracker.record_metadata.assert_not_called()
                     job.vector_manager.insert_documents.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get_item_checksum
+# ---------------------------------------------------------------------------
+
+
+class TestGetItemChecksum:
+    @pytest.mark.parametrize(
+        "revision,expected",
+        [
+            (98765, "98765"),
+            (0, None),
+            (None, None),
+        ],
+    )
+    def test_get_item_checksum(self, base_wiki_job, revision, expected):
+        job, _ = base_wiki_job
+        item = _make_item("Page", revision=revision)
+        assert job.get_item_checksum(item) == expected
