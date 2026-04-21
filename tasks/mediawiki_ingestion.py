@@ -99,6 +99,21 @@ class MediaWikiIngestionJob(IngestionJob):
                 last_modified=page_record.last_modified,
             )
 
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        """Return the page's lastrevid as a checksum string.
+
+        item.source_ref is a Page dataclass whose revision field holds
+        MediaWiki's lastrevid — a globally incrementing integer incremented on
+        every page edit. Using it avoids fetching full page content just to
+        detect whether a page has changed.
+
+        Returns None when revision is 0 or absent, falling back to content-based MD5.
+        """
+        revision = item.source_ref.revision
+        if revision:
+            return str(revision)
+        return None
+
     def get_raw_content(self, item: IngestionItem) -> str:
         """Fetch and return the raw text content of a MediaWiki page.
 
