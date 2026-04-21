@@ -280,6 +280,36 @@ WEB2_SCHEDULES=60
 
 No other credentials are required for public web pages.
 
+### Slab Connector
+
+The Slab connector ingests posts from a [Slab](https://slab.com/) knowledge base via the Slab GraphQL API.
+Metadata collected per post includes: `url`, `title`, `topic_id`, `topic_name`, `topic_parent_id`, `topic_parent_name`, `topic_ancestors`.
+
+When `topic_ids` is configured, only posts belonging to those topics are ingested.
+When omitted, all organisation posts are fetched using cursor-based pagination.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "slab"
+    name: "slab1"
+    config:
+      api_token: "${SLAB1_API_TOKEN}"
+      # topic_ids: "topic_abc123,topic_def456"  # optional
+      max_retries: 3      # optional, default 3
+      retry_delay: 2      # optional, seconds between retries (default 2)
+      search_batch_size: 100  # optional, posts per search page (default 100)
+      schedules: "${SLAB1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+SLAB1_API_TOKEN=your-slab-api-token
+SLAB1_SCHEDULES=3600
+```
+
 ### Jira Connector
 
 The Jira connector ingests issues from Jira Cloud or on-premise (Server/Data Center) instances using a
