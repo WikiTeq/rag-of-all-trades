@@ -283,7 +283,7 @@ No other credentials are required for public web pages.
 ### Slab Connector
 
 The Slab connector ingests posts from a [Slab](https://slab.com/) knowledge base via the Slab GraphQL API.
-Metadata collected per post includes: id, title, url, topic_id.
+Metadata collected per post includes: `url`, `title`, `topic_id`, `topic_name`, `topic_parent_id`, `topic_parent_name`, `topic_ancestors`.
 
 When `topic_ids` is configured, only posts belonging to those topics are ingested.
 When omitted, all organisation posts are fetched using cursor-based pagination.
