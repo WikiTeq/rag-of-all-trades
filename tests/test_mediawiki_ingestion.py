@@ -46,7 +46,7 @@ def _make_job(config=None, **reader_attrs):
     return job, mock_reader
 
 
-def _make_page(title, last_modified=None, url=None, pageid=1, namespace=0):
+def _make_page(title, last_modified=None, url=None, pageid=1, namespace=0, revision=12345):
     """Return a SimpleNamespace mimicking a MediaWiki page record."""
     return SimpleNamespace(
         title=title,
@@ -54,6 +54,7 @@ def _make_page(title, last_modified=None, url=None, pageid=1, namespace=0):
         url=url,
         pageid=pageid,
         namespace=namespace,
+        revision=revision,
     )
 
 
@@ -336,3 +337,23 @@ class TestProcessItem:
                     assert result == 0
                     job.metadata_tracker.record_metadata.assert_not_called()
                     job.vector_manager.insert_documents.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get_item_checksum
+# ---------------------------------------------------------------------------
+
+
+class TestGetItemChecksum:
+    @pytest.mark.parametrize(
+        "revision,expected",
+        [
+            (98765, "98765"),
+            (0, None),
+            (None, None),
+        ],
+    )
+    def test_get_item_checksum(self, base_wiki_job, revision, expected):
+        job, _ = base_wiki_job
+        item = _make_item("Page", revision=revision)
+        assert job.get_item_checksum(item) == expected
