@@ -49,6 +49,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Trello
 * GitBook
 * Database (MySQL + PostgreSQL)
+* Bitbucket
 
 ## Embeddings support
 
