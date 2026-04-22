@@ -29,6 +29,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Web
 * Pipedrive
 * Slack
+* IMAP
 
 ## Embeddings support
 
@@ -259,7 +260,7 @@ sources:
 SERPAPI1_KEY=xxxx
 SERPAPI1_QUERIES=aaa
 SERPAPI1_SCHEDULES=3600
-````
+```
 
 ### Web Connector
 
@@ -438,6 +439,39 @@ SLACK2_SCHEDULES=3600
 ```
 
 > `channel_ids` and `channel_patterns` are mutually exclusive. `latest_date` requires `earliest_date`.
+
+### IMAP Connector
+
+The IMAP connector ingests emails from any IMAP-capable mail server (Gmail, Outlook, self-hosted, etc.)
+via IMAP4_SSL. Each email becomes a document with the subject as the title and the parsed body as content.
+Metadata collected per email includes: subject, from, to, date, mailbox, message\_id.
+
+Deduplication is based on the `Message-ID` header (cross-mailbox safe). Falls back to mailbox+UID when
+`Message-ID` is absent.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "imap"
+    name: "imap1"
+    config:
+      host: "${IMAP1_HOST}"
+      port: 993                     # optional, default 993 (IMAPS)
+      username: "${IMAP1_USERNAME}"
+      password: "${IMAP1_PASSWORD}" # app-specific password for Gmail
+      mailboxes: "INBOX,Sent"       # optional, comma-separated; omit to ingest all mailboxes
+      schedules: "${IMAP1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+IMAP1_HOST=imap.gmail.com
+IMAP1_USERNAME=your-email@gmail.com
+IMAP1_PASSWORD=your-app-specific-password
+IMAP1_SCHEDULES=3600
+```
 
 ## Reference of the `config.yaml`
 
