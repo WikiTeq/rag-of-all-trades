@@ -29,6 +29,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Web
 * Pipedrive
 * Slack
+* Bitbucket
 
 ## Embeddings support
 

@@ -7,6 +7,8 @@ import requests
 from tasks.bitbucket_ingestion import BitbucketClient, BitbucketIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
+DUMMY_TOKEN = "dummy-api-token-for-tests"  # noqa: S105
+
 
 def _api_response(values, next_url=None):
     resp = Mock()
@@ -113,7 +115,7 @@ class TestBitbucketClient(unittest.TestCase):
 
 def _make_config(
     username="user",
-    api_token="secret",
+    api_token=DUMMY_TOKEN,
     workspace="myworkspace",
     repo="myrepo",
     branch="master",
@@ -328,6 +330,11 @@ class TestBitbucketIngestionJob(unittest.TestCase):
         long_path = "a/" * 200 + "file.md"
         item = IngestionItem(id=f"bitbucket:ws/repo/master/{long_path}", source_ref=long_path)
         self.assertLessEqual(len(self._make_job().get_item_name(item)), 255)
+
+    def test_get_item_name_includes_hash_suffix(self):
+        item = IngestionItem(id="bitbucket:ws/repo/master/README.md", source_ref="README.md")
+        name = self._make_job().get_item_name(item)
+        self.assertRegex(name, r"_[0-9a-f]{8}$")
 
     # ------------------------------------------------------------------
     # get_extra_metadata
