@@ -92,6 +92,16 @@ sources:
   #    max_comments: 10          # optional, default 10
   #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
+  #- type: "imap"
+  #  name: "imap1"
+  #  config:
+  #    host: "${IMAP1_HOST}"
+  #    port: 993                     # optional, default 993 (IMAPS)
+  #    username: "${IMAP1_USERNAME}"
+  #    password: "${IMAP1_PASSWORD}" # app-specific password for Gmail
+  #    mailboxes: "INBOX,Sent"       # optional, comma-separated; omit to ingest all mailboxes
+  #    schedules: "${IMAP1_SCHEDULES}"
+
 embedding:
   provider: openrouter
   model_config: sentence-transformers/all-mpnet-base-v2
