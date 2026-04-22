@@ -439,6 +439,40 @@ SLACK2_SCHEDULES=3600
 
 > `channel_ids` and `channel_patterns` are mutually exclusive. `latest_date` requires `earliest_date`.
 
+### Bitbucket Connector
+
+The Bitbucket connector ingests files from Bitbucket Cloud repositories via the Bitbucket REST API v2.0. Supports workspace/repository scoping, branch selection, recursive file walking, and include/exclude filtering on file extensions and directories.
+
+> **Note:** `include_extensions` and `exclude_extensions` are mutually exclusive. `include_directories` and `exclude_directories` are mutually exclusive.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "bitbucket"
+    name: "bitbucket1"
+    config:
+      username: "${BITBUCKET1_USERNAME}"
+      api_token: "${BITBUCKET1_API_TOKEN}"
+      workspace: "${BITBUCKET1_WORKSPACE}"
+      repo: "${BITBUCKET1_REPO}"
+      branch: "${BITBUCKET1_BRANCH}"        # optional, default "master"
+      include_extensions: "md,txt"          # optional (mutually exclusive with exclude_extensions)
+      include_directories: "docs"           # optional (mutually exclusive with exclude_directories)
+      schedules: "${BITBUCKET1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+BITBUCKET1_USERNAME=your-bitbucket-username
+BITBUCKET1_API_TOKEN=your-app-password
+BITBUCKET1_WORKSPACE=your-workspace-slug
+BITBUCKET1_REPO=your-repo-slug
+BITBUCKET1_BRANCH=master
+BITBUCKET1_SCHEDULES=3600
+```
+
 ## Reference of the `config.yaml`
 
 The `config.yaml` file contains the main configuration of the service.
