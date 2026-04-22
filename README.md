@@ -41,6 +41,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Notion
 * Dropbox
 * BookStack
+* Bitbucket
 
 ## Embeddings support
 
