@@ -1,9 +1,11 @@
 # Standard library imports
+import hashlib
 import logging
 import re
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
+from urllib.parse import quote
 
 # Third-party imports
 import requests
@@ -29,24 +31,31 @@ class BitbucketClient:
     def __init__(self, username: str, api_token: str) -> None:
         self._auth = HTTPBasicAuth(username, api_token)
 
+    def _src_url(self, workspace: str, repo: str, branch: str, path: str = "") -> str:
+        enc_ws = quote(workspace, safe="")
+        enc_repo = quote(repo, safe="")
+        enc_branch = quote(branch, safe="")
+        enc_path = quote(path, safe="/")
+        return f"{self.API_BASE}/repositories/{enc_ws}/{enc_repo}/src/{enc_branch}/{enc_path}"
+
     def list_files(self, workspace: str, repo: str, branch: str, path: str = "") -> Iterator[dict[str, Any]]:
         """Yield all ``commit_file`` entries from the repository, recursively.
 
         Paginates each directory listing via the ``next`` cursor and recurses
         into ``commit_directory`` entries.
         """
-        url = f"{self.API_BASE}/repositories/{workspace}/{repo}/src/{branch}/{path}"
+        url = self._src_url(workspace, repo, branch, path)
         params: dict[str, Any] = {"pagelen": 100}
 
         while url:
             try:
                 resp = requests.get(url, auth=self._auth, params=params, timeout=30)
                 resp.raise_for_status()
-            except requests.RequestException as e:
+                data = resp.json()
+            except (requests.RequestException, ValueError) as e:
                 logger.error(f"Bitbucket API error listing {path or '/'!r} in {workspace}/{repo}@{branch}: {e}")
                 break
 
-            data = resp.json()
             params = {}
 
             for entry in data.get("values", []):
@@ -62,7 +71,7 @@ class BitbucketClient:
 
     def get_file_content(self, workspace: str, repo: str, branch: str, path: str) -> str:
         """Fetch and return the raw text content of a single file."""
-        url = f"{self.API_BASE}/repositories/{workspace}/{repo}/src/{branch}/{path}"
+        url = self._src_url(workspace, repo, branch, path)
         try:
             resp = requests.get(url, auth=self._auth, timeout=30)
             resp.raise_for_status()
@@ -192,8 +201,9 @@ class BitbucketIngestionJob(IngestionJob):
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe identifier for the file."""
         raw = f"{self.workspace}_{self.repo}_{self.branch}_{item.source_ref}"
+        suffix = "_" + hashlib.sha1(raw.encode(), usedforsecurity=False).hexdigest()[:8]
         safe = re.sub(r"[^\w\-.]", "_", raw)
-        return safe[:255]
+        return safe[: 255 - len(suffix)] + suffix
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return Bitbucket-specific metadata fields."""
