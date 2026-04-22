@@ -47,6 +47,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * GitLab
 * Trello
 * GitBook
+* Bitbucket
 
 ## Embeddings support
 
