@@ -1,4 +1,5 @@
 from tasks.base import IngestionJob
+from tasks.bitbucket_ingestion import BitbucketIngestionJob
 from tasks.bookstack_ingestion import BookStackIngestionJob
 from tasks.confluence_ingestion import ConfluenceIngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
@@ -50,3 +51,4 @@ IngestionJobFactory.register("github", GitHubIngestionJob)
 IngestionJobFactory.register("notion", NotionIngestionJob)
 IngestionJobFactory.register("dropbox", DropboxIngestionJob)
 IngestionJobFactory.register("confluence", ConfluenceIngestionJob)
+IngestionJobFactory.register("bitbucket", BitbucketIngestionJob)
