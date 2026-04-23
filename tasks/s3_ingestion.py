@@ -1,16 +1,15 @@
 import io
-import logging
 
 from markitdown import MarkItDown
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.logger import logging
 from utils.parse import parse_list
 from utils.s3_client import get_s3_client
 from utils.text import sanitize_ascii_key
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 

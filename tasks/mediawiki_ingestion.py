@@ -1,5 +1,4 @@
 # Standard library imports
-import logging
 from collections.abc import Iterator
 from typing import Any
 
@@ -9,11 +8,10 @@ from llama_index.readers.mediawiki import MediaWikiReader
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.logger import logging
 from utils.text import slugify
 
 # Configure logging
-# TODO: Logging should not be done here and in s3, but in the main module
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 

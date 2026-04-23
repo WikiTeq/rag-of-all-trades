@@ -1,4 +1,3 @@
-import logging
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
@@ -8,11 +7,11 @@ from pydantic import BaseModel, field_validator
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.logger import logging
 from utils.parse import parse_list
 from utils.text import sanitize_ascii_key
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 

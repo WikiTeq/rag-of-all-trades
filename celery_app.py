@@ -1,14 +1,12 @@
-import logging
-
 from celery import Celery
 from celery.signals import worker_process_init, worker_process_shutdown
 from celery_singleton import Singleton
 
 from utils.config import settings
 from utils.db import engine
+from utils.logger import logging
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 celery_app = Celery(

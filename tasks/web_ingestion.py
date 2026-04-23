@@ -1,4 +1,3 @@
-import logging
 from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -9,10 +8,12 @@ from llama_index.readers.web.sitemap.base import SitemapReader
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 from utils.config_validation import mutually_exclusive
+from utils.logger import logging
 from utils.parse import parse_bool, parse_list
 from utils.text import slugify
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+# Configure logging
+
 logger = logging.getLogger(__name__)
 
 

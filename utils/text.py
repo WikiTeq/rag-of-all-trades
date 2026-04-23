@@ -30,7 +30,7 @@ def slugify(
     result = re.sub(r"[^\w\-]", "_", result)
     result = result.strip("_")[:max_len]
     if not result:
-        result = hashlib.md5(value.encode("utf-8")).hexdigest()[:8]
+        result = hashlib.md5(value.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
     return result
 
 
