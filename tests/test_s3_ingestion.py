@@ -1,9 +1,10 @@
 """Tests for S3IngestionJob (Pytest version)."""
 
 import io
-import pytest
 from datetime import datetime
 from unittest.mock import Mock, patch
+
+import pytest
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.s3_ingestion import S3IngestionJob
@@ -18,8 +19,10 @@ class TestS3IngestionJob:
         self.mock_s3 = Mock()
         self.mock_md = Mock()
 
-        with patch("tasks.s3_ingestion.get_s3_client", return_value=(self.mock_s3, None)), \
-             patch("tasks.s3_ingestion.MarkItDown", return_value=self.mock_md):
+        with (
+            patch("tasks.s3_ingestion.get_s3_client", return_value=(self.mock_s3, None)),
+            patch("tasks.s3_ingestion.MarkItDown", return_value=self.mock_md),
+        ):
             self.config = {"name": "test", "config": {"buckets": ["bucket-a"]}}
             yield
 
@@ -31,15 +34,17 @@ class TestS3IngestionJob:
         job = S3IngestionJob({"name": "test", "config": {"buckets": " a, b, ,c "}})
         assert job.buckets == ["a", "b", "c"]
 
-    def test_sanitize_s3_key_normalizes(self):
+    def test_get_item_name_sanitizes_key(self):
         job = S3IngestionJob(self.config)
         key = "Angstrom / space\\test?.txt"
-        assert job.sanitize_s3_key(key) == "Angstrom_space_test.txt"
+        item = IngestionItem(id="s3://bucket-a/x", source_ref=("bucket-a", key))
+        assert job.get_item_name(item) == "Angstrom_space_test.txt"
 
-    def test_sanitize_s3_key_truncates(self):
+    def test_get_item_name_truncates(self):
         job = S3IngestionJob(self.config)
         key = "a" * 300
-        assert job.sanitize_s3_key(key) == "a" * 255
+        item = IngestionItem(id="s3://bucket-a/x", source_ref=("bucket-a", key))
+        assert job.get_item_name(item) == "a" * 255
 
     def test_list_items_pagination_and_filters(self):
         last_modified_1 = datetime(2024, 1, 1)
