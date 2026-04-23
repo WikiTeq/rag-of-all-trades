@@ -1,14 +1,13 @@
-import logging
 from datetime import UTC, datetime
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 from utils.http import RetrySession
+from utils.logger import logging
 from utils.parse import parse_list
 from utils.text import slugify
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
