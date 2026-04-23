@@ -1,6 +1,4 @@
 import logging
-import re
-import unicodedata
 from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +8,8 @@ from pydantic import BaseModel, field_validator
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_list
+from utils.text import sanitize_ascii_key
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -56,21 +56,12 @@ class DirectoryConnectorConfig(BaseModel):
 
         Accepts a comma-separated string ("txt,md") or a YAML list (["txt", "md"]).
         """
-        if v is None:
+        values = parse_list(v, lower=True)
+        if not values:
             return None
 
-        values = v.split(",") if isinstance(v, str) else v
-
-        exts = []
-        for item in values:
-            normalized = str(item).strip().lower()
-            if not normalized:
-                continue
-            if not normalized.startswith("."):
-                normalized = f".{normalized}"
-            exts.append(normalized)
-
-        return sorted(set(exts)) or None
+        exts = {v if v.startswith(".") else f".{v}" for v in values}
+        return sorted(exts) or None
 
 
 class DirectoryIngestionJob(IngestionJob):
@@ -105,11 +96,7 @@ class DirectoryIngestionJob(IngestionJob):
 
     def _sanitize_path(self, path: str) -> str:
         """Normalize a relative path into a filesystem-safe key."""
-        path = unicodedata.normalize("NFKD", path)
-        path = path.encode("ascii", "ignore").decode("ascii")
-        path = re.sub(r"[ \\/]+", "_", path)
-        path = re.sub(r"[^a-zA-Z0-9\-_\.]", "", path)
-        return path[:255]
+        return sanitize_ascii_key(path, max_len=255)
 
     def _get_discovered_paths(self) -> Iterable[Path]:
         """Yield resolved file paths under the configured directory.

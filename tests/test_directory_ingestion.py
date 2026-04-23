@@ -143,6 +143,17 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             )
             self.assertIsNone(job.connector_config.required_exts)
 
+    def test_required_exts_accepts_list_input(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job = DirectoryIngestionJob(
+                {
+                    "name": "local",
+                    "config": {"path": temp_dir, "required_exts": ["TXT", " md ", None, ""]},
+                }
+            )
+
+            self.assertEqual(job.connector_config.required_exts, [".md", ".txt"])
+
     def test_get_raw_content_uses_simple_directory_reader(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             file_path = Path(temp_dir) / "doc.txt"
