@@ -1,7 +1,5 @@
 # Standard library imports
-import hashlib
 import logging
-import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -11,6 +9,7 @@ from llama_index.readers.mediawiki import MediaWikiReader
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.text import slugify
 
 # Configure logging
 # TODO: Logging should not be done here and in s3, but in the main module
@@ -132,19 +131,7 @@ class MediaWikiIngestionJob(IngestionJob):
             Sanitized filename safe for filesystem storage (255 char limit)
         """
         page_title = item.source_ref.title
-
-        # Preserve namespace distinction: : -> __, / -> _, then other bad chars -> _
-        safe_name = page_title.replace(":", "__").replace("/", "_")
-        safe_name = re.sub(r"[^\w\-_.]", "_", safe_name)
-
-        # Ensure it doesn't start/end with underscore and limit length
-        safe_name = safe_name.strip("_")[:255]
-
-        # Fallback for empty after sanitization (MD5 used for uniqueness only, not crypto)
-        if not safe_name:
-            safe_name = f"page_{hashlib.md5(page_title.encode('utf-8')).hexdigest()[:8]}"
-
-        return safe_name
+        return slugify(page_title, max_len=255, extra_replacements={":": "__", "/": "_"})
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Provide MediaWiki-specific metadata for the page.
