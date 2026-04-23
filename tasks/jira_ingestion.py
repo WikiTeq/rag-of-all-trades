@@ -1,8 +1,6 @@
 # Standard library imports
 import logging
-import re
 from collections.abc import Iterator
-from datetime import datetime
 from typing import Any
 
 # Third-party imports
@@ -12,6 +10,8 @@ from markitdown import MarkItDown
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_bool, parse_timestamp
+from utils.text import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +76,7 @@ class JiraIngestionJob(IngestionJob):
         if self.max_results <= 0:
             raise ValueError("max_results must be positive")
 
-        self.load_comments = bool(cfg.get("load_comments", False))
+        self.load_comments = parse_bool(cfg.get("load_comments", False))
         self.max_comments = int(cfg.get("max_comments", 10))
         if self.max_comments <= 0:
             raise ValueError("max_comments must be positive")
@@ -140,7 +140,7 @@ class JiraIngestionJob(IngestionJob):
                 break
 
             for issue in issues:
-                updated_at = self._parse_jira_timestamp(getattr(issue.fields, "updated", None))
+                updated_at = parse_timestamp(getattr(issue.fields, "updated", None))
                 yield IngestionItem(
                     id=f"jira:{issue.key}",
                     source_ref=issue,
@@ -193,8 +193,7 @@ class JiraIngestionJob(IngestionJob):
         """Return a filesystem-safe identifier for the issue (e.g. ``PROJ-123``)."""
         issue = item.source_ref
         key = getattr(issue, "key", "") or item.id
-        safe = re.sub(r"[^\w\-]", "_", key)
-        return safe[:255]
+        return slugify(key, max_len=255)
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return Jira-specific metadata fields."""
@@ -305,15 +304,3 @@ class JiraIngestionJob(IngestionJob):
         if obj is None:
             return None
         return getattr(obj, sub_attr, None)
-
-    @staticmethod
-    def _parse_jira_timestamp(value: str | None) -> datetime | None:
-        """Parse a Jira ISO-8601 timestamp string into a datetime object."""
-        if not value:
-            return None
-        try:
-            # Jira returns e.g. "2024-01-15T10:30:00.000+0000"
-            # Python's fromisoformat handles this in 3.11+
-            return datetime.fromisoformat(value)
-        except (ValueError, TypeError):
-            return None

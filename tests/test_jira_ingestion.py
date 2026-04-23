@@ -218,6 +218,10 @@ class TestJiraIngestionJob(unittest.TestCase):
         with self.assertRaises(ValueError):
             self._make_job(load_comments=True, max_comments=0)
 
+    def test_load_comments_parses_string_false(self):
+        job = self._make_job(load_comments="false")
+        self.assertFalse(job.load_comments)
+
     # ------------------------------------------------------------------
     # list_items
     # ------------------------------------------------------------------
@@ -616,23 +620,6 @@ class TestJiraIngestionJob(unittest.TestCase):
         job = self._make_job()
         result = job._extract_adf_text(adf)
         self.assertIn("Item one", result)
-
-    # ------------------------------------------------------------------
-    # _parse_jira_timestamp
-    # ------------------------------------------------------------------
-
-    def test_parse_jira_timestamp_valid(self):
-        result = JiraIngestionJob._parse_jira_timestamp("2024-06-15T10:30:00.000+0000")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.year, 2024)
-        self.assertEqual(result.month, 6)
-        self.assertEqual(result.day, 15)
-
-    def test_parse_jira_timestamp_none_returns_none(self):
-        self.assertIsNone(JiraIngestionJob._parse_jira_timestamp(None))
-
-    def test_parse_jira_timestamp_invalid_returns_none(self):
-        self.assertIsNone(JiraIngestionJob._parse_jira_timestamp("not-a-date"))
 
     # ------------------------------------------------------------------
     # Integration: process_item delegates to base with correct data
