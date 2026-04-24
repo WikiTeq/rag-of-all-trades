@@ -63,7 +63,10 @@ sources:
   #    urls:
   #      - https://example.com/page1
   #      - https://example.com/page2
-  #    html_to_text: true   # optional, default true
+  #    html_to_text: true        # optional, default true
+  #    depth: 0                  # optional, BFS levels to follow from seed URLs (default 0)
+  #    same_domain_only: true    # optional, restrict crawl to seed hosts (default true)
+  #    max_pages: 100            # optional, hard cap on total pages crawled
   #    schedules: "${WEB1_SCHEDULES}"
 
   #- type: "web"
