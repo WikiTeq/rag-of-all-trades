@@ -240,7 +240,7 @@ class WebIngestionJob(IngestionJob):
                     # Resolve relative links against <base href> if present, otherwise
                     # against the current page URL.
                     base_tag = soup.find("base", href=True)
-                    base_url = base_tag["href"] if base_tag else url
+                    base_url = urljoin(url, base_tag["href"]) if base_tag else url
 
                     for tag in soup.find_all("a", href=True):
                         link = _canon(urljoin(base_url, tag["href"]))
