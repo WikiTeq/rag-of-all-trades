@@ -28,11 +28,11 @@ def graphql_request(
 
     try:
         body: dict[str, Any] = resp.json()
-    except Exception as exc:
+    except ValueError as exc:
         raise GraphQLError(f"Non-JSON response: {resp.text[:200]}") from exc
 
     if errors := body.get("errors"):
-        messages = "; ".join(e.get("message", str(e)) for e in errors)
+        messages = "; ".join(e.get("message", str(e)) if isinstance(e, dict) else str(e) for e in errors)
         raise GraphQLError(f"GraphQL errors: {messages}")
 
     return body.get("data", {})

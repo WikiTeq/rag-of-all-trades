@@ -1,6 +1,10 @@
 import logging
 
-# Configure root logger globally
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-)
+_FMT = "%(asctime)s [%(levelname)s] %(message)s"
+
+
+def configure_logging() -> None:
+    logging.basicConfig(level=logging.INFO, format=_FMT)
+
+
+configure_logging()
