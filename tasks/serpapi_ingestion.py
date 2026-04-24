@@ -1,13 +1,12 @@
+import logging
 from datetime import UTC, datetime
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 from utils.http import RetrySession
-from utils.logger import logging
 from utils.parse import parse_list
 from utils.text import slugify
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
 
@@ -29,8 +28,8 @@ class SerpAPIIngestionJob(IngestionJob):
             raise ValueError(f"[{config.get('name')}] SerpAPI connector requires at least one query")
 
         self.search_queries = queries
-
         self.serpapi_endpoint = "https://serpapi.com/search"
+        self._session = RetrySession()
 
     def list_items(self):
         for query in self.search_queries:
@@ -49,7 +48,7 @@ class SerpAPIIngestionJob(IngestionJob):
                 "api_key": self.api_key,
             }
 
-            resp = RetrySession().get(self.serpapi_endpoint, params=params)
+            resp = self._session.get(self.serpapi_endpoint, params=params)
             resp.raise_for_status()
 
             data = resp.json()

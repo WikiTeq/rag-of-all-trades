@@ -1,19 +1,15 @@
-# Standard library imports
+import logging
 from collections.abc import Iterator
 from typing import Any
 
-# Third-party imports
 from jira import JIRA
 from markitdown import MarkItDown
 
-# Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from utils.logger import logging
 from utils.parse import parse_bool, parse_timestamp
 from utils.text import slugify
 
-# Configure logging
 logger = logging.getLogger(__name__)
 
 

@@ -26,8 +26,12 @@ class RetrySession:
     def get(self, url: str, *, params: Any = None, headers: dict | None = None) -> requests.Response:
         return self._request("GET", url, params=params, headers=headers)
 
-    def post(self, url: str, *, json: Any = None, headers: dict | None = None) -> requests.Response:
-        return self._request("POST", url, json=json, headers=headers)
+    def post(
+        self, url: str, *, json: Any = None, headers: dict | None = None, retry: bool = False
+    ) -> requests.Response:
+        if retry:
+            return self._request("POST", url, json=json, headers=headers)
+        return self._session.request("POST", url, json=json, headers=headers or {}, timeout=self.timeout)
 
     def _request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         headers = kwargs.pop("headers", None) or {}
@@ -78,8 +82,8 @@ class RetrySession:
 
         if last_exc:
             raise last_exc
-        # Last response was a non-retryable error or max retries exhausted
-        return resp  # type: ignore[return-value]
+        assert resp is not None, "unreachable: no exception but also no response"
+        return resp
 
     def close(self) -> None:
         self._session.close()
