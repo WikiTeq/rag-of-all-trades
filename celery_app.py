@@ -6,9 +6,9 @@ from celery_singleton import Singleton
 
 from utils.config import settings
 from utils.db import engine
+from utils.logger import configure_logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+configure_logging()
 logger = logging.getLogger(__name__)
 
 celery_app = Celery(
