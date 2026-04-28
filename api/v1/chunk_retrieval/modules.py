@@ -1,6 +1,4 @@
-from contextlib import nullcontext
-
-from langfuse import get_client
+from langfuse import observe
 from llama_index.core import Settings, VectorStoreIndex
 from llama_index.core.schema import NodeWithScore
 from llama_index.core.vector_stores.types import (
@@ -13,7 +11,6 @@ from llama_index.core.vector_stores.types import (
 
 from api.v1.chunk_retrieval.schema import MetadataFilterItem
 from utils.llm_embedding import embed_model, llm
-from utils.observability import is_enabled
 
 Settings.llm = llm
 Settings.embed_model = embed_model
@@ -77,6 +74,7 @@ class RAGQueryEngine:
         return refs
 
     # Retrieve top K with optional metadata filter
+    @observe(name="Query")
     def retrieve_top_k(
         self,
         query: str,
@@ -95,7 +93,5 @@ class RAGQueryEngine:
             filters=metadata_filters,
         )
 
-        ctx = get_client().start_as_current_observation(as_type="span", name="Query") if is_enabled() else nullcontext()
-        with ctx:
-            nodes = retriever.retrieve(query)
+        nodes = retriever.retrieve(query)
         return nodes
