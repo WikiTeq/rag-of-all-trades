@@ -475,6 +475,20 @@ curl -X 'POST' \
 }'
 ```
 
+If `API_KEY` is configured, include the `Authorization` header:
+
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/api/v1/query' \
+  -H 'accept: application/json' \
+  -H 'Authorization: Bearer your-api-key' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "query": "AWS Services",
+  "top_k": 5
+}'
+```
+
 **Response example**:
 
 ```json
@@ -516,6 +530,19 @@ This endpoint rephrases the query and provides the best answer.
 curl -X 'POST' \
   'http://localhost:8000/api/v1/rephrase' \
   -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "query": "WAF Captcha challenges for suspicious requests"
+}'
+```
+
+If `API_KEY` is configured, include the `Authorization` header:
+
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/api/v1/rephrase' \
+  -H 'accept: application/json' \
+  -H 'Authorization: Bearer your-api-key' \
   -H 'Content-Type: application/json' \
   -d '{
   "query": "WAF Captcha challenges for suspicious requests"
