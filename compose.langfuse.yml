@@ -1,6 +1,6 @@
-# compose.langfuse.yaml
-# Extends compose.yml to include a self-hosted Langfuse instance (v3).
-# Usage: docker compose -f compose.yml -f compose.dev.yml -f compose.langfuse.yaml up -d
+# compose.langfuse.yml
+# Self-hosted Langfuse instance (v3). Can be run standalone or as an overlay.
+# Usage: docker compose -f compose.langfuse.yml up -d
 #
 # Based on: https://github.com/langfuse/langfuse/blob/main/docker-compose.yml
 #
@@ -29,7 +29,7 @@ services:
       NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
       SALT: ${LANGFUSE_SALT:?LANGFUSE_SALT is required}
       ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?LANGFUSE_ENCRYPTION_KEY is required}
-      TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-true}
+      TELEMETRY_ENABLED: ${LANGFUSE_TELEMETRY_ENABLED:-false}
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
       CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
       CLICKHOUSE_URL: http://langfuse-clickhouse:8123

@@ -125,10 +125,10 @@ LANGFUSE_BASE_URL=https://cloud.langfuse.com  # or your self-hosted URL
 
 ### Self-hosted Langfuse
 
-To run a local Langfuse instance alongside ROAT, use the provided Compose override:
+To run a local Langfuse instance alongside ROAT, use the provided Compose file:
 
 ```bash
-docker compose -f compose.yml -f compose.langfuse.yaml up -d
+docker compose -f compose.langfuse.yml up -d
 ```
 
 All Langfuse services are prefixed with `langfuse-` (e.g. `langfuse-web`, `langfuse-db`) to avoid conflicts with ROAT's own `postgres` and `redis` services.
