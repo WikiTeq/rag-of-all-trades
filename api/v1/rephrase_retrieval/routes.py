@@ -49,7 +49,7 @@ def limit(func):
     return wrapper
 
 
-@router.post("/", response_model=QueryResponse)
+@router.post("", response_model=QueryResponse)
 @limit
 async def query_endpoint(
     request: Request,
