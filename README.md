@@ -460,13 +460,13 @@ You must set `OPENROUTER_API_KEY` and `OPENROUTER_API_BASE` in the `.env` file.
 
 The following API endpoints are available:
 
-### /api/v1/query/
+### /api/v1/query
 
 This endpoint is used to perform a query against the vector store:
 
 ```bash
 curl -X 'POST' \
-  'http://localhost:8000/api/v1/query/' \
+  'http://localhost:8000/api/v1/query' \
   -H 'accept: application/json' \
   -H 'Content-Type: application/json' \
   -d '{
@@ -506,7 +506,7 @@ curl -X 'POST' \
 }
 ```
 
-### /api/v1/rephrase/
+### /api/v1/rephrase
 
 This endpoint rephrases the query and provides the best answer.
 
@@ -514,7 +514,7 @@ This endpoint rephrases the query and provides the best answer.
 
 ```bash
 curl -X 'POST' \
-  'http://localhost:8000/api/v1/rephrase/' \
+  'http://localhost:8000/api/v1/rephrase' \
   -H 'accept: application/json' \
   -H 'Content-Type: application/json' \
   -d '{
