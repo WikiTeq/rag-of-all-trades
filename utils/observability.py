@@ -1,10 +1,12 @@
 import logging
 
+from langfuse import get_client
 from openinference.instrumentation.llama_index import LlamaIndexInstrumentor
 
 logger = logging.getLogger(__name__)
 
 _instrumentor = LlamaIndexInstrumentor()
+langfuse_client = get_client()
 
 
 def is_enabled() -> bool:
@@ -26,4 +28,10 @@ def setup_observability(config: dict) -> None:
 
     _instrumentor.instrument()
 
-    logger.info("Langfuse observability enabled")
+    try:
+        if langfuse_client.auth_check():
+            logger.info("Langfuse client is authenticated and ready!")
+        else:
+            logger.warning("Langfuse authentication failed. Please check your credentials and host.")
+    except Exception:
+        logger.warning("Langfuse auth check failed. Langfuse may not be reachable.")
