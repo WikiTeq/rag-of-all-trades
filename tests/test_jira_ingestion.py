@@ -432,15 +432,17 @@ class TestJiraIngestionJob(unittest.TestCase):
         md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
-        # 5 comments, but max_comments=2
-        comments = []
+        # 5 comments available; mock honours max_results as the real API would
+        all_comments = []
         for i in range(5):
             c = Mock()
             c.author = Mock(displayName=f"User{i}")
             c.created = "2024-06-01T10:00:00.000+0000"
             c.body = f"Comment {i}"
-            comments.append(c)
-        self.mock_jira.comments.return_value = comments
+            all_comments.append(c)
+        self.mock_jira.comments.side_effect = lambda issue, max_results=None: (
+            all_comments[:max_results] if max_results else all_comments
+        )
 
         job = self._make_job(load_comments=True, max_comments=2)
         content = job.get_raw_content(item)

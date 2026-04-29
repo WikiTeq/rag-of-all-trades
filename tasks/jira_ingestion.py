@@ -215,7 +215,7 @@ class JiraIngestionJob(IngestionJob):
     def _build_comments_section(self, issue: Any) -> str:
         """Fetch and format the top N comments for an issue as Markdown."""
         try:
-            comments = self._jira.comments(issue)
+            comments = self._jira.comments(issue, max_results=self.max_comments)
         except Exception as e:
             logger.warning(f"[{self.source_name}] Failed to fetch comments for {issue.key}: {e}")
             return ""
@@ -223,12 +223,13 @@ class JiraIngestionJob(IngestionJob):
         if not comments:
             return ""
 
-        top_comments = comments[: self.max_comments]
         lines: list[str] = ["## Comments"]
-        for comment in top_comments:
+        for comment in comments:
             author = self._safe_display_name(getattr(comment, "author", None))
             created = getattr(comment, "created", "") or ""
             body = getattr(comment, "body", "") or ""
+            if body == "":
+                continue
             if isinstance(body, dict):
                 body = self._extract_adf_text(body)
             body = self.convert_to_markdown(body).strip()
@@ -244,9 +245,11 @@ class JiraIngestionJob(IngestionJob):
         def walk(node: Any) -> None:
             if isinstance(node, dict):
                 node_type = node.get("type", "")
+                # Text leaf node
                 if node_type == "text":
                     text_parts.append(node.get("text", ""))
                     return
+                # Heading — prepend Markdown '#' markers
                 if node_type == "heading":
                     level = node.get("attrs", {}).get("level", 1)
                     prefix = "#" * level + " "
