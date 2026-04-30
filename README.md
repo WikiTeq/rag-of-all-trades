@@ -15,6 +15,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Ingestion from MediaWiki with Wiki-to-Markdown conversion via [html2text](https://github.com/Alir3z4/html2text)
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
+* Confluence ingestion from Cloud and Server/Data Center instances via LlamaIndex reader
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -25,6 +26,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * MediaWiki
 * SerpAPI
 * Jira
+* Confluence
 * Web
 
 ## Embeddings support
@@ -323,6 +325,89 @@ JIRA1_SCHEDULES=3600
 # JIRA1_SERVER_URL=https://jira.your-company.com
 # JIRA1_API_TOKEN=your-personal-access-token
 # (set auth_type: "token" in config.yaml; email is not needed)
+```
+
+### Confluence Connector
+
+The Confluence connector ingests pages from Atlassian Confluence Cloud or Server / Data Center using the
+[LlamaIndex Confluence reader](https://llamahub.ai/l/readers/llama-index-readers-confluence).
+Metadata collected per page includes: page_id, title, url, space_key.
+
+Exactly one discovery mode is required per source:
+- `space_key` — all pages in a space
+- `page_ids` — comma-separated list of specific page IDs
+- `page_label` — all pages with a given label
+- `cql` — arbitrary CQL query
+- `folder_id` — all pages inside a folder
+
+Supported auth (mutually exclusive):
+- `api_token` (+ optional `username`) — token auth, recommended for Cloud
+- `username` + `password` — basic auth, for Server / Data Center
+
+```yaml
+# config.yaml
+
+sources:
+  # Load all pages from a space (space_key mode)
+  - type: "confluence"
+    name: "confluence1"
+    config:
+      base_url: "${CONFLUENCE1_BASE_URL}"       # e.g. https://yoursite.atlassian.net/wiki
+      username: "${CONFLUENCE1_USERNAME}"       # optional; email for Cloud token auth
+      api_token: "${CONFLUENCE1_API_TOKEN}"     # mutually exclusive with password
+      cloud: true                               # true for Cloud, false for Server/DC (default true)
+      space_key: "${CONFLUENCE1_SPACE_KEY}"     # discovery mode: all pages in this space
+      page_status: "current"                   # optional, filter by status (space_key mode only)
+      max_pages: 50                            # optional, default 50
+      schedules: "${CONFLUENCE1_SCHEDULES}"
+
+  # Load specific pages by ID
+  #- type: "confluence"
+  #  name: "confluence2"
+  #  config:
+  #    base_url: "${CONFLUENCE2_BASE_URL}"
+  #    api_token: "${CONFLUENCE2_API_TOKEN}"
+  #    page_ids: "123456,789012"               # discovery mode: specific pages
+  #    include_children: false                 # optional; recurse into children (default false)
+  #    max_pages: 50
+  #    schedules: "${CONFLUENCE2_SCHEDULES}"
+
+  # Load pages by label
+  #- type: "confluence"
+  #  name: "confluence3"
+  #  config:
+  #    base_url: "${CONFLUENCE3_BASE_URL}"
+  #    api_token: "${CONFLUENCE3_API_TOKEN}"
+  #    page_label: "my-label"                  # discovery mode: pages with this label
+  #    max_pages: 50
+  #    schedules: "${CONFLUENCE3_SCHEDULES}"
+
+  # Load pages via CQL
+  #- type: "confluence"
+  #  name: "confluence4"
+  #  config:
+  #    base_url: "${CONFLUENCE4_BASE_URL}"
+  #    api_token: "${CONFLUENCE4_API_TOKEN}"
+  #    cql: "space = 'TEST'"                   # discovery mode: CQL query
+  #    max_pages: 50
+  #    schedules: "${CONFLUENCE4_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+# Confluence Cloud (API token auth)
+CONFLUENCE1_BASE_URL=https://your-org.atlassian.net/wiki
+CONFLUENCE1_USERNAME=your-email@example.com
+CONFLUENCE1_API_TOKEN=your-api-token
+CONFLUENCE1_SPACE_KEY=ENG
+CONFLUENCE1_SCHEDULES=3600
+
+# Confluence Server / Data Center (username + password)
+# CONFLUENCE1_BASE_URL=https://confluence.your-company.com
+# CONFLUENCE1_USERNAME=admin
+# CONFLUENCE1_PASSWORD=your-password
+# (set password: instead of api_token: in config.yaml)
 ```
 
 ## Reference of the `config.yaml`
