@@ -92,8 +92,8 @@ sources:
   #    max_comments: 10          # optional, default 10
   #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
-# observability:
-#   enabled: false   # set to true to enable Langfuse tracing
+observability:
+  tracing_enabled: ${LANGFUSE_TRACING_ENABLED}
 
 embedding:
   provider: openrouter

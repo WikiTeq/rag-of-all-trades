@@ -108,16 +108,10 @@ ROAT supports optional tracing via [Langfuse](https://langfuse.com). When enable
 
 ### Enabling Langfuse
 
-**1.** Set `observability.enabled: true` in `config.yaml`:
-
-```yaml
-observability:
-  enabled: true
-```
-
-**2.** Add your Langfuse credentials to `.env`:
+**1.** Add your Langfuse credentials and enable tracing in `.env`:
 
 ```env
+LANGFUSE_TRACING_ENABLED=true
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
 LANGFUSE_BASE_URL=https://cloud.langfuse.com  # or your self-hosted URL
