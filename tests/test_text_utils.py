@@ -8,7 +8,10 @@ class TestSlugify(unittest.TestCase):
         self.assertEqual(slugify("Hello World"), "Hello_World")
 
     def test_non_word_chars(self):
-        self.assertEqual(slugify("foo/bar.baz"), "foo_bar_baz")
+        self.assertEqual(slugify("foo/bar.baz"), "foo_bar.baz")
+
+    def test_dot_preserved(self):
+        self.assertEqual(slugify("Foo.Bar"), "Foo.Bar")
 
     def test_max_len(self):
         result = slugify("a" * 300, max_len=255)

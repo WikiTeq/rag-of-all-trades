@@ -23,11 +23,13 @@ def slugify(
     Example — MediaWiki namespace preservation:
         slugify("Talk:Foo/Bar", extra_replacements={":" : "__", "/": "_"})
         → "Talk__Foo_Bar"
+
+        Dots are preserved, so "Foo.Bar" → "Foo.Bar".
     """
     result = value
     for src, dst in (extra_replacements or {}).items():
         result = result.replace(src, dst)
-    result = re.sub(r"[^\w\-]", "_", result)
+    result = re.sub(r"[^\w\-_.]", "_", result)
     result = result.strip("_")[:max_len]
     if not result:
         result = hashlib.md5(value.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]

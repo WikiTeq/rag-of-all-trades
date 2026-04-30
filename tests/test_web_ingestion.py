@@ -201,7 +201,7 @@ class TestWebIngestionGetItemName(_WebIngestionTestCase):
             source_ref="https://example.com/path?q=1&p=2",
         )
         name = job.get_item_name(item)
-        self.assertRegex(name, r"^[\w\-]+$")
+        self.assertRegex(name, r"^[\w\-_.]+$")
 
 
 class TestWebIngestionGetDocumentMetadata(_WebIngestionTestCase):
