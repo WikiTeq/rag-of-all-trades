@@ -122,8 +122,8 @@ sources:
   #    # filter_mail_folders:
   #    #   - inbox
 
-# observability:
-#   enabled: false   # set to true to enable Langfuse tracing
+observability:
+  tracing_enabled: ${LANGFUSE_TRACING_ENABLED}
 
 embedding:
   provider: openrouter

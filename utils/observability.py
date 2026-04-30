@@ -22,7 +22,8 @@ def setup_observability(config: dict) -> None:
     environment variables (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY,
     LANGFUSE_BASE_URL) set via config.yaml interpolation.
     """
-    if not config.get("enabled"):
+    tracing_enabled = config.get("tracing_enabled")
+    if str(tracing_enabled).lower() in ("false", "0", "none", ""):
         logger.info("Observability disabled")
         return
 
