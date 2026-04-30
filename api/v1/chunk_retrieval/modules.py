@@ -1,5 +1,6 @@
 from typing import Any
 
+from langfuse import observe
 from llama_index.core import Settings, VectorStoreIndex
 from llama_index.core.schema import NodeWithScore
 from llama_index.core.vector_stores.types import (
@@ -69,6 +70,7 @@ class RAGQueryEngine:
         return refs
 
     # Retrieve top K with optional metadata filter
+    @observe(name="Query")
     def retrieve_top_k(
         self,
         query: str,

@@ -59,8 +59,11 @@ class VectorStoreManager:
         )
 
         nodes = pipeline.run(documents=docs)
-
-        VectorStoreIndex(nodes=nodes, embed_model=embed_model, storage_context=self.storage_context)
+        VectorStoreIndex(
+            nodes=nodes,
+            embed_model=embed_model,
+            storage_context=self.storage_context,
+        )
 
         try:
             del docs
