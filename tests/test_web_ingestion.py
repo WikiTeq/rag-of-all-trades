@@ -49,6 +49,14 @@ class TestWebIngestionInit(_WebIngestionTestCase):
         job = self._make_job(urls=["https://example.com"])
         self.assertTrue(job.html_to_text)
 
+    def test_html_to_text_parses_string_false(self):
+        job = self._make_job(urls=["https://example.com"], html_to_text="false")
+        self.assertFalse(job.html_to_text)
+
+    def test_urls_accepts_comma_string(self):
+        job = self._make_job(urls="https://example.com/a, https://example.com/b")
+        self.assertEqual(job.urls, ["https://example.com/a", "https://example.com/b"])
+
     def test_missing_both_raises(self):
         with self.assertRaises(ValueError):
             WebIngestionJob({"name": "web1", "config": {}})
@@ -193,7 +201,7 @@ class TestWebIngestionGetItemName(_WebIngestionTestCase):
             source_ref="https://example.com/path?q=1&p=2",
         )
         name = job.get_item_name(item)
-        self.assertRegex(name, r"^[\w\-]+$")
+        self.assertRegex(name, r"^[\w\-_.]+$")
 
 
 class TestWebIngestionGetDocumentMetadata(_WebIngestionTestCase):

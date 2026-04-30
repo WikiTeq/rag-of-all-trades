@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime
 from unittest.mock import Mock, patch
 
 import requests
@@ -55,9 +56,12 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
 
     # --- list_items ---
 
-    def test_list_items_returns_queries(self):
+    def test_list_items_returns_ingestion_items(self):
         job = SerpAPIIngestionJob(self.config)
-        self.assertEqual(list(job.list_items()), ["Python news", "AI trends"])
+        items = list(job.list_items())
+        self.assertEqual([i.source_ref for i in items], ["Python news", "AI trends"])
+        self.assertTrue(items[0].id.startswith("serpapi:"))
+        self.assertIsInstance(items[0].last_modified, datetime)
 
     def test_raises_when_queries_empty_string(self):
         config = {"name": "serp1", "config": {"api_key": "k", "queries": "  ,  "}}
@@ -66,7 +70,7 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
 
     # --- get_raw_content ---
 
-    @patch("tasks.serpapi_ingestion.requests.get")
+    @patch("tasks.serpapi_ingestion.RetrySession.get")
     def test_get_raw_content_returns_titles_and_snippets(self, mock_get):
         mock_get.return_value = self._make_response(
             json_data={
@@ -78,11 +82,12 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
         )
 
         job = SerpAPIIngestionJob(self.config)
-        result = job.get_raw_content("Python news")
+        item = next(job.list_items())
+        result = job.get_raw_content(item)
 
         self.assertEqual(result, "Title 1\nTitle 2\nSnippet 1\nSnippet 2")
 
-    @patch("tasks.serpapi_ingestion.requests.get")
+    @patch("tasks.serpapi_ingestion.RetrySession.get")
     def test_get_raw_content_includes_partial_results(self, mock_get):
         mock_get.return_value = self._make_response(
             json_data={
@@ -95,20 +100,22 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
         )
 
         job = SerpAPIIngestionJob(self.config)
-        result = job.get_raw_content("Python news")
+        item = next(job.list_items())
+        result = job.get_raw_content(item)
 
         self.assertEqual(result, "Title only\nSnippet only")
 
-    @patch("tasks.serpapi_ingestion.requests.get")
+    @patch("tasks.serpapi_ingestion.RetrySession.get")
     def test_get_raw_content_returns_empty_on_no_organic_results(self, mock_get):
         mock_get.return_value = self._make_response(json_data={"organic_results": []})
 
         job = SerpAPIIngestionJob(self.config)
-        result = job.get_raw_content("Python news")
+        item = next(job.list_items())
+        result = job.get_raw_content(item)
 
         self.assertEqual(result, "")
 
-    @patch("tasks.serpapi_ingestion.requests.get")
+    @patch("tasks.serpapi_ingestion.RetrySession.get")
     def test_get_raw_content_returns_empty_on_http_error(self, mock_get):
         mock_get.return_value = self._make_response(
             status_code=403,
@@ -116,25 +123,28 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
         )
 
         job = SerpAPIIngestionJob(self.config)
-        result = job.get_raw_content("Python news")
+        item = next(job.list_items())
+        result = job.get_raw_content(item)
 
         self.assertEqual(result, "")
 
-    @patch("tasks.serpapi_ingestion.requests.get")
+    @patch("tasks.serpapi_ingestion.RetrySession.get")
     def test_get_raw_content_returns_empty_on_network_error(self, mock_get):
         mock_get.side_effect = requests.exceptions.ConnectionError("no route to host")
 
         job = SerpAPIIngestionJob(self.config)
-        result = job.get_raw_content("Python news")
+        item = next(job.list_items())
+        result = job.get_raw_content(item)
 
         self.assertEqual(result, "")
 
-    @patch("tasks.serpapi_ingestion.requests.get")
+    @patch("tasks.serpapi_ingestion.RetrySession.get")
     def test_get_raw_content_passes_correct_params(self, mock_get):
         mock_get.return_value = self._make_response(json_data={"organic_results": []})
 
         job = SerpAPIIngestionJob(self.config)
-        job.get_raw_content("Python news")
+        item = next(job.list_items())
+        job.get_raw_content(item)
 
         mock_get.assert_called_once_with(
             "https://serpapi.com/search",
@@ -145,13 +155,14 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
             },
         )
 
-    @patch("tasks.serpapi_ingestion.requests.get")
+    @patch("tasks.serpapi_ingestion.RetrySession.get")
     def test_get_raw_content_logs_warning_on_error(self, mock_get):
         mock_get.side_effect = requests.exceptions.ConnectionError("fail")
 
         job = SerpAPIIngestionJob(self.config)
         with patch("tasks.serpapi_ingestion.logger") as mock_logger:
-            job.get_raw_content("Python news")
+            item = next(job.list_items())
+            job.get_raw_content(item)
             mock_logger.info.assert_called_once()
             self.assertIn("Python news", mock_logger.info.call_args[0][0])
 

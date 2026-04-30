@@ -13,9 +13,9 @@ from api.v1 import api_v1_router
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
 from celery_app import celery_app
 from utils.config import settings
+from utils.logger import configure_logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # Initialize rate limiter

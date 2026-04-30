@@ -1,11 +1,12 @@
 import logging
-
-import requests
+from datetime import UTC, datetime
 
 from tasks.base import IngestionJob
+from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.http import RetrySession
+from utils.parse import parse_list
+from utils.text import slugify
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -21,21 +22,25 @@ class SerpAPIIngestionJob(IngestionJob):
 
         self.api_key = cfg.get("api_key")
 
-        queries = cfg.get("queries", [])
-        if isinstance(queries, str):
-            queries = [q.strip() for q in queries.split(",") if q.strip()]
+        queries = parse_list(cfg.get("queries"))
 
         if not queries:
             raise ValueError(f"[{config.get('name')}] SerpAPI connector requires at least one query")
 
         self.search_queries = queries
-
         self.serpapi_endpoint = "https://serpapi.com/search"
+        self._session = RetrySession()
 
     def list_items(self):
-        return self.search_queries
+        for query in self.search_queries:
+            yield IngestionItem(
+                id=f"serpapi:{query}",
+                source_ref=query,
+                last_modified=datetime.now(UTC),
+            )
 
-    def get_raw_content(self, query: str) -> str:
+    def get_raw_content(self, item: IngestionItem) -> str:
+        query: str = item.source_ref
         try:
             params = {
                 "engine": "google",
@@ -43,7 +48,7 @@ class SerpAPIIngestionJob(IngestionJob):
                 "api_key": self.api_key,
             }
 
-            resp = requests.get(self.serpapi_endpoint, params=params)
+            resp = self._session.get(self.serpapi_endpoint, params=params)
             resp.raise_for_status()
 
             data = resp.json()
@@ -60,5 +65,5 @@ class SerpAPIIngestionJob(IngestionJob):
             logger.info(f"[SerpAPI] Failed to fetch query '{query}': {e}")
             return ""
 
-    def get_item_name(self, query: str) -> str:
-        return query
+    def get_item_name(self, item: IngestionItem) -> str:
+        return slugify(str(item.source_ref), max_len=255)

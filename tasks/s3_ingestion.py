@@ -1,16 +1,14 @@
 import io
 import logging
-import re
-import unicodedata
 
 from markitdown import MarkItDown
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_list
 from utils.s3_client import get_s3_client
+from utils.text import sanitize_ascii_key
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -24,11 +22,7 @@ class S3IngestionJob(IngestionJob):
 
         cfg = config.get("config", {})
 
-        buckets = cfg.get("buckets", [])
-
-        if isinstance(buckets, str):
-            buckets = [b.strip() for b in buckets.split(",") if b.strip()]
-        self.buckets = buckets or []
+        self.buckets = parse_list(cfg.get("buckets"))
 
         # Initialize S3 client - access nested config dict
         client_params = {
@@ -42,13 +36,6 @@ class S3IngestionJob(IngestionJob):
 
         # Markdown parser
         self.md = MarkItDown()
-
-    def sanitize_s3_key(self, key: str) -> str:
-        key = unicodedata.normalize("NFKD", key)
-        key = key.encode("ascii", "ignore").decode("ascii")
-        key = re.sub(r"[ \\/]+", "_", key)
-        key = re.sub(r"[^a-zA-Z0-9\-_\.]", "", key)
-        return key[:255]
 
     def list_items(self):
         """
@@ -109,4 +96,4 @@ class S3IngestionJob(IngestionJob):
 
     def get_item_name(self, item: IngestionItem):
         _, key = item.source_ref
-        return self.sanitize_s3_key(key)
+        return sanitize_ascii_key(key, max_len=255)

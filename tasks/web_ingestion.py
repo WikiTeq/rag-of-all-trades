@@ -1,5 +1,4 @@
 import logging
-import re
 from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -9,8 +8,10 @@ from llama_index.readers.web.sitemap.base import SitemapReader
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.config_validation import mutually_exclusive
+from utils.parse import parse_bool, parse_list
+from utils.text import slugify
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -87,20 +88,15 @@ class WebIngestionJob(IngestionJob):
 
         cfg = config.get("config", {})
 
-        raw_urls = cfg.get("urls") or []
-        if isinstance(raw_urls, str):
-            self.urls: list[str] = [u.strip() for u in raw_urls.split(",") if u.strip()]
-        else:
-            self.urls = [u.strip() for u in raw_urls if u and u.strip()]
+        self.urls = parse_list(cfg.get("urls"))
         self.sitemap_url: str | None = cfg.get("sitemap_url", "").strip() or None
 
         if not self.urls and not self.sitemap_url:
             raise ValueError("Either 'urls' or 'sitemap_url' must be set in web connector config")
-        if self.urls and self.sitemap_url:
-            raise ValueError("'urls' and 'sitemap_url' are mutually exclusive in web connector config")
+        mutually_exclusive(cfg, "urls", "sitemap_url", "web connector")
 
         self.include_prefix: str | None = cfg.get("include_prefix", "").strip() or None
-        self.html_to_text: bool = bool(cfg.get("html_to_text", True))
+        self.html_to_text = parse_bool(cfg.get("html_to_text"), default=True)
 
         self.website_extractor = CatchAllWebsiteExtractor(_title_extractor)
         self._reader = BeautifulSoupWebReader(website_extractor=self.website_extractor)
@@ -153,8 +149,7 @@ class WebIngestionJob(IngestionJob):
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe name derived from the URL."""
         url: str = item.source_ref
-        safe = re.sub(r"[^\w\-]", "_", url)
-        return safe[:255]
+        return slugify(url, max_len=255)
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return web-specific metadata fields."""
