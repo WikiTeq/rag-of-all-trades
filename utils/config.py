@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 
 import yaml
+from cryptography.fernet import Fernet
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -11,6 +12,8 @@ YAML_PATH = BASE_DIR / "config.yaml"
 
 
 class EnvSettings(BaseSettings):
+    """Pydantic settings model loaded from .env and environment variables."""
+
     REDIS_URL: str
 
     POSTGRES_USER: str
@@ -46,9 +49,26 @@ class EnvSettings(BaseSettings):
     CHUNK_RATE_LIMIT: str = "30/minute"
     REPHRASE_RATE_LIMIT: str = "30/minute"
 
+    # generate with:
+    # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    CONNECTOR_ENCRYPTION_KEY: str = ""
+
+    @field_validator("CONNECTOR_ENCRYPTION_KEY", mode="after")
+    @classmethod
+    def validate_encryption_key(cls, v):
+        """Raise ValueError if CONNECTOR_ENCRYPTION_KEY is set but not a valid Fernet key."""
+        if not v:
+            return v
+        try:
+            Fernet(v.encode() if isinstance(v, str) else v)
+        except Exception as e:
+            raise ValueError(f"CONNECTOR_ENCRYPTION_KEY is not a valid Fernet key: {e}") from e
+        return v
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):
+        """Parse CORS_ORIGINS from a comma-separated string or list."""
         if isinstance(v, str):
             return [x.strip() for x in v.split(",") if x.strip()]
         return v
@@ -57,6 +77,7 @@ class EnvSettings(BaseSettings):
 
 
 def load_yaml_with_env(path):
+    """Load a YAML file with ${ENV_VAR} interpolation from os.environ."""
     with open(path) as f:
         raw_yaml = f.read()
     # interpolate ${VAR} with os.environ
@@ -66,12 +87,16 @@ def load_yaml_with_env(path):
 
 
 class Settings:
+    """Unified config object combining .env settings and config.yaml values."""
+
     def __init__(self):
+        """Load EnvSettings and config.yaml on construction."""
         self.env = EnvSettings()
         self.yaml = load_yaml_with_env(YAML_PATH)
 
     @property
     def POSTGRES(self):
+        """Return PostgreSQL / pgvector connection and table settings."""
         vector_store = self.yaml.get("vector_store", {})
         hnsw = vector_store.get("hnsw", {})
         return {
@@ -92,6 +117,7 @@ class Settings:
 
     @property
     def EMBEDDING(self):
+        """Return embedding model settings from config.yaml."""
         return {
             "provider": self.yaml.get("embedding", {}).get("provider"),
             "model_config": self.yaml.get("embedding", {}).get("model_config"),
@@ -99,48 +125,8 @@ class Settings:
         }
 
     @property
-    def SOURCES(self):
-        """Generic loader for all sources (S3, future types)"""
-        raw_sources = self.yaml.get("sources", [])
-        sources = []
-
-        for source in raw_sources:
-            src_type = source.get("type")
-            name = source.get("name", "unknown_source")
-            config = source.get("config", {})
-
-            # Handle buckets as list
-            buckets = config.get("buckets", [])
-            if isinstance(buckets, str):
-                buckets = [b.strip() for b in buckets.split(",") if b.strip()]
-
-            schedules = config.get("schedules", [])
-            if isinstance(schedules, str):
-                schedules = [s.strip() for s in schedules.split(",") if s.strip()]
-
-            if buckets:
-                for i, bucket in enumerate(buckets):
-                    try:
-                        schedule_seconds = int(schedules[i]) if i < len(schedules) else 3600
-                    except ValueError:
-                        schedule_seconds = 3600
-
-                    # Merge common chunk settings from embedding
-                    sources.append(
-                        {
-                            "type": src_type,
-                            "name": f"{name}_{bucket}",
-                            "config": {**config, "buckets": [bucket], "bucket_override": bucket},
-                            "schedule": schedule_seconds,
-                        }
-                    )
-            else:
-                schedule_seconds = int(schedules[0]) if schedules else 3600
-                sources.append({"type": src_type, "name": name, "config": config, "schedule": schedule_seconds})
-        return sources
-
-    @property
     def LLM(self):
+        """Return LLM inference settings from .env and config.yaml."""
         return {
             "api_key": self.env.OPENROUTER_API_KEY,
             "base_url": self.env.OPENROUTER_API_BASE,
