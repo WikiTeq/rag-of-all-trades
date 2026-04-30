@@ -154,7 +154,7 @@ class Settings:
     @property
     def OBSERVABILITY(self) -> dict:
         return {
-            "enabled": self.yaml.get("observability", {}).get("enabled", False),
+            "tracing_enabled": self.yaml.get("observability", {}).get("tracing_enabled", False),
         }
 
     @property

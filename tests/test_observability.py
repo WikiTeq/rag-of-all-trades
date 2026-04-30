@@ -13,7 +13,16 @@ class TestSetupObservability(unittest.TestCase):
     def test_setup_observability_disabled(self, mock_instrumentor):
         mock_instrumentor.is_instrumented_by_opentelemetry = False
 
-        setup_observability({"enabled": False})
+        setup_observability({"tracing_enabled": False})
+
+        mock_instrumentor.instrument.assert_not_called()
+        self.assertFalse(is_enabled())
+
+    @patch("utils.observability._instrumentor")
+    def test_setup_observability_disabled_string(self, mock_instrumentor):
+        mock_instrumentor.is_instrumented_by_opentelemetry = False
+
+        setup_observability({"tracing_enabled": "false"})
 
         mock_instrumentor.instrument.assert_not_called()
         self.assertFalse(is_enabled())
@@ -22,7 +31,7 @@ class TestSetupObservability(unittest.TestCase):
     def test_setup_observability_enabled(self, mock_instrumentor):
         mock_instrumentor.is_instrumented_by_opentelemetry = True
 
-        setup_observability({"enabled": True})
+        setup_observability({"tracing_enabled": True})
 
         mock_instrumentor.instrument.assert_called_once()
         self.assertTrue(is_enabled())
