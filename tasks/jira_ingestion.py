@@ -7,7 +7,6 @@ from typing import Any
 
 # Third-party imports
 from jira import JIRA
-from markitdown import MarkItDown
 
 # Local imports
 from tasks.base import IngestionJob
@@ -83,7 +82,6 @@ class JiraIngestionJob(IngestionJob):
 
         # Build authenticated JIRA client
         self._jira = self._build_client()
-        self._md = MarkItDown()
 
         logger.info(
             f"Initialized Jira connector for {self.server_url} "
@@ -177,10 +175,10 @@ class JiraIngestionJob(IngestionJob):
         parts.append(f"# {summary}\n")
 
         description = getattr(issue.fields, "description", "") or ""
-        if description.strip():
-            md_description = self._to_markdown(description)
-            if md_description.strip():
-                parts.append(md_description)
+        if isinstance(description, dict):
+            description = self._extract_adf_text(description)
+        if md_description := self.convert_text_to_markdown(description).strip():
+            parts.append(md_description)
 
         if self.load_comments:
             comments_md = self._build_comments_section(issue)
@@ -217,57 +215,6 @@ class JiraIngestionJob(IngestionJob):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _to_markdown(self, text: str) -> str:
-        """Convert Jira description text to Markdown using MarkItDown.
-
-        Falls back to returning the original text if conversion fails.
-        Jira descriptions may use Jira wiki markup or Atlassian Document Format
-        (ADF, a JSON structure). Both are handled gracefully here.
-        """
-        # ADF is a JSON dict — MarkItDown won't help; extract plain text
-        if isinstance(text, dict):
-            return self._extract_adf_text(text)
-
-        if not text or not text.strip():
-            return ""
-
-        try:
-            import io
-
-            result = self._md.convert_stream(io.BytesIO(text.encode("utf-8")))
-            converted = result.text_content or ""
-            return converted.strip() if converted.strip() else text
-        except Exception:
-            return text
-
-    def _extract_adf_text(self, adf: dict) -> str:
-        """Recursively extract plain text from an Atlassian Document Format (ADF) node."""
-        text_parts: list[str] = []
-
-        def walk(node: Any) -> None:
-            if isinstance(node, dict):
-                node_type = node.get("type", "")
-                # Text leaf node
-                if node_type == "text":
-                    text_parts.append(node.get("text", ""))
-                    return
-                # Heading — prepend Markdown '#' markers
-                if node_type == "heading":
-                    level = node.get("attrs", {}).get("level", 1)
-                    prefix = "#" * level + " "
-                    for child in node.get("content", []):
-                        if child.get("type") == "text":
-                            text_parts.append(prefix + child.get("text", ""))
-                    return
-                for child in node.get("content", []):
-                    walk(child)
-            elif isinstance(node, list):
-                for item in node:
-                    walk(item)
-
-        walk(adf)
-        return "\n".join(text_parts)
-
     def _build_comments_section(self, issue: Any) -> str:
         """Fetch and format the top N comments for an issue as Markdown."""
         try:
@@ -287,9 +234,38 @@ class JiraIngestionJob(IngestionJob):
             body = getattr(comment, "body", "") or ""
             if isinstance(body, dict):
                 body = self._extract_adf_text(body)
+            if body.strip():
+                body = self.convert_text_to_markdown(body)
             lines.append(f"**{author}** ({created}):\n{body}")
 
         return "\n\n".join(lines)
+
+    @staticmethod
+    def _extract_adf_text(adf: dict) -> str:
+        """Recursively extract plain text from an Atlassian Document Format (ADF) node."""
+        text_parts: list[str] = []
+
+        def walk(node: Any) -> None:
+            if isinstance(node, dict):
+                node_type = node.get("type", "")
+                if node_type == "text":
+                    text_parts.append(node.get("text", ""))
+                    return
+                if node_type == "heading":
+                    level = node.get("attrs", {}).get("level", 1)
+                    prefix = "#" * level + " "
+                    for child in node.get("content", []):
+                        if child.get("type") == "text":
+                            text_parts.append(prefix + child.get("text", ""))
+                    return
+                for child in node.get("content", []):
+                    walk(child)
+            elif isinstance(node, list):
+                for item in node:
+                    walk(item)
+
+        walk(adf)
+        return "\n".join(text_parts)
 
     @staticmethod
     def _safe_display_name(obj: Any) -> str:

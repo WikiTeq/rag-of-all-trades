@@ -1,9 +1,6 @@
-import io
 import logging
 import re
 import unicodedata
-
-from markitdown import MarkItDown
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -39,9 +36,6 @@ class S3IngestionJob(IngestionJob):
             "use_ssl": cfg.get("use_ssl", True),
         }
         self.s3_client, _ = get_s3_client(**client_params)
-
-        # Markdown parser
-        self.md = MarkItDown()
 
     def sanitize_s3_key(self, key: str) -> str:
         key = unicodedata.normalize("NFKD", key)
@@ -90,19 +84,8 @@ class S3IngestionJob(IngestionJob):
         try:
             obj = self.s3_client.get_object(Bucket=bucket, Key=key)
             content_bytes = obj["Body"].read()
-            stream = io.BytesIO(content_bytes)
-            try:
-                result = self.md.convert_stream(stream)
-                text = result.text_content or ""
-                if text.strip():
-                    logger.debug(f"[{bucket}/{key}] Converted to markdown successfully")
-                    return text
-                else:
-                    logger.debug(f"[{bucket}/{key}] Empty markdown result, falling back to raw text")
-                    return content_bytes.decode("utf-8", errors="ignore")
-            except Exception as conversion_error:
-                logger.warning(f"[{bucket}/{key}] Markdown conversion failed: {conversion_error}. Using raw text.")
-                return content_bytes.decode("utf-8", errors="ignore")
+            converted = self.convert_bytes_to_markdown(content_bytes)
+            return converted or content_bytes.decode("utf-8", errors="ignore")
         except Exception as e:
             logger.error(f"[{bucket}/{key}] Failed to fetch content: {e}")
             return ""
