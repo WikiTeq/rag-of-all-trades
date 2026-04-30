@@ -92,6 +92,16 @@ sources:
   #    max_comments: 10          # optional, default 10
   #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
+  #- type: "trello"
+  #  name: "trello1"
+  #  config:
+  #    api_key: "${TRELLO1_API_KEY}"
+  #    api_token: "${TRELLO1_API_TOKEN}"
+  #    #board_ids: "${TRELLO1_BOARD_IDS}"   # optional, comma-separated; omit to ingest all boards
+  #    load_comments: false                 # optional, default false
+  #    max_comments: 10                     # optional, default 10
+  #    schedules: "${TRELLO1_SCHEDULES}"
+
 embedding:
   provider: openrouter
   model_config: sentence-transformers/all-mpnet-base-v2
