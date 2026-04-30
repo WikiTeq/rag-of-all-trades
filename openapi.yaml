@@ -25,7 +25,7 @@ paths:
           content:
             application/json:
               schema: {}
-  /api/v1/query/:
+  /api/v1/query:
     post:
       tags:
       - Applications APIs
@@ -51,7 +51,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
-  /api/v1/rephrase/:
+  /api/v1/rephrase:
     post:
       tags:
       - Applications APIs
