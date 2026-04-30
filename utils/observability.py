@@ -9,11 +9,6 @@ _instrumentor = LlamaIndexInstrumentor()
 langfuse_client = get_client()
 
 
-def is_enabled() -> bool:
-    """Return True if observability is enabled."""
-    return _instrumentor.is_instrumented_by_opentelemetry
-
-
 def setup_observability(config: dict) -> None:
     """Configure Langfuse observability for LlamaIndex if enabled.
 
