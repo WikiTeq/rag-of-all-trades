@@ -49,7 +49,7 @@ class TestPipedriveIngestionInit(unittest.TestCase):
 
     def test_default_load_types_all(self):
         job = _make_job(load_types=None)
-        self.assertGreater(len(job.load_types), 5)
+        self.assertEqual(len(job.load_types), 10)
 
 
 class TestPipedriveListItems(unittest.TestCase):
@@ -87,7 +87,7 @@ class TestPipedriveListItems(unittest.TestCase):
         job._client.paginate.return_value = iter(deals)
 
         items = list(job.list_items())
-        self.assertLessEqual(len(items), 2)
+        self.assertEqual(len(items), 2)
 
 
 class TestPipedriveGetRawContent(unittest.TestCase):
@@ -130,7 +130,11 @@ class TestPipedriveGetRawContent(unittest.TestCase):
     def test_unknown_entity_falls_back_to_generic(self):
         job = _make_job(load_types=["leads"])
         record = {"id": 9, "title": "Lead title", "owner_name": "Bob"}
-        item = self._item("leads", record)
+        item = IngestionItem(
+            id="pipedrive:unknown_entity:9",
+            source_ref={"type": "unknown_entity", "data": record},
+            last_modified=None,
+        )
         content = job.get_raw_content(item)
         self.assertIsInstance(content, str)
         self.assertGreater(len(content), 0)
