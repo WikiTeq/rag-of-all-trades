@@ -5,12 +5,11 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
 
-# Third-party imports
-import requests
-
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.http import RetrySession
+from utils.parse import parse_list
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +81,9 @@ class FirefliesIngestionJob(IngestionJob):
         - config.filter_channel_id: Filter by channel ID (optional)
         - config.max_items: Maximum transcripts to fetch (optional, default 100)
 
-    Note: audio_url requires a Pro plan or higher; video_url requires a Business plan or higher.
-    These fields are fetched but will be None on free plans.
+    Note: audio_url and video_url are excluded from metadata — they are expiring signed CDN URLs
+    that become invalid quickly and would cause metadata to exceed the chunk size limit.
+    Use transcript_url (stable Fireflies app link) for navigation instead.
     """
 
     @property
@@ -98,13 +98,8 @@ class FirefliesIngestionJob(IngestionJob):
         if not self.api_key:
             raise ValueError("api_key is required in Fireflies connector config")
 
-        organizers_raw = cfg.get("filter_organizers")
-        if isinstance(organizers_raw, str):
-            organizers = [e.strip() for e in organizers_raw.split(",") if e.strip()] or None
-        elif isinstance(organizers_raw, list):
-            organizers = [s for e in organizers_raw if isinstance(e, str) and (s := e.strip())] or None
-        else:
-            organizers = None
+        parsed = parse_list(cfg.get("filter_organizers"))
+        organizers = parsed or None
         self.filters: dict[str, Any] = {
             k: v
             for k, v in {
@@ -125,12 +120,13 @@ class FirefliesIngestionJob(IngestionJob):
         }
 
     def _graphql(self, variables: dict) -> dict:
-        response = requests.post(
-            _FIREFLIES_API_URL,
-            headers=self._headers,
-            json={"query": _TRANSCRIPTS_QUERY, "variables": variables},
-            timeout=30,
-        )
+        with RetrySession() as session:
+            response = session.post(
+                _FIREFLIES_API_URL,
+                json={"query": _TRANSCRIPTS_QUERY, "variables": variables},
+                headers=self._headers,
+                retry=True,
+            )
         response.raise_for_status()
         data = response.json()
         self._handle_graphql_errors(data)
@@ -208,16 +204,7 @@ class FirefliesIngestionJob(IngestionJob):
     def get_item_name(self, item: IngestionItem) -> str:
         return f"fireflies_{item.id}"[:255]
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified,
-    ) -> dict[str, Any]:
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
-
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         transcript = item._metadata_cache
         summary = transcript.get("summary") or {}
 
@@ -225,6 +212,7 @@ class FirefliesIngestionJob(IngestionJob):
         speaker_names = [s.get("name") for s in speakers if s.get("name")]
 
         participants = transcript.get("participants") or []
+        last_modified = item.last_modified
 
         extra = {
             "title": transcript.get("title"),
@@ -233,8 +221,6 @@ class FirefliesIngestionJob(IngestionJob):
             "participants": ", ".join(participants) if participants else None,
             "date": str(last_modified) if last_modified else None,
             "transcript_url": transcript.get("transcript_url"),
-            "audio_url": transcript.get("audio_url"),
-            "video_url": transcript.get("video_url"),
             "duration": transcript.get("duration"),
             "meeting_link": transcript.get("meeting_link"),
             "speakers": ", ".join(speaker_names) if speaker_names else None,
@@ -243,8 +229,7 @@ class FirefliesIngestionJob(IngestionJob):
             "action_items": summary.get("action_items"),
         }
 
-        metadata.update({k: v for k, v in extra.items() if v is not None})
-        return metadata
+        return {k: v for k, v in extra.items() if v is not None}
 
     def _build_transcript_from_sentences(self, sentences: list[dict[str, Any]]) -> str:
         lines = []
