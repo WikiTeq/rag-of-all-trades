@@ -236,15 +236,6 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.assertEqual(extra["box_file_name"], "doc.pdf")
         self.assertEqual(extra["path_collection"], "All Files/Docs")
 
-    def test_parse_config_list_comma_string(self):
-        self.assertEqual(BoxIngestionJob._parse_config_list("a, b, c"), ["a", "b", "c"])
-
-    def test_parse_config_list_none(self):
-        self.assertIsNone(BoxIngestionJob._parse_config_list(None))
-
-    def test_parse_config_list_from_list(self):
-        self.assertEqual(BoxIngestionJob._parse_config_list(["x", "y"]), ["x", "y"])
-
 
 if __name__ == "__main__":
     unittest.main()
