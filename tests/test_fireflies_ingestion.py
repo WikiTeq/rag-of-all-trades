@@ -69,9 +69,8 @@ def _make_transcript(
 def _make_job(config=None, **cfg_overrides):
     if config is None:
         config = _make_config(**cfg_overrides)
-    with patch("tasks.fireflies_ingestion.requests.post"):
-        with patch("tasks.base.MetadataTracker"), patch("tasks.base.VectorStoreManager"):
-            return FirefliesIngestionJob(config)
+    with patch("tasks.base.MetadataTracker"), patch("tasks.base.VectorStoreManager"):
+        return FirefliesIngestionJob(config)
 
 
 # ---------------------------------------------------------------------------
@@ -121,7 +120,7 @@ class TestFirefliesListItems(unittest.TestCase):
         t = _make_transcript()
         job = _make_job()
 
-        with patch("tasks.fireflies_ingestion.requests.post", return_value=self._make_response([t])):
+        with patch("utils.http.RetrySession.post", return_value=self._make_response([t])):
             items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
@@ -133,7 +132,7 @@ class TestFirefliesListItems(unittest.TestCase):
         transcripts = [_make_transcript(tid=f"id{i}") for i in range(50)]
         job = _make_job(max_items=10)
 
-        with patch("tasks.fireflies_ingestion.requests.post", return_value=self._make_response(transcripts)):
+        with patch("utils.http.RetrySession.post", return_value=self._make_response(transcripts)):
             items = list(job.list_items())
 
         self.assertEqual(len(items), 10)
@@ -148,7 +147,7 @@ class TestFirefliesListItems(unittest.TestCase):
         ]
         job = _make_job(max_items=500)
 
-        with patch("tasks.fireflies_ingestion.requests.post", side_effect=responses):
+        with patch("utils.http.RetrySession.post", side_effect=responses):
             items = list(job.list_items())
 
         self.assertEqual(len(items), 60)
@@ -157,7 +156,7 @@ class TestFirefliesListItems(unittest.TestCase):
         t = _make_transcript()
         job = _make_job()
 
-        with patch("tasks.fireflies_ingestion.requests.post", return_value=self._make_response([t])):
+        with patch("utils.http.RetrySession.post", return_value=self._make_response([t])):
             items = list(job.list_items())
 
         self.assertEqual(items[0]._metadata_cache["title"], "Team Standup")
@@ -168,7 +167,7 @@ class TestFirefliesListItems(unittest.TestCase):
         mock.json.return_value = {"errors": [{"message": "Unauthorized"}]}
 
         job = _make_job()
-        with patch("tasks.fireflies_ingestion.requests.post", return_value=mock):
+        with patch("utils.http.RetrySession.post", return_value=mock):
             with self.assertRaises(RuntimeError):
                 list(job.list_items())
 
@@ -256,7 +255,7 @@ class TestFirefliesGetDocumentMetadata(unittest.TestCase):
         item = IngestionItem(id=t["id"], source_ref=t["transcript_url"], last_modified=TRANSCRIPT_DATE_DT)
         item._metadata_cache.update(t)
 
-        meta = job.get_document_metadata(item, "fireflies_abc123", "checksum123", 1, TRANSCRIPT_DATE_DT)
+        meta = job.get_extra_metadata(item, "", {})
 
         for field in (
             "title",
@@ -264,7 +263,6 @@ class TestFirefliesGetDocumentMetadata(unittest.TestCase):
             "organizer_email",
             "participants",
             "transcript_url",
-            "audio_url",
             "duration",
             "meeting_link",
             "speakers",
@@ -273,18 +271,17 @@ class TestFirefliesGetDocumentMetadata(unittest.TestCase):
         ):
             self.assertIn(field, meta, f"Missing field: {field}")
 
-        self.assertEqual(meta["source"], "fireflies")
         self.assertEqual(meta["title"], "Team Standup")
         self.assertIn("Alice", meta["speakers"])
 
     def test_none_fields_excluded(self):
-        t = _make_transcript(video_url=None)
+        t = _make_transcript(meeting_link=None)
         job = _make_job()
         item = IngestionItem(id=t["id"], source_ref=t["transcript_url"])
         item._metadata_cache.update(t)
 
-        meta = job.get_document_metadata(item, "fireflies_abc123", "checksum123", 1, None)
-        self.assertNotIn("video_url", meta)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertNotIn("meeting_link", meta)
 
 
 class TestFormatTimestamp(unittest.TestCase):
