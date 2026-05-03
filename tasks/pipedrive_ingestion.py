@@ -1,18 +1,18 @@
 # Standard library imports
 import logging
-import re
-import time
 from collections.abc import Iterator
 from typing import Any
 
 # Third-party imports
-import html2text
 import requests
 
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from utils.datetime_utils import parse_timestamp
+from utils.cache import CachedResolver
+from utils.http import RetrySession
+from utils.parse import parse_timestamp
+from utils.text import html_to_markdown, slugify
 
 logger = logging.getLogger(__name__)
 
@@ -50,59 +50,24 @@ class PipedriveClient:
 
     Handles authentication (api_token query param), pagination
     (start / more_items_in_collection), and retries with backoff on
-    429 / 5xx responses.
+    429 / 5xx responses via RetrySession.
     """
 
     def __init__(self, api_token: str, max_retries: int):
-        self._token = api_token
-        self._max_retries = max_retries
-        self._session = requests.Session()
-        self._session.params = {"api_token": api_token}  # type: ignore[assignment]
+        self._retry = RetrySession(max_retries=max_retries)
+        self._retry._session.params = {"api_token": api_token}  # type: ignore[assignment]
 
-        # Caches for ID → name resolution
-        self._user_cache: dict[int, str] = {}
-        self._pipeline_cache: dict[int, str] = {}
-        self._stage_cache: dict[int, str] = {}
+        # Cached resolvers for ID → name lookups
+        self._user_resolver = CachedResolver(self._fetch_user, logger)
+        self._pipeline_resolver = CachedResolver(self._fetch_pipeline, logger)
+        self._stage_resolver = CachedResolver(self._fetch_stage, logger)
 
     def get(self, path: str, params: dict | None = None) -> dict:
-        """Perform a GET request with retry logic."""
+        """Perform a GET request with retry/backoff logic."""
         url = f"{_API_BASE}{path}"
-        params = dict(params or {})
-        rate_limit_retries = 0
-
-        for attempt in range(self._max_retries + 1):
-            try:
-                resp = self._session.get(url, params=params, timeout=30)
-            except requests.RequestException as exc:
-                if attempt < self._max_retries:
-                    wait = 2**attempt
-                    logger.warning(f"Request error ({exc}); retrying in {wait}s")
-                    time.sleep(wait)
-                    continue
-                raise
-
-            if resp.status_code == 429:
-                rate_limit_retries += 1
-                if rate_limit_retries > self._max_retries:
-                    logger.error(f"Exceeded max rate-limit retries ({self._max_retries}) for {path}")
-                    resp.raise_for_status()
-                retry_after = int(resp.headers.get("Retry-After", 2**attempt))
-                logger.warning(f"Rate limited (attempt {rate_limit_retries}); waiting {retry_after}s")
-                time.sleep(retry_after)
-                continue
-
-            if resp.status_code >= 500:
-                if attempt < self._max_retries:
-                    wait = 2**attempt
-                    logger.warning(f"Server error {resp.status_code}; retrying in {wait}s")
-                    time.sleep(wait)
-                    continue
-                resp.raise_for_status()
-
-            resp.raise_for_status()
-            return resp.json()
-
-        raise RuntimeError(f"Pipedrive request to {path} failed after {self._max_retries} retries")
+        resp = self._retry.get(url, params=params)
+        resp.raise_for_status()
+        return resp.json()
 
     def paginate(self, path: str, params: dict | None = None, limit: int | None = None) -> Iterator[dict]:
         """Yield all records from a paginated Pipedrive endpoint."""
@@ -135,59 +100,38 @@ class PipedriveClient:
 
             start = pagination.get("next_start", start + len(records))
 
+    def _fetch_user(self, user_id: int) -> str | None:
+        """Fetch a user's display name from the API."""
+        data = self.get(f"/users/{user_id}")
+        return (data.get("data") or {}).get("name") or None
+
+    def _fetch_pipeline(self, pipeline_id: int) -> str | None:
+        """Fetch a pipeline's name from the API."""
+        data = self.get(f"/pipelines/{pipeline_id}")
+        return (data.get("data") or {}).get("name") or None
+
+    def _fetch_stage(self, stage_id: int) -> str | None:
+        """Fetch a stage's name from the API."""
+        data = self.get(f"/stages/{stage_id}")
+        return (data.get("data") or {}).get("name") or None
+
     def resolve_user(self, user_id: int | None) -> str:
         """Resolve a user ID to a display name, with caching."""
         if user_id is None:
             return ""
-        if user_id in self._user_cache:
-            return self._user_cache[user_id]
-        try:
-            data = self.get(f"/users/{user_id}")
-            name = (data.get("data") or {}).get("name", "") or ""
-        except requests.RequestException as exc:
-            logger.warning(f"Failed to resolve user {user_id}: {exc}")
-            name = str(user_id)
-        except (KeyError, AttributeError) as exc:
-            logger.warning(f"Unexpected response parsing user {user_id}: {exc}")
-            name = str(user_id)
-        self._user_cache[user_id] = name
-        return name
+        return self._user_resolver.resolve(user_id) or str(user_id)
 
     def resolve_pipeline(self, pipeline_id: int | None) -> str:
         """Resolve a pipeline ID to its name, with caching."""
         if pipeline_id is None:
             return ""
-        if pipeline_id in self._pipeline_cache:
-            return self._pipeline_cache[pipeline_id]
-        try:
-            data = self.get(f"/pipelines/{pipeline_id}")
-            name = (data.get("data") or {}).get("name", "") or ""
-        except requests.RequestException as exc:
-            logger.warning(f"Failed to resolve pipeline {pipeline_id}: {exc}")
-            name = str(pipeline_id)
-        except (KeyError, AttributeError) as exc:
-            logger.warning(f"Unexpected response parsing pipeline {pipeline_id}: {exc}")
-            name = str(pipeline_id)
-        self._pipeline_cache[pipeline_id] = name
-        return name
+        return self._pipeline_resolver.resolve(pipeline_id) or str(pipeline_id)
 
     def resolve_stage(self, stage_id: int | None) -> str:
         """Resolve a stage ID to its name, with caching."""
         if stage_id is None:
             return ""
-        if stage_id in self._stage_cache:
-            return self._stage_cache[stage_id]
-        try:
-            data = self.get(f"/stages/{stage_id}")
-            name = (data.get("data") or {}).get("name", "") or ""
-        except requests.RequestException as exc:
-            logger.warning(f"Failed to resolve stage {stage_id}: {exc}")
-            name = str(stage_id)
-        except (KeyError, AttributeError) as exc:
-            logger.warning(f"Unexpected response parsing stage {stage_id}: {exc}")
-            name = str(stage_id)
-        self._stage_cache[stage_id] = name
-        return name
+        return self._stage_resolver.resolve(stage_id) or str(stage_id)
 
 
 class PipedriveIngestionJob(IngestionJob):
@@ -340,9 +284,8 @@ class PipedriveIngestionJob(IngestionJob):
         """Return a filesystem-safe identifier: ``pipedrive_{type}_{id}``."""
         entity_type = item.source_ref["type"]
         record = item.source_ref["data"]
-        record_id = record.get("id") or re.sub(r"[^\w]", "_", str(record.get("cc_email", "")))
-        safe = re.sub(r"[^\w\-]", "_", f"pipedrive_{entity_type}_{record_id}")
-        return safe[:255]
+        record_id = record.get("id") or slugify(str(record.get("cc_email", "")))
+        return slugify(f"pipedrive_{entity_type}_{record_id}")
 
     def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
         """Return Pipedrive-specific metadata fields."""
@@ -431,7 +374,7 @@ class PipedriveIngestionJob(IngestionJob):
         """Build Markdown content for an Activity record.
 
         The activity note field may contain HTML (e.g. from Pipedrive's rich-text
-        editor), so it is converted to plain text via html2text before embedding.
+        editor), so it is converted to plain text via html_to_markdown before embedding.
         """
         parts: list[str] = []
         subject = record.get("subject", "") or ""
@@ -451,10 +394,7 @@ class PipedriveIngestionJob(IngestionJob):
 
         note = record.get("note", "") or ""
         if note.strip():
-            h = html2text.HTML2Text()
-            h.ignore_links = True
-            h.ignore_images = True
-            parts.append(f"\n{h.handle(note).strip()}")
+            parts.append(f"\n{html_to_markdown(note)}")
 
         user_id = record.get("user_id") or record.get("assigned_to_user_id")
         owner = record.get("owner_name") or self._client.resolve_user(user_id)
@@ -649,10 +589,7 @@ class PipedriveIngestionJob(IngestionJob):
         if body_text:
             body = body_text
         elif body_html:
-            h = html2text.HTML2Text()
-            h.ignore_links = True
-            h.ignore_images = True
-            body = h.handle(body_html).strip()
+            body = html_to_markdown(body_html)
         else:
             body = record.get("snippet", "") or ""
         if body.strip():
