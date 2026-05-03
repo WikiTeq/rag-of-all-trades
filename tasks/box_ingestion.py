@@ -1,5 +1,4 @@
 import logging
-import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -10,8 +9,9 @@ from llama_index.readers.box import BoxReader
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_bool, parse_list, parse_timestamp
+from utils.text import slugify
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
@@ -56,8 +56,8 @@ class BoxIngestionJob(IngestionJob):
 
         self.box_user_id: str | None = (cfg.get("box_user_id") or "").strip() or None
         self.folder_id: str | None = (cfg.get("folder_id") or "").strip() or None
-        self.file_ids: list[str] | None = self._parse_config_list(cfg.get("file_ids"))
-        self.is_recursive: bool = BoxIngestionJob._parse_bool(cfg.get("is_recursive"), default=False)
+        self.file_ids: list[str] | None = parse_list(cfg.get("file_ids")) or None
+        self.is_recursive: bool = parse_bool(cfg.get("is_recursive"), default=False)
 
         if (self.folder_id is None) == (self.file_ids is None):
             raise ValueError("Box connector config requires exactly one of folder_id or file_ids")
@@ -99,9 +99,7 @@ class BoxIngestionJob(IngestionJob):
 
         for doc in docs:
             file_id = doc.metadata.get("box_file_id") or doc.id_ or ""
-            last_modified = self._parse_last_modified(
-                doc.metadata.get("modified_at") or doc.metadata.get("content_modified_at")
-            )
+            last_modified = parse_timestamp(doc.metadata.get("modified_at") or doc.metadata.get("content_modified_at"))
             if last_modified is None:
                 logger.warning(f"[{self.source_name}] Could not parse modified_at for file_id={file_id!r}, using now")
                 last_modified = datetime.now(UTC)
@@ -131,11 +129,9 @@ class BoxIngestionJob(IngestionJob):
         file_id = doc.metadata.get("box_file_id") or item.id
         file_name = doc.metadata.get("name") or ""
         page_label = doc.metadata.get("page_label") or ""
-        safe_page = re.sub(r"[^\w-]", "_", page_label)
-        safe_suffix = f":{safe_page}" if page_label else ""
-        safe_name = re.sub(r"[^\w-]", "_", f"box_{file_id}_{file_name}")
+        safe_suffix = f":{slugify(page_label)}" if page_label else ""
         max_len = 255 - len(safe_suffix)
-        return safe_name[:max_len] + safe_suffix
+        return slugify(f"box_{file_id}_{file_name}", max_len=max_len) + safe_suffix
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return Box-specific metadata fields."""
@@ -145,31 +141,3 @@ class BoxIngestionJob(IngestionJob):
             "path_collection": item._metadata_cache.get("path_collection", ""),
             "page_label": item._metadata_cache.get("page_label", ""),
         }
-
-    def _parse_last_modified(self, value: str | None) -> datetime | None:
-        if not value:
-            return None
-        try:
-            dt = datetime.fromisoformat(value)
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=UTC)
-            return dt
-        except ValueError:
-            return None
-
-    @staticmethod
-    def _parse_bool(value: object, default: bool = False) -> bool:
-        if value is None:
-            return default
-        if isinstance(value, bool):
-            return value
-        return str(value).strip().lower() in ("1", "true", "yes", "on")
-
-    @staticmethod
-    def _parse_config_list(value: str | list | None) -> list[str] | None:
-        if value is None:
-            return None
-        if isinstance(value, list):
-            return [str(v).strip() for v in value if str(v).strip()]
-        parts = [v.strip() for v in str(value).split(",") if v.strip()]
-        return parts if parts else None
