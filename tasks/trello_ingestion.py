@@ -1,5 +1,4 @@
 import logging
-import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -8,6 +7,8 @@ from trello import TrelloClient
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_bool, parse_list, parse_timestamp
+from utils.text import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -71,15 +72,9 @@ class TrelloIngestionJob(IngestionJob):
         if not self.api_token:
             raise ValueError("api_token is required in Trello connector config")
 
-        raw_board_ids = cfg.get("board_ids", "")
-        if isinstance(raw_board_ids, list):
-            self.board_ids: list[str] = [s for b in raw_board_ids if (s := str(b).strip())]
-        elif raw_board_ids:
-            self.board_ids = [b.strip() for b in str(raw_board_ids).split(",") if b.strip()]
-        else:
-            self.board_ids = []
+        self.board_ids: list[str] = parse_list(cfg.get("board_ids", ""))
 
-        self.load_comments = bool(cfg.get("load_comments", False))
+        self.load_comments = parse_bool(cfg.get("load_comments"), default=False)
         self.max_comments = int(cfg.get("max_comments", 10))
         if self.max_comments <= 0:
             raise ValueError("max_comments must be positive")
@@ -114,15 +109,11 @@ class TrelloIngestionJob(IngestionJob):
                 if card.closed:
                     continue
 
-                raw_ts = card.dateLastActivity
-                try:
-                    if isinstance(raw_ts, str):
-                        last_modified = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
-                    else:
-                        last_modified = raw_ts
-                except (ValueError, TypeError):
-                    logger.warning(f"[{self.source_name}] Malformed timestamp for card {card.id!r}: {raw_ts!r}")
-                    last_modified = None
+                last_modified = parse_timestamp(card.dateLastActivity)
+                if last_modified is None and card.dateLastActivity is not None:
+                    logger.warning(
+                        f"[{self.source_name}] Malformed timestamp for card {card.id!r}: {card.dateLastActivity!r}"
+                    )
                 trello_list = lists_by_id.get(card.list_id)
 
                 item = IngestionItem(
@@ -174,8 +165,7 @@ class TrelloIngestionJob(IngestionJob):
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe identifier for the card."""
         _, card, _ = item.source_ref
-        safe = re.sub(r"[^\w\-]", "_", card.id)
-        return f"trello_card_{safe}"[:255]
+        return slugify(f"trello_card_{card.id}")
 
     def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
         """Return Trello-specific metadata fields."""
