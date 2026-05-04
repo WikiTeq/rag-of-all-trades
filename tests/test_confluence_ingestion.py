@@ -1,4 +1,5 @@
 import unittest
+from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
 from tasks.confluence_ingestion import ConfluenceIngestionJob
@@ -167,6 +168,22 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         self.assertEqual(items[1].id, "confluence:2")
         self.assertIsInstance(items[0], IngestionItem)
         self.assertIs(items[0].source_ref, doc1)
+        expected_ts = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
+        self.assertEqual(items[0].last_modified, expected_ts)
+        self.assertEqual(job.get_item_checksum(items[0]), expected_ts.isoformat())
+
+    def test_list_items_skips_doc_with_no_page_id(self):
+        doc = _make_doc(page_id="1", title="Good")
+        doc_no_id = Mock()
+        doc_no_id.text = "content"
+        doc_no_id.metadata = {"title": "No ID page"}
+        self.mock_reader.load_data.return_value = [doc_no_id, doc]
+
+        job = self._make_job()
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].id, "confluence:1")
 
     def test_list_items_empty_result(self):
         self.mock_reader.load_data.return_value = []

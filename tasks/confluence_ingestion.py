@@ -68,9 +68,9 @@ class ConfluenceIngestionJob(IngestionJob):
         if not self.base_url:
             raise ValueError("base_url is required in Confluence connector config")
 
-        self.api_token: str | None = cfg.get("api_token", "").strip() or None
-        self.username: str | None = cfg.get("username", "").strip() or None
-        self.password: str | None = cfg.get("password", "").strip() or None
+        self.api_token: str | None = (cfg.get("api_token") or "").strip() or None
+        self.username: str | None = (cfg.get("username") or "").strip() or None
+        self.password: str | None = (cfg.get("password") or "").strip() or None
 
         if not self.api_token and not self.password:
             raise ValueError("Confluence connector config requires either api_token or username+password")
@@ -100,8 +100,8 @@ class ConfluenceIngestionJob(IngestionJob):
         self.include_children: bool = parse_bool(cfg.get("include_children"))
         try:
             self.max_pages: int = int(cfg.get("max_pages", 50))
-        except (TypeError, ValueError):
-            raise ValueError("max_pages must be an integer")
+        except (TypeError, ValueError) as err:
+            raise ValueError("max_pages must be an integer") from err
         if self.max_pages <= 0:
             raise ValueError("max_pages must be positive")
 
@@ -124,7 +124,10 @@ class ConfluenceIngestionJob(IngestionJob):
         logger.info(f"[{self.source_name}] Loaded {len(documents)} page(s)")
 
         for doc in documents:
-            page_id = doc.metadata.get("page_id") or doc.metadata.get("id", "")
+            page_id = doc.metadata.get("page_id") or doc.metadata.get("id") or ""
+            if not page_id:
+                logger.warning(f"[{self.source_name}] Skipping document with no page_id: {doc.metadata}")
+                continue
             last_modified = self._fetch_last_modified(page_id)
             yield IngestionItem(
                 id=f"confluence:{page_id}",
