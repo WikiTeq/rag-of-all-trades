@@ -104,6 +104,7 @@ sources:
   #    ref: "main"                           # optional, branch/tag/commit, default "main"
   #    #path: "docs"                         # optional, limit to sub-directory
   #    recursive: true                       # optional, default true
+  #    files_iterator: true                  # optional, use iterator pagination to fetch all files (default true); set to false to limit to 20 files (GitLab API default page size)
   #    include_issues: false                 # optional, default false
   #    #issues_state: "opened"              # optional: opened/closed/all, default "opened"
   #    #issues_labels: "bug,docs"           # optional, comma-separated

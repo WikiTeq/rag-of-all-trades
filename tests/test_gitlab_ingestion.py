@@ -6,6 +6,7 @@ from llama_index.readers.gitlab import GitLabIssuesReader
 
 from tasks.gitlab_ingestion import GitLabIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_bool, parse_list, parse_timestamp
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -342,20 +343,20 @@ class TestGitLabIngestionJob(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_parse_list_comma_string(self):
-        self.assertEqual(GitLabIngestionJob._parse_list("bug, docs, wip"), ["bug", "docs", "wip"])
+        self.assertEqual(parse_list("bug, docs, wip"), ["bug", "docs", "wip"])
 
     def test_parse_list_list_input(self):
-        self.assertEqual(GitLabIngestionJob._parse_list(["bug", "docs"]), ["bug", "docs"])
+        self.assertEqual(parse_list(["bug", "docs"]), ["bug", "docs"])
 
     def test_parse_list_empty(self):
-        self.assertIsNone(GitLabIngestionJob._parse_list(""))
-        self.assertIsNone(GitLabIngestionJob._parse_list(None))
+        self.assertEqual(parse_list(""), [])
+        self.assertEqual(parse_list(None), [])
 
     def test_parse_list_non_string_elements(self):
-        self.assertEqual(GitLabIngestionJob._parse_list([1, 2, 3]), ["1", "2", "3"])
+        self.assertEqual(parse_list([1, 2, 3]), ["1", "2", "3"])
 
     def test_parse_list_all_blank_list_returns_none(self):
-        self.assertIsNone(GitLabIngestionJob._parse_list(["", "  ", ""]))
+        self.assertEqual(parse_list(["", "  ", ""]), [])
 
     def test_resolve_state_opened(self):
         self.assertEqual(
@@ -436,15 +437,15 @@ class TestGitLabIngestionJob(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_parse_timestamp_valid(self):
-        result = GitLabIngestionJob._parse_timestamp("2024-01-15T10:00:00Z")
+        result = parse_timestamp("2024-01-15T10:00:00Z")
         self.assertIsNotNone(result)
         self.assertEqual(result.year, 2024)
 
     def test_parse_timestamp_none(self):
-        self.assertIsNone(GitLabIngestionJob._parse_timestamp(None))
+        self.assertIsNone(parse_timestamp(None))
 
     def test_parse_timestamp_invalid(self):
-        self.assertIsNone(GitLabIngestionJob._parse_timestamp("not-a-date"))
+        self.assertIsNone(parse_timestamp("not-a-date"))
 
     # ------------------------------------------------------------------
     # file_path and new issue filters passed to readers
@@ -501,15 +502,15 @@ class TestGitLabIngestionJob(unittest.TestCase):
 
     def test_parse_bool_true_values(self):
         for v in [True, "true", "True", "1", "yes", "on"]:
-            self.assertTrue(GitLabIngestionJob._parse_bool(v), msg=f"expected True for {v!r}")
+            self.assertTrue(parse_bool(v), msg=f"expected True for {v!r}")
 
     def test_parse_bool_false_values(self):
         for v in [False, "false", "False", "0", "no", "off"]:
-            self.assertFalse(GitLabIngestionJob._parse_bool(v), msg=f"expected False for {v!r}")
+            self.assertFalse(parse_bool(v), msg=f"expected False for {v!r}")
 
     def test_parse_bool_none_uses_default(self):
-        self.assertTrue(GitLabIngestionJob._parse_bool(None, default=True))
-        self.assertFalse(GitLabIngestionJob._parse_bool(None, default=False))
+        self.assertTrue(parse_bool(None, default=True))
+        self.assertFalse(parse_bool(None, default=False))
 
     def test_parse_bool_flows_through_recursive(self):
         job = self._make_job(recursive="false")
@@ -528,19 +529,19 @@ class TestGitLabIngestionJob(unittest.TestCase):
     # ------------------------------------------------------------------
 
     def test_parse_bool_none_default_none_returns_none(self):
-        self.assertIsNone(GitLabIngestionJob._parse_bool(None, default=None))
+        self.assertIsNone(GitLabIngestionJob._parse_bool_optional(None))
 
     def test_parse_bool_optional_true_values(self):
         for v in [True, "true", "1", "yes", "on"]:
-            self.assertTrue(GitLabIngestionJob._parse_bool(v, default=None), msg=f"expected True for {v!r}")
+            self.assertTrue(GitLabIngestionJob._parse_bool_optional(v), msg=f"expected True for {v!r}")
 
     def test_parse_bool_optional_false_values(self):
         for v in [False, "false", "0", "no", "off"]:
-            self.assertFalse(GitLabIngestionJob._parse_bool(v, default=None), msg=f"expected False for {v!r}")
+            self.assertFalse(GitLabIngestionJob._parse_bool_optional(v), msg=f"expected False for {v!r}")
 
     def test_parse_bool_optional_flows_through_confidential(self):
         job = self._make_job(include_issues=True)
-        job.issues_confidential = GitLabIngestionJob._parse_bool("true", default=None)
+        job.issues_confidential = GitLabIngestionJob._parse_bool_optional("true")
         self.assertTrue(job.issues_confidential)
 
     # ------------------------------------------------------------------
