@@ -3,7 +3,7 @@ import logging
 import re
 import time
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 # Third-party imports
@@ -112,7 +112,7 @@ class SlackIngestionJob(IngestionJob):
         """Return a filesystem-safe, unique identifier for the message."""
         channel_id = item.source_ref.get("channel_id", "")
         message_ts = item.source_ref.get("message_ts", "")
-        return slugify(f"{channel_id}_{message_ts}")
+        return slugify(f"{self.source_name}_{channel_id}_{message_ts}")
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return Slack-specific metadata fields."""
@@ -138,7 +138,11 @@ class SlackIngestionJob(IngestionJob):
         client = self._client
         next_cursor = None
         earliest_ts = str(self.earliest_date.timestamp()) if self.earliest_date else None
-        latest_ts = str(self.latest_date.timestamp()) if self.latest_date else str(datetime.now(UTC).timestamp())
+        latest_ts = (
+            str((self.latest_date + timedelta(days=1) - timedelta(microseconds=1)).timestamp())
+            if self.latest_date
+            else str(datetime.now(UTC).timestamp())
+        )
 
         while True:
             try:
@@ -169,7 +173,7 @@ class SlackIngestionJob(IngestionJob):
                         text = self._fetch_message_with_replies(channel_id, ts)
                     else:
                         text = message.get("text", "") or ""
-                    last_modified = datetime.fromtimestamp(float(ts)) if ts else None
+                    last_modified = datetime.fromtimestamp(float(ts), tz=UTC) if ts else None
                     yield IngestionItem(
                         id=f"slack:{self.source_name}:{channel_id}:{ts}",
                         source_ref={
@@ -203,7 +207,11 @@ class SlackIngestionJob(IngestionJob):
         texts: list[str] = []
         next_cursor = None
         earliest_ts = str(self.earliest_date.timestamp()) if self.earliest_date else None
-        latest_ts = str(self.latest_date.timestamp()) if self.latest_date else str(datetime.now(UTC).timestamp())
+        latest_ts = (
+            str((self.latest_date + timedelta(days=1) - timedelta(microseconds=1)).timestamp())
+            if self.latest_date
+            else str(datetime.now(UTC).timestamp())
+        )
 
         while True:
             try:

@@ -431,6 +431,24 @@ class TestSlackIngestionJob(unittest.TestCase):
         ids = job._get_channel_ids_by_patterns(["eng.*"])
         self.assertEqual(ids, ["C001", "C002"])
 
+    def test_yield_messages_latest_date_includes_midday_messages(self):
+        # A message timestamped at midday on latest_date must be included.
+        # latest_date midnight was previously passed as-is, excluding same-day messages.
+        from datetime import UTC, date
+
+        latest = date(2024, 6, 15)
+        # midday on 2024-06-15 in UTC
+        midday_ts = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC).timestamp()
+        midday_ts_str = f"{midday_ts:.6f}"
+
+        job = self._make_job(channel_ids="C123", earliest_date="2024-01-01", latest_date=str(latest))
+        self.mock_client.conversations_history.return_value = _make_history_result(
+            [{"ts": midday_ts_str, "text": "midday msg", "reply_count": 0}]
+        )
+        items = list(job.list_items())
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].source_ref["message_ts"], midday_ts_str)
+
     # ------------------------------------------------------------------
     # _yield_messages — thread broadcast / threadless skip
     # ------------------------------------------------------------------
