@@ -102,6 +102,17 @@ class TestDropboxIngestionInit(unittest.TestCase):
 
 
 class TestDropboxExtensionFilter(unittest.TestCase):
+    def _make_result(self, entries):
+        result = Mock(spec=ListFolderResult)
+        result.entries = entries
+        result.has_more = False
+        result.cursor = "c"
+        return result
+
+    def _listed_paths(self, job, entries):
+        job.dbx.files_list_folder.return_value = self._make_result(entries)
+        return [e.path_lower for e in job._list_folder_recursive("")]
+
     def setUp(self):
         with patch("tasks.dropbox_ingestion.Dropbox"), patch("tasks.dropbox_ingestion.MarkItDown"):
             self.job_include = DropboxIngestionJob(_make_config({"include_extensions": "md,docx"}))
@@ -109,26 +120,44 @@ class TestDropboxExtensionFilter(unittest.TestCase):
             self.job_none = DropboxIngestionJob(_make_config())
 
     def test_include_allows_matching(self):
-        self.assertTrue(self.job_include._extension_allowed("/docs/file.md"))
-        self.assertTrue(self.job_include._extension_allowed("/docs/file.DOCX"))
+        entries = [_make_file_entry("/docs/file.md"), _make_file_entry("/docs/file.docx")]
+        paths = self._listed_paths(self.job_include, entries)
+        self.assertIn("/docs/file.md", paths)
+        self.assertIn("/docs/file.docx", paths)
 
     def test_include_blocks_non_matching(self):
-        self.assertFalse(self.job_include._extension_allowed("/docs/file.png"))
-        self.assertFalse(self.job_include._extension_allowed("/docs/file"))
+        entries = [_make_file_entry("/docs/file.png"), _make_file_entry("/docs/file")]
+        paths = self._listed_paths(self.job_include, entries)
+        self.assertEqual(paths, [])
 
     def test_exclude_blocks_matching(self):
-        self.assertFalse(self.job_exclude._extension_allowed("/img/photo.png"))
-        self.assertFalse(self.job_exclude._extension_allowed("/img/photo.jpg"))
+        entries = [_make_file_entry("/img/photo.png"), _make_file_entry("/img/photo.jpg")]
+        paths = self._listed_paths(self.job_exclude, entries)
+        self.assertEqual(paths, [])
 
     def test_exclude_allows_non_matching(self):
-        self.assertTrue(self.job_exclude._extension_allowed("/docs/file.md"))
+        entries = [_make_file_entry("/docs/file.md")]
+        paths = self._listed_paths(self.job_exclude, entries)
+        self.assertIn("/docs/file.md", paths)
 
     def test_no_filter_allows_all(self):
-        self.assertTrue(self.job_none._extension_allowed("/any/file.xyz"))
-        self.assertTrue(self.job_none._extension_allowed("/any/file"))
+        entries = [_make_file_entry("/any/file.xyz"), _make_file_entry("/any/file.md")]
+        paths = self._listed_paths(self.job_none, entries)
+        self.assertEqual(len(paths), 2)
 
 
 class TestDropboxDirectoryFilter(unittest.TestCase):
+    def _make_result(self, entries):
+        result = Mock(spec=ListFolderResult)
+        result.entries = entries
+        result.has_more = False
+        result.cursor = "c"
+        return result
+
+    def _listed_paths(self, job, entries):
+        job.dbx.files_list_folder.return_value = self._make_result(entries)
+        return [e.path_lower for e in job._list_folder_recursive("")]
+
     def setUp(self):
         with patch("tasks.dropbox_ingestion.Dropbox"), patch("tasks.dropbox_ingestion.MarkItDown"):
             self.job_include = DropboxIngestionJob(_make_config({"include_directories": "source,test"}))
@@ -136,20 +165,29 @@ class TestDropboxDirectoryFilter(unittest.TestCase):
             self.job_none = DropboxIngestionJob(_make_config())
 
     def test_include_allows_matching(self):
-        self.assertTrue(self.job_include._directory_allowed("/project/source"))
-        self.assertTrue(self.job_include._directory_allowed("/project/TEST"))
+        entries = [_make_file_entry("/project/source/file.md"), _make_file_entry("/project/test/file.md")]
+        paths = self._listed_paths(self.job_include, entries)
+        self.assertEqual(len(paths), 2)
 
     def test_include_blocks_non_matching(self):
-        self.assertFalse(self.job_include._directory_allowed("/project/other"))
+        entries = [_make_file_entry("/project/other/file.md")]
+        paths = self._listed_paths(self.job_include, entries)
+        self.assertEqual(paths, [])
 
     def test_exclude_blocks_matching(self):
-        self.assertFalse(self.job_exclude._directory_allowed("/project/node_modules"))
+        entries = [_make_file_entry("/project/node_modules/file.js")]
+        paths = self._listed_paths(self.job_exclude, entries)
+        self.assertEqual(paths, [])
 
     def test_exclude_allows_others(self):
-        self.assertTrue(self.job_exclude._directory_allowed("/project/src"))
+        entries = [_make_file_entry("/project/src/file.md")]
+        paths = self._listed_paths(self.job_exclude, entries)
+        self.assertIn("/project/src/file.md", paths)
 
     def test_no_filter_allows_all(self):
-        self.assertTrue(self.job_none._directory_allowed("/any/folder"))
+        entries = [_make_file_entry("/any/folder/file.md")]
+        paths = self._listed_paths(self.job_none, entries)
+        self.assertEqual(len(paths), 1)
 
 
 class TestDropboxListItems(unittest.TestCase):
@@ -379,7 +417,7 @@ class TestDropboxGetItemName(unittest.TestCase):
 
     def test_fallback_for_empty_result(self):
         # A path that sanitizes to empty should return fallback
-        name = self.job._sanitize_path("")
+        name = self.job.get_item_name(self._item(""))
         self.assertEqual(name, "dropbox_file")
 
 
