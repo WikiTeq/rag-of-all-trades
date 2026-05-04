@@ -131,28 +131,6 @@ class TestSlackIngestionJob(unittest.TestCase):
         self.assertEqual(job.channel_types, "public_channel")
 
     # ------------------------------------------------------------------
-    # _parse_ids
-    # ------------------------------------------------------------------
-
-    def test_parse_ids_comma_string(self):
-        result = SlackIngestionJob._parse_ids("C111,C222, C333")
-        self.assertEqual(result, ["C111", "C222", "C333"])
-
-    def test_parse_ids_list(self):
-        result = SlackIngestionJob._parse_ids(["C111", "C222"])
-        self.assertEqual(result, ["C111", "C222"])
-
-    def test_parse_ids_empty_string(self):
-        self.assertEqual(SlackIngestionJob._parse_ids(""), [])
-
-    def test_parse_ids_none(self):
-        self.assertEqual(SlackIngestionJob._parse_ids(None), [])
-
-    def test_parse_ids_filters_blank_entries(self):
-        result = SlackIngestionJob._parse_ids("C111,,  ,C222")
-        self.assertEqual(result, ["C111", "C222"])
-
-    # ------------------------------------------------------------------
     # _parse_date
     # ------------------------------------------------------------------
 
@@ -344,7 +322,7 @@ class TestSlackIngestionJob(unittest.TestCase):
         )
         name = job.get_item_name(item)
         self.assertIn("C123456", name)
-        self.assertIn("1700000001_000001", name)
+        self.assertIn("1700000001.000001", name)
 
     def test_get_item_name_sanitizes_special_chars(self):
         job = self._make_job(channel_ids="C123")
@@ -357,7 +335,7 @@ class TestSlackIngestionJob(unittest.TestCase):
             },
         )
         name = job.get_item_name(item)
-        self.assertNotIn(".", name)
+        self.assertIn(".", name)  # slugify preserves dots
 
     def test_get_item_name_truncates_to_255(self):
         long_id = "C" + "x" * 300

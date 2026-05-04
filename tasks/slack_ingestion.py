@@ -13,6 +13,8 @@ from slack_sdk.errors import SlackApiError
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_list
+from utils.text import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -52,8 +54,8 @@ class SlackIngestionJob(IngestionJob):
         if not self.token:
             raise ValueError("token is required in Slack connector config")
 
-        self.channel_ids: list[str] = self._parse_ids(cfg.get("channel_ids", ""))
-        self.channel_patterns: list[str] = self._parse_ids(cfg.get("channel_patterns", ""))
+        self.channel_ids: list[str] = parse_list(cfg.get("channel_ids", ""))
+        self.channel_patterns: list[str] = parse_list(cfg.get("channel_patterns", ""))
 
         if self.channel_ids and self.channel_patterns:
             raise ValueError("channel_ids and channel_patterns are mutually exclusive in Slack connector config")
@@ -110,9 +112,7 @@ class SlackIngestionJob(IngestionJob):
         """Return a filesystem-safe, unique identifier for the message."""
         channel_id = item.source_ref.get("channel_id", "")
         message_ts = item.source_ref.get("message_ts", "")
-        raw = f"{channel_id}_{message_ts}"
-        safe = re.sub(r"[^\w\-]", "_", raw)
-        return safe[:255]
+        return slugify(f"{channel_id}_{message_ts}")
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return Slack-specific metadata fields."""
@@ -283,15 +283,6 @@ class SlackIngestionJob(IngestionJob):
                 break
 
         return list(seen)
-
-    @staticmethod
-    def _parse_ids(value: Any) -> list[str]:
-        """Parse a comma-separated string or list into a list of stripped strings."""
-        if not value:
-            return []
-        if isinstance(value, list):
-            return [str(v).strip() for v in value if str(v).strip()]
-        return [v.strip() for v in str(value).split(",") if v.strip()]
 
     @staticmethod
     def _parse_date(value: str) -> datetime:
