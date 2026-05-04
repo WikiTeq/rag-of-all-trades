@@ -190,7 +190,7 @@ class FirefliesIngestionJob(IngestionJob):
         outline = (summary.get("outline") or "").strip()
         sentences = transcript.get("sentences") or []
 
-        if outline and len(outline) > _MIN_OUTLINE_LENGTH:
+        if outline and len(outline) >= _MIN_OUTLINE_LENGTH:
             parts.append(f"## Outline\n\n{outline}")
         elif sentences:
             parts.append("## Transcript\n\n" + self._build_transcript_from_sentences(sentences))
@@ -247,7 +247,7 @@ class FirefliesIngestionJob(IngestionJob):
                 current_speaker = speaker
                 current_lines = []
                 if start_time is not None:
-                    lines.append(f"*[{_format_timestamp(start_time)}]*")
+                    lines.append(f"*[{_format_timestamp(start_time / 1000)}]*")
 
             if text:
                 current_lines.append(text)
