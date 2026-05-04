@@ -1,6 +1,5 @@
 # Standard library imports
 import logging
-import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -12,6 +11,8 @@ from llama_index.readers.gitlab import GitLabIssuesReader, GitLabRepositoryReade
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_bool, parse_list, parse_timestamp
+from utils.text import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,7 @@ class GitLabIngestionJob(IngestionJob):
         - config.ref: Branch or commit ref for repository files (optional, default "main")
         - config.path: Sub-directory path to limit repository file loading (optional)
         - config.recursive: Whether to recurse into sub-directories (optional, default True)
+        - config.files_iterator: Use iterator pagination for repository files to fetch all pages (optional, default True)
         - config.include_issues: Whether to ingest issues (optional, default False)
         - config.issues_state: Issue state filter "opened"/"closed"/"all" (optional, default "opened")
         - config.issues_labels: Comma-separated label filter (optional)
@@ -69,25 +71,26 @@ class GitLabIngestionJob(IngestionJob):
         self.ref: str = str(cfg.get("ref", "main"))
         self.path: str | None = cfg.get("path") or None
         self.file_path: str | None = cfg.get("file_path") or None
-        self.recursive: bool = self._parse_bool(cfg.get("recursive"), default=True)
+        self.recursive: bool = parse_bool(cfg.get("recursive"), default=True)
+        self.files_iterator: bool = parse_bool(cfg.get("files_iterator"), default=True)
 
         # Issue options
-        self.include_issues: bool = self._parse_bool(cfg.get("include_issues"), default=False)
+        self.include_issues: bool = parse_bool(cfg.get("include_issues"), default=False)
         self.issues_state: str = cfg.get("issues_state", "opened")
-        self.issues_labels: list[str] | None = self._parse_list(cfg.get("issues_labels"))
+        self.issues_labels: list[str] | None = parse_list(cfg.get("issues_labels")) or None
         self.issues_assignee: str | None = cfg.get("issues_assignee") or None
         self.issues_author: str | None = cfg.get("issues_author") or None
         self.issues_milestone: str | None = cfg.get("issues_milestone") or None
         self.issues_search: str | None = cfg.get("issues_search") or None
-        self.issues_get_all: bool = self._parse_bool(cfg.get("issues_get_all"), default=False)
-        self.issues_confidential: bool | None = self._parse_bool(cfg.get("issues_confidential"), default=None)
-        self.issues_created_after: datetime | None = self._parse_timestamp(cfg.get("issues_created_after"))
-        self.issues_created_before: datetime | None = self._parse_timestamp(cfg.get("issues_created_before"))
-        self.issues_updated_after: datetime | None = self._parse_timestamp(cfg.get("issues_updated_after"))
-        self.issues_updated_before: datetime | None = self._parse_timestamp(cfg.get("issues_updated_before"))
+        self.issues_get_all: bool = parse_bool(cfg.get("issues_get_all"), default=False)
+        self.issues_confidential: bool | None = self._parse_bool_optional(cfg.get("issues_confidential"))
+        self.issues_created_after: datetime | None = parse_timestamp(cfg.get("issues_created_after"))
+        self.issues_created_before: datetime | None = parse_timestamp(cfg.get("issues_created_before"))
+        self.issues_updated_after: datetime | None = parse_timestamp(cfg.get("issues_updated_after"))
+        self.issues_updated_before: datetime | None = parse_timestamp(cfg.get("issues_updated_before"))
         self.issues_iids: list[int] | None = cfg.get("issues_iids") or None
         self.issues_type: GitLabIssuesReader.IssueType | None = self._resolve_issue_type_enum(cfg.get("issues_type"))
-        self.issues_non_archived: bool | None = self._parse_bool(cfg.get("issues_non_archived"), default=None)
+        self.issues_non_archived: bool | None = self._parse_bool_optional(cfg.get("issues_non_archived"))
         self.issues_scope: GitLabIssuesReader.Scope | None = self._resolve_scope_enum(cfg.get("issues_scope"))
 
         gl = gitlab.Gitlab(self.gitlab_url, private_token=self.personal_token)
@@ -136,6 +139,7 @@ class GitLabIngestionJob(IngestionJob):
                     file_path=self.file_path,
                     path=self.path,
                     recursive=self.recursive,
+                    iterator=self.files_iterator,
                 )
                 for doc in docs:
                     file_path = doc.metadata.get("file_path", doc.doc_id)
@@ -179,7 +183,7 @@ class GitLabIngestionJob(IngestionJob):
                     yield IngestionItem(
                         id=f"gitlab:{self.project_id or self.group_id}:issue:{issue_id}",
                         source_ref=doc,
-                        last_modified=self._parse_timestamp(
+                        last_modified=parse_timestamp(
                             doc.metadata.get("created_at")  # GitLabIssuesReader does not expose updated_at
                         ),
                     )
@@ -200,7 +204,7 @@ class GitLabIngestionJob(IngestionJob):
             name = f"gitlab_issue_{self.project_id or self.group_id}_{iid}"
         else:
             file_path = extra.get("file_path", doc.doc_id or "")
-            name = re.sub(r"[^\w\-_\.]", "_", file_path)
+            name = slugify(file_path) if file_path else ""
 
         return name[:255] if name else item.id[:255]
 
@@ -244,27 +248,11 @@ class GitLabIngestionJob(IngestionJob):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_bool(value: Any, default: bool | None = False) -> bool | None:
-        """Parse a config value to bool, safely handling string inputs like 'false'.
-
-        Pass default=None to get None when value is unset (optional bool fields).
-        """
+    def _parse_bool_optional(value: Any) -> bool | None:
+        """Parse a tristate bool config value; returns None when unset."""
         if value is None:
-            return default
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.strip().lower() in {"1", "true", "yes", "on"}
-        return bool(value)
-
-    @staticmethod
-    def _parse_list(value: Any) -> list[str] | None:
-        """Parse a comma-separated string or list into a list of strings."""
-        if not value:
             return None
-        if isinstance(value, list):
-            return [s for v in value if (s := str(v).strip())] or None
-        return [v.strip() for v in str(value).split(",") if v.strip()] or None
+        return parse_bool(value)
 
     @staticmethod
     def _resolve_enum(enum_class, value, default=None):
@@ -287,15 +275,3 @@ class GitLabIngestionJob(IngestionJob):
     @classmethod
     def _resolve_issue_type_enum(cls, issue_type: str | None) -> GitLabIssuesReader.IssueType | None:
         return cls._resolve_enum(GitLabIssuesReader.IssueType, issue_type)
-
-    @staticmethod
-    def _parse_timestamp(value: Any) -> datetime | None:
-        """Parse an ISO-8601 timestamp string into a datetime, or return None."""
-        if not value:
-            return None
-        if isinstance(value, datetime):
-            return value
-        try:
-            return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except (ValueError, TypeError):
-            return None
