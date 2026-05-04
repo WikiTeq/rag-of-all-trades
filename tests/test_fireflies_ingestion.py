@@ -189,7 +189,7 @@ class TestFirefliesGetRawContent(unittest.TestCase):
         self.assertIn("Action items discussed", content)
 
     def test_uses_outline_when_long_enough(self):
-        long_outline = "x" * 300
+        long_outline = "x" * 200  # exactly _MIN_OUTLINE_LENGTH
         t = _make_transcript(
             summary={
                 "overview": "Overview text",
