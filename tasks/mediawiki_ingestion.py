@@ -50,6 +50,8 @@ class MediaWikiIngestionJob(IngestionJob):
 
         if api_url:
             api_url_parsed = urlsplit(api_url, allow_fragments=False)
+            if not api_url_parsed.scheme or not api_url_parsed.hostname:
+                raise ValueError("Invalid api_url in MediaWiki connector config")
             host = api_url_parsed.hostname
             path = api_url_parsed.path.strip().removesuffix("api.php")
             scheme = api_url_parsed.scheme
