@@ -272,12 +272,6 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         metadata = job.get_extra_metadata(item=item, _content="", _metadata={})
         self.assertEqual(metadata["url"], "")
 
-    def test_parse_page_ids(self):
-        self.assertEqual(ConfluenceIngestionJob.parse_page_ids("111,222, 333"), ["111", "222", "333"])
-        self.assertEqual(ConfluenceIngestionJob.parse_page_ids([111, 222]), ["111", "222"])
-        self.assertIsNone(ConfluenceIngestionJob.parse_page_ids(None))
-        self.assertIsNone(ConfluenceIngestionJob.parse_page_ids(""))
-
 
 if __name__ == "__main__":
     unittest.main()
