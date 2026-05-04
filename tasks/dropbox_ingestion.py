@@ -1,7 +1,5 @@
 import io
 import logging
-import re
-import unicodedata
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,6 +10,9 @@ from markitdown import MarkItDown, MarkItDownException
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.filters import path_accepted
+from utils.parse import parse_list
+from utils.text import sanitize_ascii_key
 
 logger = logging.getLogger(__name__)
 
@@ -33,20 +34,22 @@ class DropboxIngestionJob(IngestionJob):
             raise ValueError("Dropbox connector requires 'access_token' in config")
 
         # Folder paths to traverse; empty list means root (ingest everything)
-        paths = cfg.get("paths", [])
-        if isinstance(paths, str):
-            paths = [p.strip() for p in paths.split(",") if p.strip()]
+        paths = parse_list(cfg.get("paths", []))
         self.paths: list[str] = paths or [""]  # "" means Dropbox root
 
-        # Extension filters (mutually exclusive)
-        self.include_extensions: set[str] | None = self._parse_str_filter(cfg.get("include_extensions"), ext=True)
-        self.exclude_extensions: set[str] | None = self._parse_str_filter(cfg.get("exclude_extensions"), ext=True)
+        # Extension filters (mutually exclusive) — stored without leading dot, lowercase
+        self.include_extensions: set[str] | None = {
+            e.lstrip(".") for e in parse_list(cfg.get("include_extensions"), lower=True)
+        } or None
+        self.exclude_extensions: set[str] | None = {
+            e.lstrip(".") for e in parse_list(cfg.get("exclude_extensions"), lower=True)
+        } or None
         if self.include_extensions and self.exclude_extensions:
             raise ValueError("Dropbox connector: 'include_extensions' and 'exclude_extensions' are mutually exclusive")
 
         # Directory filters (mutually exclusive)
-        self.include_directories: set[str] | None = self._parse_str_filter(cfg.get("include_directories"))
-        self.exclude_directories: set[str] | None = self._parse_str_filter(cfg.get("exclude_directories"))
+        self.include_directories: set[str] | None = set(parse_list(cfg.get("include_directories"), lower=True)) or None
+        self.exclude_directories: set[str] | None = set(parse_list(cfg.get("exclude_directories"), lower=True)) or None
         if self.include_directories and self.exclude_directories:
             raise ValueError(
                 "Dropbox connector: 'include_directories' and 'exclude_directories' are mutually exclusive"
@@ -54,49 +57,6 @@ class DropboxIngestionJob(IngestionJob):
 
         self.dbx = Dropbox(access_token)
         self.md = MarkItDown()
-
-    @staticmethod
-    def _parse_str_filter(value, ext: bool = False) -> set[str] | None:
-        """Parse a filter value from config into a set of normalized strings.
-
-        Accepts a comma-separated string or a list/tuple/set. Returns None when
-        value is falsy. Raises ValueError for unsupported types.
-        """
-        if not value:
-            return None
-        if isinstance(value, str):
-            items = [v.strip() for v in value.split(",") if v.strip()]
-        elif isinstance(value, list | tuple | set):
-            items = [str(v).strip() for v in value if str(v).strip()]
-        else:
-            raise ValueError(f"Invalid filter config type {type(value).__name__!r}: expected str or list")
-        if not items:
-            return None
-        if ext:
-            return {item.lstrip(".").lower() for item in items}
-        return {item.lower() for item in items}
-
-    # ------------------------------------------------------------------
-    # Filtering helpers
-    # ------------------------------------------------------------------
-
-    def _extension_allowed(self, path: str) -> bool:
-        """Return True if the file's extension passes the configured filter."""
-        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
-        if self.include_extensions is not None:
-            return ext in self.include_extensions
-        if self.exclude_extensions is not None:
-            return ext not in self.exclude_extensions
-        return True
-
-    def _directory_allowed(self, folder_path: str) -> bool:
-        """Return True if any ancestor folder name passes the configured directory filter."""
-        parts = {p.lower() for p in folder_path.split("/") if p}
-        if self.include_directories is not None:
-            return bool(parts & self.include_directories)
-        if self.exclude_directories is not None:
-            return not (parts & self.exclude_directories)
-        return True
 
     # ------------------------------------------------------------------
     # Folder traversal
@@ -116,11 +76,24 @@ class DropboxIngestionJob(IngestionJob):
         while True:
             for entry in result.entries:
                 if isinstance(entry, FileMetadata):
+                    if not path_accepted(
+                        entry.path_lower,
+                        include_extensions={f".{e}" for e in self.include_extensions}
+                        if self.include_extensions
+                        else None,
+                        exclude_extensions={f".{e}" for e in self.exclude_extensions}
+                        if self.exclude_extensions
+                        else None,
+                    ):
+                        continue
+                    # Directory filter: match any ancestor folder name (not prefix)
                     parent = entry.path_lower.rsplit("/", 1)[0]
-                    if parent and not self._directory_allowed(parent):
-                        continue
-                    if not self._extension_allowed(entry.path_lower):
-                        continue
+                    if parent:
+                        parts = {p for p in parent.split("/") if p}
+                        if self.include_directories is not None and not (parts & self.include_directories):
+                            continue
+                        if self.exclude_directories is not None and parts & self.exclude_directories:
+                            continue
                     yield entry
 
             if not result.has_more:
@@ -190,17 +163,8 @@ class DropboxIngestionJob(IngestionJob):
     # Naming
     # ------------------------------------------------------------------
 
-    def _sanitize_path(self, path: str) -> str:
-        """Convert a Dropbox path to a safe, unique item name."""
-        path = unicodedata.normalize("NFKD", path)
-        path = path.encode("ascii", "ignore").decode("ascii")
-        path = re.sub(r"[ \\/]+", "_", path)
-        path = re.sub(r"[^a-zA-Z0-9\-_\.]", "", path)
-        path = path.strip("_")
-        return path[:255] or "dropbox_file"
-
     def get_item_name(self, item: IngestionItem) -> str:
-        return self._sanitize_path(item.source_ref)
+        return sanitize_ascii_key(item.source_ref).strip("_") or "dropbox_file"
 
     # ------------------------------------------------------------------
     # Metadata
