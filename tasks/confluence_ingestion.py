@@ -1,6 +1,5 @@
 # Standard library imports
 import logging
-import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -11,6 +10,8 @@ from llama_index.readers.confluence import ConfluenceReader
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_bool, parse_list, parse_timestamp
+from utils.text import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ class ConfluenceIngestionJob(IngestionJob):
         if self.password and not self.username:
             raise ValueError("username is required when using password authentication")
 
-        self.cloud: bool = bool(cfg.get("cloud", True))
+        self.cloud: bool = parse_bool(cfg.get("cloud"), default=True)
 
         active_modes = [m for m in _DISCOVERY_MODES if cfg.get(m)]
         if len(active_modes) != 1:
@@ -90,13 +91,13 @@ class ConfluenceIngestionJob(IngestionJob):
 
         self.space_key: str | None = cfg.get("space_key") or None
         raw_page_ids = cfg.get("page_ids")
-        self.page_ids: list[str] | None = self.parse_page_ids(raw_page_ids)
+        self.page_ids: list[str] | None = parse_list(raw_page_ids) or None
         self.page_label: str | None = cfg.get("page_label") or None
         self.cql: str | None = cfg.get("cql") or None
         self.folder_id: str | None = str(cfg["folder_id"]) if cfg.get("folder_id") else None
 
         self.page_status: str | None = cfg.get("page_status") or None
-        self.include_children: bool = bool(cfg.get("include_children", False))
+        self.include_children: bool = parse_bool(cfg.get("include_children"))
         try:
             self.max_pages: int = int(cfg.get("max_pages", 50))
         except (TypeError, ValueError):
@@ -150,8 +151,7 @@ class ConfluenceIngestionJob(IngestionJob):
         title = doc.metadata.get("title", "") or ""
         page_id = doc.metadata.get("page_id") or doc.metadata.get("id", "")
         raw = f"confluence_{page_id}_{title}" if title else f"confluence_{page_id}"
-        safe = re.sub(r"[^\w\-]", "_", raw)
-        return safe[:255]
+        return slugify(raw)
 
     def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
         doc = item.source_ref
@@ -173,7 +173,9 @@ class ConfluenceIngestionJob(IngestionJob):
             page = self._reader.confluence.get_page_by_id(page_id, expand="version")
             when_str = page.get("version", {}).get("when")
             if when_str:
-                return datetime.fromisoformat(when_str.replace("Z", "+00:00"))
+                ts = parse_timestamp(when_str)
+                if ts:
+                    return ts
         except (OSError, ValueError, KeyError, AttributeError) as e:
             logger.warning(f"[{self.source_name}] Could not fetch version.when for page {page_id}: {e}")
         return datetime.now(UTC)
@@ -220,12 +222,3 @@ class ConfluenceIngestionJob(IngestionJob):
             kwargs["page_status"] = self.page_status
 
         return kwargs
-
-    @staticmethod
-    def parse_page_ids(value: Any) -> list[str] | None:
-        """Normalize page_ids to a list of strings, or None."""
-        if not value:
-            return None
-        if isinstance(value, list):
-            return [str(v).strip() for v in value if str(v).strip()]
-        return [v.strip() for v in str(value).split(",") if v.strip()]
