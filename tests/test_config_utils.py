@@ -1,7 +1,7 @@
 import pytest
 
-from utils.config import parse_bool
 from utils.config_validation import mutually_exclusive, require_one_of
+from utils.parse import parse_bool
 
 
 def test_mutually_exclusive_both_set_raises():
@@ -66,9 +66,9 @@ def test_parse_bool_int(value, expected):
 
 
 @pytest.mark.parametrize("value", ["maybe", 2, []])
-def test_parse_bool_invalid_raises(value):
-    with pytest.raises(ValueError):
-        parse_bool(value)
+def test_parse_bool_unrecognised_returns_default(value):
+    assert parse_bool(value) is False
+    assert parse_bool(value, default=True) is True
 
 
 @pytest.mark.parametrize(("value", "expected"), [("  true  ", True), ("  false  ", False)])
