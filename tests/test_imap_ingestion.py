@@ -6,7 +6,8 @@ from email.mime.text import MIMEText
 from unittest.mock import MagicMock, patch
 
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.imap_ingestion import IMAPIngestionJob, _decode_header_value, _extract_body, _strip_html
+from tasks.imap_ingestion import IMAPIngestionJob, _decode_header_value, _extract_body
+from utils.text import html_to_markdown
 
 
 def _make_job(mailboxes=""):
@@ -235,8 +236,8 @@ class TestIMAPGetExtraMetadata(unittest.TestCase):
 
 class TestIMAPHelpers(unittest.TestCase):
     def test_strip_html(self):
-        self.assertNotIn("<", _strip_html("<p>Hello <b>world</b></p>"))
-        self.assertIn("Hello", _strip_html("<p>Hello <b>world</b></p>"))
+        self.assertNotIn("<", html_to_markdown("<p>Hello <b>world</b></p>"))
+        self.assertIn("Hello", html_to_markdown("<p>Hello <b>world</b></p>"))
 
     def test_decode_header_value_plain(self):
         self.assertEqual(_decode_header_value("Hello"), "Hello")

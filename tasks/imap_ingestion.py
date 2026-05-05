@@ -7,31 +7,14 @@ from email import message_from_bytes
 from email.header import decode_header
 from email.message import Message
 from email.utils import parsedate_to_datetime
-from html.parser import HTMLParser
 from typing import Any
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_list
+from utils.text import html_to_markdown, slugify
 
 logger = logging.getLogger(__name__)
-
-
-class _HTMLTextExtractor(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self._parts: list[str] = []
-
-    def handle_data(self, data: str) -> None:
-        self._parts.append(data)
-
-    def get_text(self) -> str:
-        return " ".join(self._parts)
-
-
-def _strip_html(html: str) -> str:
-    extractor = _HTMLTextExtractor()
-    extractor.feed(html)
-    return extractor.get_text()
 
 
 def _decode_header_value(raw: str | bytes | None) -> str:
@@ -90,7 +73,7 @@ def _extract_body(msg: Message) -> str:
     if plain:
         return "\n".join(plain).strip()
     if html:
-        return _strip_html("\n".join(html)).strip()
+        return html_to_markdown("\n".join(html))
     return ""
 
 
@@ -132,13 +115,7 @@ class IMAPIngestionJob(IngestionJob):
         if not self.password:
             raise ValueError("password is required in IMAP connector config")
 
-        raw_mailboxes = cfg.get("mailboxes", "")
-        if isinstance(raw_mailboxes, list):
-            self.mailboxes = [m.strip() for m in raw_mailboxes if m.strip()]
-        elif raw_mailboxes:
-            self.mailboxes = [m.strip() for m in raw_mailboxes.split(",") if m.strip()]
-        else:
-            self.mailboxes = []
+        self.mailboxes = parse_list(cfg.get("mailboxes", ""))
 
         logger.info(f"Initialized IMAP connector for {self.host}:{self.port} user={self.username}")
 
@@ -311,8 +288,7 @@ class IMAPIngestionJob(IngestionJob):
         return "\n\n".join(parts)
 
     def get_item_name(self, item: IngestionItem) -> str:
-        safe = re.sub(r"[^\w\-]", "_", item.id)
-        return safe[:255]
+        return slugify(item.id)
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         cache = item._metadata_cache
