@@ -93,11 +93,6 @@ class TestGitHubIngestionJob(unittest.TestCase):
         self.mock_repo_reader = Mock()
         self.mock_issues_reader = Mock()
 
-        self._repo_reader_patcher = patch.object(GithubRepositoryReader, "__init__", return_value=None)
-        self._issues_reader_patcher = patch.object(GitHubRepositoryIssuesReader, "__init__", return_value=None)
-        self._repo_reader_patcher.start()
-        self._issues_reader_patcher.start()
-
         # Patch the constructors to return our mocks
         self._repo_new_patcher = patch(
             "tasks.github_ingestion.GithubRepositoryReader", return_value=self.mock_repo_reader
@@ -116,8 +111,6 @@ class TestGitHubIngestionJob(unittest.TestCase):
     def tearDown(self):
         self._repo_new_patcher.stop()
         self._issues_new_patcher.stop()
-        self._repo_reader_patcher.stop()
-        self._issues_reader_patcher.stop()
         self.github_client_patcher.stop()
         self.issues_client_patcher.stop()
 

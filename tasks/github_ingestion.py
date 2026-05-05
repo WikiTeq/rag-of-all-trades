@@ -2,6 +2,7 @@
 import logging
 import re
 from collections.abc import Iterator
+from datetime import datetime
 from typing import Any
 
 # Third-party imports
@@ -17,7 +18,7 @@ from llama_index.readers.github import (
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from utils.parse import parse_bool, parse_list
+from utils.parse import parse_bool, parse_list, parse_timestamp
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -80,10 +81,10 @@ class GitHubIngestionJob(IngestionJob):
         # ------------------------------------------------------------------
         # Auth validation
         # ------------------------------------------------------------------
-        personal_token = cfg.get("personal_token", "").strip()
-        app_id = cfg.get("github_app_id", "").strip()
-        app_installation_id = cfg.get("github_app_installation_id", "").strip()
-        app_private_key = cfg.get("github_app_private_key", "").strip()
+        personal_token = (cfg.get("personal_token") or "").strip()
+        app_id = (cfg.get("github_app_id") or "").strip()
+        app_installation_id = (cfg.get("github_app_installation_id") or "").strip()
+        app_private_key = (cfg.get("github_app_private_key") or "").strip()
 
         has_pat = bool(personal_token)
         has_app = bool(app_id or app_installation_id or app_private_key)
@@ -107,15 +108,15 @@ class GitHubIngestionJob(IngestionJob):
         # ------------------------------------------------------------------
         # Repository params
         # ------------------------------------------------------------------
-        self.owner = cfg.get("owner", "").strip()
-        self.repo = cfg.get("repo", "").strip()
+        self.owner = (cfg.get("owner") or "").strip()
+        self.repo = (cfg.get("repo") or "").strip()
         if not self.owner:
             raise ValueError("owner is required in GitHub connector config")
         if not self.repo:
             raise ValueError("repo is required in GitHub connector config")
 
-        branch = cfg.get("branch", "").strip()
-        commit_sha = cfg.get("commit_sha", "").strip()
+        branch = (cfg.get("branch") or "").strip()
+        commit_sha = (cfg.get("commit_sha") or "").strip()
         if branch and commit_sha:
             raise ValueError("branch and commit_sha are mutually exclusive in GitHub connector config")
         # Default to "main" if neither is provided
@@ -194,7 +195,7 @@ class GitHubIngestionJob(IngestionJob):
                 GithubRepositoryReader.FilterType.EXCLUDE,
             )
 
-        self.concurrent_requests: int = int(cfg.get("concurrent_requests", 5))
+        self.concurrent_requests: int = int(cfg.get("concurrent_requests") or 5)
 
         self._repo_reader = GithubRepositoryReader(
             github_client=self._github_client,
@@ -262,7 +263,7 @@ class GitHubIngestionJob(IngestionJob):
                 # The GitHub Issues API returns both issues and PRs; skip PRs
                 if "/pull/" in doc.metadata.get("source", ""):
                     continue
-                last_modified = doc.metadata.get("created_at")
+                last_modified = parse_timestamp(doc.metadata.get("created_at"))
                 yield IngestionItem(
                     id=f"github:{self.owner}/{self.repo}:issue:{doc.doc_id}",
                     source_ref=doc,
@@ -317,26 +318,29 @@ class GitHubIngestionJob(IngestionJob):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-    def _get_head_commit_date(self) -> str | None:
-        """Return the committer date of the branch HEAD commit.
+    def _get_head_commit_date(self) -> datetime | None:
+        """Return the committer date of the HEAD commit as a UTC datetime.
 
-        Uses two API calls per ingestion run: getBranch to fetch the HEAD
-        commit SHA, then getCommit to extract its committer date.
-        Falls back to None if the branch is not set or either call fails.
+        For branch mode: resolves the HEAD SHA via getBranch, then calls
+        getCommit. For commit_sha mode: calls getCommit directly.
+        Returns None if neither is set or if either API call fails.
         """
-        if not self.branch:
-            return None
         try:
-            branch_response = asyncio_run(
-                self._github_client.request(
-                    "getBranch",
-                    "GET",
-                    owner=self.owner,
-                    repo=self.repo,
-                    branch=self.branch,
+            if self.branch:
+                branch_response = asyncio_run(
+                    self._github_client.request(
+                        "getBranch",
+                        "GET",
+                        owner=self.owner,
+                        repo=self.repo,
+                        branch=self.branch,
+                    )
                 )
-            )
-            commit_sha = branch_response.json()["commit"]["sha"]
+                commit_sha = branch_response.json()["commit"]["sha"]
+            elif self.commit_sha:
+                commit_sha = self.commit_sha
+            else:
+                return None
             commit_response = asyncio_run(
                 self._github_client.request(
                     "getCommit",
@@ -346,7 +350,7 @@ class GitHubIngestionJob(IngestionJob):
                     commit_sha=commit_sha,
                 )
             )
-            return commit_response.json()["commit"]["committer"]["date"]
+            return parse_timestamp(commit_response.json()["commit"]["committer"]["date"])
         except Exception as e:
             logger.warning(f"[{self.source_name}] Could not fetch HEAD commit date: {e}")
             return None
