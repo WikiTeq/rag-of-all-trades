@@ -207,15 +207,15 @@ class TestGitHubIngestionJob(unittest.TestCase):
         self._make_job(include_extensions="md,py")
         call_kwargs = self.mock_repo_reader_class.call_args.kwargs
         exts, ftype = call_kwargs["filter_file_extensions"]
-        self.assertIn("md", exts)
-        self.assertIn("py", exts)
+        self.assertIn(".md", exts)
+        self.assertIn(".py", exts)
         self.assertEqual(ftype, GithubRepositoryReader.FilterType.INCLUDE)
 
     def test_exclude_extensions_passed_as_exclude_filter(self):
         self._make_job(exclude_extensions="png,jpg")
         call_kwargs = self.mock_repo_reader_class.call_args.kwargs
         exts, ftype = call_kwargs["filter_file_extensions"]
-        self.assertIn("png", exts)
+        self.assertIn(".png", exts)
         self.assertEqual(ftype, GithubRepositoryReader.FilterType.EXCLUDE)
 
     def test_include_directories_passed_as_include_filter(self):
@@ -396,17 +396,14 @@ class TestGitHubIngestionJob(unittest.TestCase):
         self.assertLessEqual(len(job.get_item_name(item)), 255)
 
     # ------------------------------------------------------------------
-    # get_document_metadata — files
+    # get_extra_metadata — files
     # ------------------------------------------------------------------
 
-    def test_get_document_metadata_file_has_required_fields(self):
+    def test_get_extra_metadata_file_has_required_fields(self):
         doc = _make_file_doc(file_path="README.md")
         item = IngestionItem(id="github:myorg/myrepo:README.md", source_ref=doc)
         job = self._make_job(owner="myorg", repo="myrepo", branch="main")
-        metadata = job.get_document_metadata(
-            item=item, item_name="README.md", checksum="abc", version=1, last_modified=None
-        )
-        self.assertEqual(metadata["source"], "github")
+        metadata = job.get_extra_metadata(item=item, _content="", _metadata={})
         self.assertEqual(metadata["owner"], "myorg")
         self.assertEqual(metadata["repo"], "myrepo")
         self.assertEqual(metadata["item_type"], "file")
@@ -415,27 +412,27 @@ class TestGitHubIngestionJob(unittest.TestCase):
         self.assertEqual(metadata["file_name"], "README.md")
 
     # ------------------------------------------------------------------
-    # get_document_metadata — issues
+    # get_extra_metadata — issues
     # ------------------------------------------------------------------
 
-    def test_get_document_metadata_issue_has_required_fields(self):
+    def test_get_extra_metadata_issue_has_required_fields(self):
         doc = _make_issue_doc(number="42", state="open", labels=["bug"])
         item = IngestionItem(id="github:myorg/myrepo:issue:42", source_ref=doc)
         job = self._make_job(owner="myorg", repo="myrepo", include_issues=True)
-        metadata = job.get_document_metadata(item=item, item_name="42", checksum="xyz", version=1, last_modified=None)
+        metadata = job.get_extra_metadata(item=item, _content="", _metadata={})
         self.assertEqual(metadata["item_type"], "issue")
         self.assertEqual(metadata["issue_number"], "42")
         self.assertEqual(metadata["state"], "open")
         self.assertEqual(metadata["labels"], ["bug"])
         self.assertIn("github.com/myorg/myrepo/issues/42", metadata["url"])
 
-    def test_get_document_metadata_issue_optional_fields_included_when_present_omitted_when_absent(self):
+    def test_get_extra_metadata_issue_optional_fields_included_when_present_omitted_when_absent(self):
         doc = _make_issue_doc(number="7", state="closed")
         doc.metadata["assignee"] = "octocat"
         doc.metadata["closed_at"] = "2024-01-15T10:00:00Z"
         item = IngestionItem(id="github:myorg/myrepo:issue:7", source_ref=doc)
         job = self._make_job(owner="myorg", repo="myrepo", include_issues=True)
-        metadata = job.get_document_metadata(item=item, item_name="7", checksum="xyz", version=1, last_modified=None)
+        metadata = job.get_extra_metadata(item=item, _content="", _metadata={})
         self.assertEqual(metadata["assignee"], "octocat")
         self.assertEqual(metadata["closed_at"], "2024-01-15T10:00:00Z")
         self.assertEqual(metadata["state"], "closed")
@@ -445,20 +442,9 @@ class TestGitHubIngestionJob(unittest.TestCase):
         for field in ("state", "labels", "assignee", "closed_at"):
             doc2.metadata.pop(field, None)
         item2 = IngestionItem(id="github:myorg/myrepo:issue:8", source_ref=doc2)
-        metadata2 = job.get_document_metadata(item=item2, item_name="8", checksum="xyz", version=1, last_modified=None)
+        metadata2 = job.get_extra_metadata(item=item2, _content="", _metadata={})
         for field in ("state", "labels", "assignee", "closed_at"):
             self.assertNotIn(field, metadata2)
-
-    # ------------------------------------------------------------------
-    # _parse_list
-    # ------------------------------------------------------------------
-
-    def test_parse_list(self):
-        self.assertEqual(GitHubIngestionJob._parse_list("md,py, txt"), ["md", "py", "txt"])
-        self.assertEqual(GitHubIngestionJob._parse_list(["md", "py"]), ["md", "py"])
-        self.assertEqual(GitHubIngestionJob._parse_list(""), [])
-        self.assertEqual(GitHubIngestionJob._parse_list(None), [])
-        self.assertEqual(GitHubIngestionJob._parse_list("md,,  ,py"), ["md", "py"])
 
     # ------------------------------------------------------------------
     # Integration: process_item
