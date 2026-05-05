@@ -10,11 +10,12 @@ from llama_index.readers.microsoft_outlook_emails import OutlookEmailReader
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.http import RetrySession
+from utils.text import html_to_markdown
 
 logger = logging.getLogger(__name__)
 
 GRAPH_API_BASE = "https://graph.microsoft.com/v1.0"
-REQUEST_TIMEOUT = (5, 30)  # (connect timeout, read timeout) in seconds
 
 
 class OutlookIngestionJob(IngestionJob):
@@ -179,29 +180,29 @@ class OutlookIngestionJob(IngestionJob):
             # params are only sent on the initial request — nextLink URLs are opaque
             # and already contain all query parameters
             is_first = True
-            while url:
-                response = requests.get(
-                    url,
-                    headers=headers,
-                    params={"$top": 100, "includeHiddenFolders": "true"} if is_first else None,
-                    timeout=REQUEST_TIMEOUT,
-                )
-                is_first = False
-                response.raise_for_status()
-                payload = response.json()
+            with RetrySession() as session:
+                while url:
+                    response = session.get(
+                        url,
+                        headers=headers,
+                        params={"$top": 100, "includeHiddenFolders": "true"} if is_first else None,
+                    )
+                    is_first = False
+                    response.raise_for_status()
+                    payload = response.json()
 
-                for folder in payload.get("value", []):
-                    display_name = (folder.get("displayName") or "").strip()
-                    if display_name.casefold() == target_name:
-                        return folder.get("id")
+                    for folder in payload.get("value", []):
+                        display_name = (folder.get("displayName") or "").strip()
+                        if display_name.casefold() == target_name:
+                            return folder.get("id")
 
-                    # enqueue child folders for BFS
-                    if folder.get("childFolderCount", 0) > 0 and folder.get("id"):
-                        queue.append(
-                            f"{self._user_mail_folders_url()}/mailFolders/{quote(folder['id'], safe='')}/childFolders"
-                        )
+                        # enqueue child folders for BFS
+                        if folder.get("childFolderCount", 0) > 0 and folder.get("id"):
+                            queue.append(
+                                f"{self._user_mail_folders_url()}/mailFolders/{quote(folder['id'], safe='')}/childFolders"
+                            )
 
-                url = payload.get("@odata.nextLink")
+                    url = payload.get("@odata.nextLink")
 
         return None
 
@@ -216,13 +217,14 @@ class OutlookIngestionJob(IngestionJob):
         params: dict | None = {"$top": self.num_mails}
         results: list[dict[str, Any]] = []
 
-        while url and len(results) < self.num_mails:
-            response = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT)
-            response.raise_for_status()
-            payload = response.json()
-            results.extend(payload.get("value", []))
-            url = payload.get("@odata.nextLink")
-            params = None
+        with RetrySession() as session:
+            while url and len(results) < self.num_mails:
+                response = session.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                payload = response.json()
+                results.extend(payload.get("value", []))
+                url = payload.get("@odata.nextLink")
+                params = None
 
         return results[: self.num_mails]
 
@@ -236,7 +238,7 @@ class OutlookIngestionJob(IngestionJob):
         subject = email.get("subject") or "(no subject)"
         sender = self._extract_sender(email)
         received = email.get("receivedDateTime", "")
-        body = (email.get("body") or {}).get("content") or ""
+        body = html_to_markdown((email.get("body") or {}).get("content") or "")
 
         return f"# {subject}\n\n**From:** {sender}\n**Received:** {received}\n\n{body}"
 
