@@ -1,5 +1,4 @@
 import logging
-import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -9,7 +8,8 @@ from llama_index.readers.microsoft_onedrive import OneDriveReader
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from utils.config import parse_bool
+from utils.parse import parse_bool, parse_list, parse_timestamp
+from utils.text import slugify
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -65,9 +65,9 @@ class OneDriveIngestionJob(IngestionJob):
         # Optional content selectors — if none are set, all files from root are loaded
         self.folder_id: str | None = (cfg.get("folder_id") or "").strip() or None
         self.folder_path: str | None = (cfg.get("folder_path") or "").strip() or None
-        self.file_ids: list[str] | None = self._parse_config_list(cfg.get("file_ids"))
-        self.file_paths: list[str] | None = self._parse_config_list(cfg.get("file_paths"))
-        self.mime_types: list[str] | None = self._parse_config_list(cfg.get("mime_types"))
+        self.file_ids: list[str] | None = parse_list(cfg.get("file_ids")) or None
+        self.file_paths: list[str] | None = parse_list(cfg.get("file_paths")) or None
+        self.mime_types: list[str] | None = parse_list(cfg.get("mime_types")) or None
 
         self.recursive: bool = parse_bool(cfg.get("recursive"), default=True)
 
@@ -112,7 +112,8 @@ class OneDriveIngestionJob(IngestionJob):
 
         for doc in docs:
             file_id = doc.metadata.get("file_id") or doc.doc_id or ""
-            last_modified = self._parse_last_modified(doc.metadata.get("last_modified_datetime"))
+            dt = parse_timestamp(doc.metadata.get("last_modified_datetime"))
+            last_modified = dt.replace(tzinfo=UTC) if dt is not None and dt.tzinfo is None else dt
             if last_modified is None:
                 logger.warning(
                     f"[{self.source_name}] Could not parse last_modified_datetime for file_id={file_id!r}, using now"
@@ -148,10 +149,8 @@ class OneDriveIngestionJob(IngestionJob):
         # share a file_path, so the name must include the page to be unique in the DB.
         file_path = doc.metadata.get("file_path") or doc.metadata.get("file_id") or item.id
         page_label = doc.metadata.get("page_label") or ""
-        safe_suffix = re.sub(r"[^\w-]", "_", f":{page_label}") if page_label else ""
-        safe_file = re.sub(r"[^\w-]", "_", file_path)
-        max_file_len = 255 - len(safe_suffix)
-        return safe_file[:max_file_len] + safe_suffix
+        safe_suffix = slugify(f":{page_label}") if page_label else ""
+        return slugify(file_path, max_len=255 - len(safe_suffix)) + safe_suffix
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return OneDrive-specific metadata fields."""
@@ -161,21 +160,3 @@ class OneDriveIngestionJob(IngestionJob):
             "file_id": item._metadata_cache.get("file_id", ""),
             "page_label": item._metadata_cache.get("page_label", ""),
         }
-
-    @staticmethod
-    def _parse_last_modified(raw_ts: str | None) -> datetime | None:
-        if not raw_ts:
-            return None
-        try:
-            dt = datetime.fromisoformat(raw_ts)
-            return dt.astimezone(UTC) if dt.tzinfo is not None else dt.replace(tzinfo=UTC)
-        except (ValueError, TypeError):
-            return None
-
-    @staticmethod
-    def _parse_config_list(value: str | None) -> list[str] | None:
-        """Parse a comma-separated config value into a list, or return None if empty."""
-        if not value:
-            return None
-        items = [v.strip() for v in str(value).split(",") if v.strip()]
-        return items or None
