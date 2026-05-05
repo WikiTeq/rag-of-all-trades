@@ -51,6 +51,10 @@ class TestSharePointIngestionInit(unittest.TestCase):
         job = _make_job(recursive="false")
         self.assertFalse(job.recursive)
 
+    def test_recursive_off_string_is_false(self):
+        job = _make_job(recursive="off")
+        self.assertFalse(job.recursive)
+
     def test_sharepoint_type_defaults_drive(self):
         job = _make_job()
         self.assertEqual(job.sharepoint_type, SharePointType.DRIVE)

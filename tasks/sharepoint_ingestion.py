@@ -1,5 +1,4 @@
 import logging
-import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -8,6 +7,8 @@ from llama_index.readers.microsoft_sharepoint import SharePointReader, SharePoin
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_bool, parse_timestamp
+from utils.text import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -72,11 +73,7 @@ class SharePointIngestionJob(IngestionJob):
             raise ValueError(f"Invalid sharepoint_type {sharepoint_type_raw!r}; expected one of {list(_type_map)}")
         self.sharepoint_type = _type_map[sharepoint_type_raw]
 
-        recursive_raw = cfg.get("recursive", True)
-        if isinstance(recursive_raw, str):
-            self.recursive = recursive_raw.strip().lower() not in ("false", "0", "no")
-        else:
-            self.recursive = bool(recursive_raw)
+        self.recursive = parse_bool(cfg.get("recursive", True), default=True)
 
         self._reader = SharePointReader(
             client_id=self.client_id,
@@ -124,26 +121,24 @@ class SharePointIngestionJob(IngestionJob):
                 or doc.metadata.get("last_modified_datetime")
                 or doc.metadata.get("last_modified")
             )
-            if isinstance(raw_ts, datetime):
-                last_modified = raw_ts.astimezone(UTC)
-            elif isinstance(raw_ts, str):
-                try:
-                    last_modified = datetime.fromisoformat(raw_ts).astimezone(UTC)
-                except ValueError:
+            parsed = parse_timestamp(raw_ts)
+            if parsed is None:
+                if raw_ts is not None:
                     logger.warning(
                         "[%s] Could not parse last_modified %r for %s; falling back to now()",
                         self.source_name,
                         raw_ts,
                         stable_id,
                     )
-                    last_modified = datetime.now(UTC)
-            else:
-                logger.warning(
-                    "[%s] No last_modified metadata for %s; falling back to now()",
-                    self.source_name,
-                    stable_id,
-                )
+                else:
+                    logger.warning(
+                        "[%s] No last_modified metadata for %s; falling back to now()",
+                        self.source_name,
+                        stable_id,
+                    )
                 last_modified = datetime.now(UTC)
+            else:
+                last_modified = parsed.astimezone(UTC)
             yield IngestionItem(
                 id=item_id,
                 source_ref=doc,
@@ -158,8 +153,7 @@ class SharePointIngestionJob(IngestionJob):
         """Return a filesystem-safe unique name for this item."""
         doc = item.source_ref
         file_path = doc.metadata.get("file_path") or doc.metadata.get("file_name") or doc.id_
-        safe = re.sub(r"[^\w\-]", "_", f"{self.source_name}_{file_path}")
-        return safe[:255]
+        return slugify(f"{self.source_name}_{file_path}")
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return SharePoint-specific metadata fields."""
