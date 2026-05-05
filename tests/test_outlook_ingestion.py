@@ -115,12 +115,16 @@ class TestOutlookListItems(unittest.TestCase):
         job = _make_job(folder="Proba")
         job._reader = reader
 
-        with patch("tasks.outlook_ingestion.requests.get", side_effect=[folder_lookup, messages_lookup]) as mock_get:
+        mock_session = MagicMock()
+        mock_session.__enter__ = lambda s: s
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.get.side_effect = [folder_lookup, messages_lookup]
+        with patch("tasks.outlook_ingestion.RetrySession", return_value=mock_session):
             items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].id, "outlook:id1")
-        self.assertEqual(mock_get.call_count, 2)
+        self.assertEqual(mock_session.get.call_count, 2)
 
     def test_resolves_display_name_folder_across_paginated_folder_listing(self):
         email = _make_email("id1")
@@ -143,7 +147,11 @@ class TestOutlookListItems(unittest.TestCase):
         job = _make_job(folder="Proba")
         job._reader = reader
 
-        with patch("tasks.outlook_ingestion.requests.get", side_effect=[page1, page2, messages_lookup]):
+        mock_session = MagicMock()
+        mock_session.__enter__ = lambda s: s
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.get.side_effect = [page1, page2, messages_lookup]
+        with patch("tasks.outlook_ingestion.RetrySession", return_value=mock_session):
             items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
@@ -169,7 +177,11 @@ class TestOutlookListItems(unittest.TestCase):
         job = _make_job(folder="Proba")
         job._reader = reader
 
-        with patch("tasks.outlook_ingestion.requests.get", side_effect=[top_level, child_level, messages_lookup]):
+        mock_session = MagicMock()
+        mock_session.__enter__ = lambda s: s
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.get.side_effect = [top_level, child_level, messages_lookup]
+        with patch("tasks.outlook_ingestion.RetrySession", return_value=mock_session):
             items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
@@ -187,8 +199,12 @@ class TestOutlookListItems(unittest.TestCase):
         job = _make_job(folder="Missing Folder")
         job._reader = reader
 
+        mock_session = MagicMock()
+        mock_session.__enter__ = lambda s: s
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.get.return_value = folder_lookup
         with (
-            patch("tasks.outlook_ingestion.requests.get", return_value=folder_lookup),
+            patch("tasks.outlook_ingestion.RetrySession", return_value=mock_session),
             self.assertRaises(requests.HTTPError),
         ):
             list(job.list_items())
