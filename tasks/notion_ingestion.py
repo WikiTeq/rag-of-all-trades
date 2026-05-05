@@ -1,9 +1,7 @@
 # Standard library imports
 import logging
-import re
 import time
 from collections.abc import Iterator
-from datetime import datetime
 from typing import Any
 
 # Third-party imports
@@ -13,6 +11,8 @@ from notion_client.errors import APIResponseError
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_list, parse_timestamp
+from utils.text import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +51,8 @@ class NotionIngestionJob(IngestionJob):
         if not self.integration_token:
             raise ValueError("integration_token is required in Notion connector config")
 
-        self.page_ids: list[str] = self._parse_ids(cfg.get("page_ids", ""))
-        self.database_ids: list[str] = self._parse_ids(cfg.get("database_ids", ""))
+        self.page_ids: list[str] = parse_list(cfg.get("page_ids", ""))
+        self.database_ids: list[str] = parse_list(cfg.get("database_ids", ""))
 
         self.request_delay = float(cfg.get("request_delay", 0))
         if self.request_delay < 0:
@@ -104,35 +104,24 @@ class NotionIngestionJob(IngestionJob):
         """Return a filesystem-safe name derived from the page title, falling back to page ID."""
         title = item._metadata_cache.get("title", "")
         name = title if title else item.source_ref
-        safe = re.sub(r"[^\w\-]", "_", name)
-        return safe[:255]
+        return slugify(name)
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: Any,
-    ) -> dict[str, Any]:
-        """Build metadata dict with Notion-specific fields."""
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return Notion-specific metadata fields."""
         page_id: str = item.source_ref
         cache = item._metadata_cache
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
-        metadata.update(
-            {
-                "id": page_id,
-                "url": cache.get("url") or f"https://notion.so/{page_id.replace('-', '')}",
-                "created_time": cache.get("created_time"),
-                "parent_type": cache.get("parent_type"),
-                "parent_id": cache.get("parent_id"),
-                "created_by": cache.get("created_by"),
-                "last_edited_by": cache.get("last_edited_by"),
-            }
-        )
+        extra = {
+            "id": page_id,
+            "url": cache.get("url") or f"https://notion.so/{page_id.replace('-', '')}",
+            "created_time": cache.get("created_time"),
+            "parent_type": cache.get("parent_type"),
+            "parent_id": cache.get("parent_id"),
+            "created_by": cache.get("created_by"),
+            "last_edited_by": cache.get("last_edited_by"),
+        }
         if cache.get("public_url"):
-            metadata["public_url"] = cache["public_url"]
-        return metadata
+            extra["public_url"] = cache["public_url"]
+        return extra
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -251,21 +240,8 @@ class NotionIngestionJob(IngestionJob):
 
         page_id: str = page.get("id", "")
 
-        last_modified: datetime | None = None
-        raw_edited = page.get("last_edited_time")
-        if raw_edited:
-            try:
-                last_modified = datetime.fromisoformat(raw_edited.replace("Z", "+00:00"))
-            except ValueError:
-                pass
-
-        created_time: datetime | None = None
-        raw_created = page.get("created_time")
-        if raw_created:
-            try:
-                created_time = datetime.fromisoformat(raw_created.replace("Z", "+00:00"))
-            except ValueError:
-                pass
+        last_modified = parse_timestamp(page.get("last_edited_time"))
+        created_time = parse_timestamp(page.get("created_time"))
 
         title = self._extract_title(page)
         parent = page.get("parent", {})
@@ -320,12 +296,3 @@ class NotionIngestionJob(IngestionJob):
                 title_parts = prop.get("title", [])
                 return "".join(t.get("plain_text", "") for t in title_parts)
         return ""
-
-    @staticmethod
-    def _parse_ids(value: Any) -> list[str]:
-        """Parse a comma-separated string or list of IDs into a list of stripped strings."""
-        if not value:
-            return []
-        if isinstance(value, list):
-            return [str(v).strip() for v in value if str(v).strip()]
-        return [v.strip() for v in str(value).split(",") if v.strip()]

@@ -83,14 +83,6 @@ class TestNotionIngestionInit(unittest.TestCase):
             mock_cls.assert_called_once_with(auth="ntn_abc")
 
 
-class TestNotionParseIds(unittest.TestCase):
-    def test_parse_ids(self):
-        self.assertEqual(NotionIngestionJob._parse_ids("a, b, c"), ["a", "b", "c"])
-        self.assertEqual(NotionIngestionJob._parse_ids(["a", "b"]), ["a", "b"])
-        self.assertEqual(NotionIngestionJob._parse_ids(""), [])
-        self.assertEqual(NotionIngestionJob._parse_ids(None), [])
-
-
 class TestNotionListItemsSelective(unittest.TestCase):
     def setUp(self):
         self.mock_client = MagicMock()
@@ -310,20 +302,16 @@ class TestNotionGetDocumentMetadata(unittest.TestCase):
             id="notion:12345678-1234-1234-1234-123456789abc",
             source_ref="12345678-1234-1234-1234-123456789abc",
         )
-        metadata = job.get_document_metadata(item=item, item_name="test", checksum="chk", version=1, last_modified=None)
-        self.assertEqual(metadata["source"], "notion")
+        metadata = job.get_extra_metadata(item=item, content="", metadata={})
         self.assertEqual(metadata["id"], "12345678-1234-1234-1234-123456789abc")
         self.assertIn("notion.so", metadata["url"])
         self.assertNotIn("-", metadata["url"].replace("https://notion.so/", ""))
-        self.assertEqual(metadata["source_name"], "test_notion")
 
     def test_public_url_included_when_present(self):
         job = _make_job(self.mock_client)
         item = IngestionItem(id="notion:abc-123", source_ref="abc-123")
         item._metadata_cache["public_url"] = "https://notion.so/public/abc123"
-        metadata = job.get_document_metadata(
-            item=item, item_name="abc-123", checksum="chk", version=1, last_modified=None
-        )
+        metadata = job.get_extra_metadata(item=item, content="", metadata={})
         self.assertEqual(metadata["public_url"], "https://notion.so/public/abc123")
 
 
