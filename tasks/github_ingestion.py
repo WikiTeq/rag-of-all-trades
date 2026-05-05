@@ -17,6 +17,7 @@ from llama_index.readers.github import (
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_bool, parse_list
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -124,10 +125,10 @@ class GitHubIngestionJob(IngestionJob):
         # ------------------------------------------------------------------
         # File / directory filters validation (mutually exclusive pairs)
         # ------------------------------------------------------------------
-        include_ext = self._parse_list(cfg.get("include_extensions", ""))
-        exclude_ext = self._parse_list(cfg.get("exclude_extensions", ""))
-        include_dirs = self._parse_list(cfg.get("include_directories", ""))
-        exclude_dirs = self._parse_list(cfg.get("exclude_directories", ""))
+        include_ext = [e if e.startswith(".") else f".{e}" for e in parse_list(cfg.get("include_extensions", ""))]
+        exclude_ext = [e if e.startswith(".") else f".{e}" for e in parse_list(cfg.get("exclude_extensions", ""))]
+        include_dirs = parse_list(cfg.get("include_directories", ""))
+        exclude_dirs = parse_list(cfg.get("exclude_directories", ""))
 
         if include_ext and exclude_ext:
             raise ValueError(
@@ -141,10 +142,10 @@ class GitHubIngestionJob(IngestionJob):
         # ------------------------------------------------------------------
         # Issues params
         # ------------------------------------------------------------------
-        self.include_issues: bool = bool(cfg.get("include_issues", False))
+        self.include_issues: bool = parse_bool(cfg.get("include_issues", False))
 
-        include_labels = self._parse_list(cfg.get("include_issues_labels", ""))
-        exclude_labels = self._parse_list(cfg.get("exclude_issues_labels", ""))
+        include_labels = parse_list(cfg.get("include_issues_labels", ""))
+        exclude_labels = parse_list(cfg.get("exclude_issues_labels", ""))
 
         if include_labels and exclude_labels:
             raise ValueError(
@@ -284,24 +285,15 @@ class GitHubIngestionJob(IngestionJob):
         safe = re.sub(r"[^\w\-/\.]", "_", str(path))
         return safe[:255]
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: Any,
-    ) -> dict[str, Any]:
-        """Build metadata dict with GitHub-specific fields."""
+    def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return GitHub-specific metadata fields."""
         doc = item.source_ref
         doc_metadata = doc.metadata or {}
-
-        metadata = super().get_document_metadata(item, item_name, checksum, version, last_modified)
 
         is_issue = ":issue:" in item.id
         if is_issue:
             url = doc_metadata.get("source", doc_metadata.get("url", ""))
-            issue_meta: dict[str, Any] = {
+            extra: dict[str, Any] = {
                 "owner": self.owner,
                 "repo": self.repo,
                 "item_type": "issue",
@@ -310,23 +302,17 @@ class GitHubIngestionJob(IngestionJob):
             }
             for field in ("state", "labels", "assignee", "closed_at"):
                 if doc_metadata.get(field) is not None:
-                    issue_meta[field] = doc_metadata[field]
-            metadata.update(issue_meta)
+                    extra[field] = doc_metadata[field]
+            return extra
         else:
-            file_path = doc_metadata.get("file_path", "")
-            file_name = doc_metadata.get("file_name", "")
-            url = doc_metadata.get("url", "")
-            metadata.update(
-                {
-                    "owner": self.owner,
-                    "repo": self.repo,
-                    "item_type": "file",
-                    "file_path": file_path,
-                    "file_name": file_name,
-                    "url": url,
-                }
-            )
-        return metadata
+            return {
+                "owner": self.owner,
+                "repo": self.repo,
+                "item_type": "file",
+                "file_path": doc_metadata.get("file_path", ""),
+                "file_name": doc_metadata.get("file_name", ""),
+                "url": doc_metadata.get("url", ""),
+            }
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -372,12 +358,3 @@ class GitHubIngestionJob(IngestionJob):
         if self._exclude_labels:
             return [(label, GitHubRepositoryIssuesReader.FilterType.EXCLUDE) for label in self._exclude_labels]
         return None
-
-    @staticmethod
-    def _parse_list(value: Any) -> list[str]:
-        """Parse a comma-separated string or list into a list of stripped strings."""
-        if not value:
-            return []
-        if isinstance(value, list):
-            return [str(v).strip() for v in value if str(v).strip()]
-        return [v.strip() for v in str(value).split(",") if v.strip()]
