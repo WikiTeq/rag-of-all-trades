@@ -22,7 +22,7 @@ from tasks.mediawiki_ingestion import MediaWikiIngestionJob  # noqa: E402
 
 def _default_config(**overrides):
     """Return a minimal config dict for the job."""
-    cfg = {"host": "example.com"}
+    cfg = {}
     cfg.update(overrides)
     return {"name": "test_wiki", "config": cfg}
 
@@ -32,7 +32,7 @@ def _make_job(config=None, **reader_attrs):
 
     ``reader_attrs`` are set as attributes on the mock reader.
     """
-    config = config or _default_config()
+    config = config or _default_config(host="example.com")
     with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
         mock_reader = Mock()
         # Sensible defaults matching reader Pydantic fields
@@ -80,9 +80,10 @@ def base_wiki_job():
 
 
 class TestInitialization:
-    def test_creates_reader_with_config(self):
+    def test_creates_reader_with_config_host_path_scheme(self):
         """Reader should receive the config values from the job config."""
         cfg = _default_config(
+            host="example.com",
             path="/wiki/",
             scheme="http",
             page_limit=100,
@@ -102,9 +103,30 @@ class TestInitialization:
                 logger=ANY,
             )
 
+    def test_creates_reader_with_api_url(self):
+        """Reader should receive the config values from the job config."""
+        cfg = _default_config(
+            api_url="https://example.com/w/api.php",
+            page_limit=100,
+            namespaces=[0, 1],
+            filter_redirects=False,
+        )
+        with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
+            MockReader.return_value = Mock(api_url="https://example.com/w/api.php")
+            MediaWikiIngestionJob(cfg)
+            MockReader.assert_called_once_with(
+                host="example.com",
+                path="/w/",
+                scheme="https",
+                page_limit=100,
+                namespaces=[0, 1],
+                filter_redirects=False,
+                logger=ANY,
+            )
+
     def test_namespaces_int_converted_to_list(self):
         """Single int namespace should be wrapped in a list."""
-        cfg = _default_config(namespaces=0)
+        cfg = _default_config(host="example.com", namespaces=0)
         with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
             MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
             MediaWikiIngestionJob(cfg)
@@ -113,7 +135,7 @@ class TestInitialization:
 
     def test_namespaces_str_converted_to_list(self):
         """Comma-separated string namespace should be converted to a list of ints."""
-        cfg = _default_config(namespaces="0,1")
+        cfg = _default_config(host="example.com", namespaces="0,1")
         with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
             MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
             MediaWikiIngestionJob(cfg)
@@ -122,7 +144,7 @@ class TestInitialization:
 
     def test_namespaces_list_passthrough(self):
         """List namespace should be passed through unchanged."""
-        cfg = _default_config(namespaces=[0, 1, 4])
+        cfg = _default_config(host="example.com", namespaces=[0, 1, 4])
         with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
             MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
             MediaWikiIngestionJob(cfg)
@@ -131,17 +153,22 @@ class TestInitialization:
 
     def test_namespaces_none_passthrough(self):
         """Absent namespaces should pass None to the reader (default content namespaces)."""
-        cfg = _default_config()
+        cfg = _default_config(host="example.com")
         with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
             MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
             MediaWikiIngestionJob(cfg)
             _, kwargs = MockReader.call_args
             assert kwargs["namespaces"] is None
 
-    def test_missing_host_raises(self):
+    def test_missing_host_and_api_url_raises(self):
         """Job raises ValueError when host is empty."""
-        with pytest.raises(ValueError, match="host is required"):
+        with pytest.raises(ValueError, match="is required"):
             MediaWikiIngestionJob(_default_config(host=""))
+
+    def test_host_and_api_url_raises(self):
+        """Job raises ValueError when host is empty."""
+        with pytest.raises(ValueError, match="Only one of"):
+            MediaWikiIngestionJob(_default_config(host="123", api_url="123"))
 
     def test_source_type(self, base_wiki_job):
         job, _ = base_wiki_job

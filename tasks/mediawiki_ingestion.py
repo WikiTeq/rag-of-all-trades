@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Iterator
 from typing import Any
+from urllib.parse import urlsplit
 
 from llama_index.readers.mediawiki import MediaWikiReader
 
@@ -21,6 +22,7 @@ class MediaWikiIngestionJob(IngestionJob):
 
         Args:
             config: Configuration dictionary containing:
+                - config.api_url: URL to the Mediawiki API (mutually exclusive with the host,path,scheme)
                 - config.host: MediaWiki site hostname, e.g. 'wiki.example.org' (required)
                 - config.path: MediaWiki script path (optional, default '/w/')
                 - config.scheme: URL scheme 'https' or 'http' (optional, default 'https')
@@ -37,9 +39,27 @@ class MediaWikiIngestionJob(IngestionJob):
 
         cfg = config.get("config", {})
 
+        api_url = cfg.get("api_url", "").strip()
         host = cfg.get("host", "").strip()
-        if not host:
-            raise ValueError("host is required and must be non-empty")
+
+        if not host and not api_url:
+            raise ValueError("Either host or api_url is required in MediaWiki connector config")
+
+        if host and api_url:
+            raise ValueError("Only one of host/scheme/path or api_url can be provided in MediaWiki connector config")
+
+        if api_url:
+            api_url_parsed = urlsplit(api_url, allow_fragments=False)
+            if not api_url_parsed.scheme or not api_url_parsed.hostname:
+                raise ValueError("Invalid api_url in MediaWiki connector config")
+            host = api_url_parsed.hostname
+            path = api_url_parsed.path.strip().removesuffix("api.php")
+            scheme = api_url_parsed.scheme
+        else:
+            if not host:
+                raise ValueError("host is required and must be non-empty")
+            path = cfg.get("path", "/w/").strip()
+            scheme = cfg.get("scheme", "https").strip()
 
         raw = cfg.get("namespaces")
         if isinstance(raw, str):
@@ -51,8 +71,8 @@ class MediaWikiIngestionJob(IngestionJob):
 
         self._reader = MediaWikiReader(
             host=host,
-            path=cfg.get("path", "/w/"),
-            scheme=cfg.get("scheme", "https"),
+            path=path,
+            scheme=scheme,
             page_limit=cfg.get("page_limit"),
             namespaces=namespaces,
             filter_redirects=cfg.get("filter_redirects", True),
