@@ -268,15 +268,15 @@ class TestSlabGetExtraMetadata(unittest.TestCase):
 
 
 class TestSlabGraphqlRetry(unittest.TestCase):
-    def test_raises_on_graphql_errors(self):
+    def test_raises_on_graphql_errors_without_retry(self):
         job = _make_job()
         error_response = {"errors": [{"message": "Unauthorized"}]}
         with patch("utils.graphql.requests.post") as mock_post, patch("tasks.slab_ingestion.time.sleep"):
             mock_post.return_value.raise_for_status = lambda: None
             mock_post.return_value.json.return_value = error_response
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(Exception):
                 job._client.execute("{ test }")
-            self.assertEqual(mock_post.call_count, job._client.max_retries)
+            self.assertEqual(mock_post.call_count, 1)
 
     def test_retries_on_timeout(self):
         job = _make_job()

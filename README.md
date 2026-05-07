@@ -23,6 +23,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * BookStack ingestion of shelves, books, chapters, and pages via the REST API
 * GitLab ingestion — repository files and issues from self-hosted or cloud GitLab
 * Database ingestion from MySQL and PostgreSQL via arbitrary SQL SELECT queries
+* Slab knowledge-base ingestion via the Slab GraphQL API, with topic filtering and hierarchy metadata
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -49,6 +50,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Trello
 * GitBook
 * Database (MySQL + PostgreSQL)
+* Slab
 
 ## Embeddings support
 
