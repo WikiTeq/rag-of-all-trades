@@ -26,6 +26,22 @@ def _make_job(api_token=None, topic_ids=None):
         return SlabIngestionJob(config)
 
 
+def _topic_page(stubs, has_next=False, cursor=None, topic_id="topic1", topic_name="Engineering"):
+    edges = [{"node": s} for s in stubs]
+    return {
+        "topic": {
+            "id": topic_id,
+            "name": topic_name,
+            "parent": None,
+            "ancestors": [],
+            "posts": {
+                "edges": edges,
+                "pageInfo": {"hasNextPage": has_next, "endCursor": cursor},
+            },
+        }
+    }
+
+
 class TestSlabIngestionInit(unittest.TestCase):
     def test_valid_config(self):
         job = _make_job()
@@ -60,11 +76,9 @@ class TestSlabListItemsAllPosts(unittest.TestCase):
     def _search_response(self, posts, has_next=False, cursor=None):
         edges = [{"node": {"post": p}} for p in posts]
         return {
-            "data": {
-                "search": {
-                    "edges": edges,
-                    "pageInfo": {"hasNextPage": has_next, "endCursor": cursor},
-                }
+            "search": {
+                "edges": edges,
+                "pageInfo": {"hasNextPage": has_next, "endCursor": cursor},
             }
         }
 
@@ -103,34 +117,19 @@ class TestSlabListItemsAllPosts(unittest.TestCase):
             items = list(job.list_items())
         self.assertEqual(items, [])
 
+    def test_search_null_response_does_not_crash(self):
+        job = _make_job()
+        with patch.object(job._client, "execute", return_value={"search": None}):
+            items = list(job.list_items())
+        self.assertEqual(items, [])
+
 
 class TestSlabListItemsByTopics(unittest.TestCase):
-    def _topic_response(self, post_stubs, topic_id="topic1", topic_name="Engineering"):
-        return {
-            "data": {
-                "topic": {
-                    "id": topic_id,
-                    "name": topic_name,
-                    "parent": None,
-                    "ancestors": [],
-                    "posts": post_stubs,
-                }
-            }
-        }
-
-    def _post_response(self, post):
-        return {"data": {"post": post}}
-
     def test_list_by_topic(self):
         job = _make_job(topic_ids=["topic1"])
         stub = {"id": "p1", "title": "Post 1", "updatedAt": None}
-        full = {
-            "id": "p1",
-            "title": "Post 1",
-            "content": "Full content",
-            "updatedAt": "2024-06-01T12:00:00+00:00",
-        }
-        responses = [self._topic_response([stub]), self._post_response(full)]
+        full = {"id": "p1", "title": "Post 1", "content": "Full content", "updatedAt": "2024-06-01T12:00:00+00:00"}
+        responses = [_topic_page([stub]), {"post": full}]
         with patch.object(job._client, "execute", side_effect=responses):
             items = list(job.list_items())
 
@@ -140,10 +139,26 @@ class TestSlabListItemsByTopics(unittest.TestCase):
         self.assertEqual(topic_meta["id"], "topic1")
         self.assertEqual(topic_meta["name"], "Engineering")
 
+    def test_list_by_topic_paginated(self):
+        job = _make_job(topic_ids=["topic1"])
+        stub1 = {"id": "p1", "title": "Post 1", "updatedAt": None}
+        stub2 = {"id": "p2", "title": "Post 2", "updatedAt": None}
+        full1 = {"id": "p1", "title": "Post 1", "content": "", "updatedAt": None}
+        full2 = {"id": "p2", "title": "Post 2", "content": "", "updatedAt": None}
+        responses = [
+            _topic_page([stub1], has_next=True, cursor="cur1"),
+            {"post": full1},
+            _topic_page([stub2], has_next=False),
+            {"post": full2},
+        ]
+        with patch.object(job._client, "execute", side_effect=responses):
+            items = list(job.list_items())
+        self.assertEqual([i.id for i in items], ["p1", "p2"])
+
     def test_skips_missing_post(self):
         job = _make_job(topic_ids=["topic1"])
         stub = {"id": "p1", "title": "Post 1", "updatedAt": None}
-        responses = [self._topic_response([stub]), {"data": {"post": {}}}]
+        responses = [_topic_page([stub]), {"post": {}}]
         with patch.object(job._client, "execute", side_effect=responses):
             items = list(job.list_items())
         self.assertEqual(items, [])
@@ -186,37 +201,40 @@ class TestSlabGetRawContent(unittest.TestCase):
         result = job.get_raw_content(item)
         self.assertEqual(result, "")
 
+    def test_non_string_content_does_not_crash(self):
+        job = _make_job()
+        item = IngestionItem(id="p1", source_ref={"id": "p1", "title": "Post", "content": {"key": "val"}})
+        result = job.get_raw_content(item)
+        self.assertIsInstance(result, str)
+
 
 class TestSlabGetItemName(unittest.TestCase):
-    def test_safe_name(self):
+    def test_uses_post_id_only(self):
         job = _make_job()
         item = IngestionItem(id="abc123", source_ref={"title": "My Post Title"})
         name = job.get_item_name(item)
-        self.assertIn("My_Post_Title", name)
-        self.assertIn("abc123", name)
-        self.assertLessEqual(len(name), 255)
+        self.assertEqual(name, "abc123")
 
-    def test_falls_back_to_id(self):
+    def test_max_length(self):
         job = _make_job()
-        item = IngestionItem(id="abc123", source_ref={"title": ""})
+        long_id = "a" * 300
+        item = IngestionItem(id=long_id, source_ref={})
         name = job.get_item_name(item)
-        self.assertIn("abc123", name)
+        self.assertLessEqual(len(name), 255)
 
 
 class TestSlabGetExtraMetadata(unittest.TestCase):
+    def test_url_contains_post_id(self):
+        job = _make_job()
+        item = IngestionItem(id="abc123", source_ref={"title": "Post"})
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertIn("abc123", meta["url"])
+        self.assertIn("slab.com", meta["url"])
+
     def test_metadata_with_topic(self):
         job = _make_job()
-        topic_meta = {
-            "id": "t1",
-            "name": "Engineering",
-            "parent_id": "",
-            "parent_name": "",
-            "ancestors": [],
-        }
-        item = IngestionItem(
-            id="abc123",
-            source_ref={"title": "My Post", "_topic_meta": topic_meta},
-        )
+        topic_meta = {"id": "t1", "name": "Engineering", "parent_id": "", "parent_name": "", "ancestors": []}
+        item = IngestionItem(id="abc123", source_ref={"title": "My Post", "_topic_meta": topic_meta})
         meta = job.get_extra_metadata(item, "", {})
         self.assertIn("abc123", meta["url"])
         self.assertEqual(meta["title"], "My Post")
@@ -252,16 +270,17 @@ class TestSlabGetExtraMetadata(unittest.TestCase):
 class TestSlabGraphqlRetry(unittest.TestCase):
     def test_raises_on_graphql_errors(self):
         job = _make_job()
-        error_response = {"errors": [{"message": "Unauthorized"}], "data": None}
-        with patch("tasks.slab_ingestion.requests.post") as mock_post:
+        error_response = {"errors": [{"message": "Unauthorized"}]}
+        with patch("utils.graphql.requests.post") as mock_post, patch("tasks.slab_ingestion.time.sleep"):
             mock_post.return_value.raise_for_status = lambda: None
             mock_post.return_value.json.return_value = error_response
             with self.assertRaises(RuntimeError):
                 job._client.execute("{ test }")
+            self.assertEqual(mock_post.call_count, job._client.max_retries)
 
     def test_retries_on_timeout(self):
         job = _make_job()
-        with patch("tasks.slab_ingestion.requests.post") as mock_post, patch("tasks.slab_ingestion.time.sleep"):
+        with patch("utils.graphql.requests.post") as mock_post, patch("tasks.slab_ingestion.time.sleep"):
             mock_post.side_effect = req_mod.exceptions.Timeout
             with self.assertRaises(RuntimeError):
                 job._client.execute("{ test }")
