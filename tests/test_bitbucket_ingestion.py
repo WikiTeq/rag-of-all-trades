@@ -2,10 +2,9 @@ import unittest
 from datetime import datetime
 from unittest.mock import MagicMock, Mock, patch
 
-import requests
-
 from tasks.bitbucket_ingestion import BitbucketClient, BitbucketIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_list, parse_timestamp
 
 DUMMY_TOKEN = "dummy-api-token-for-tests"  # noqa: S105
 
@@ -22,7 +21,7 @@ def _api_response(values, next_url=None):
 
 class TestBitbucketClient(unittest.TestCase):
     def setUp(self):
-        self.get_patcher = patch("tasks.bitbucket_ingestion.requests.get")
+        self.get_patcher = patch("utils.http.RetrySession.get")
         self.mock_get = self.get_patcher.start()
         self.client = BitbucketClient("user", "token")
 
@@ -78,7 +77,7 @@ class TestBitbucketClient(unittest.TestCase):
         self.assertEqual(second_url, "https://api.bitbucket.org/2.0/page2")
 
     def test_list_files_stops_on_request_exception(self):
-        self.mock_get.side_effect = requests.RequestException("timeout")
+        self.mock_get.side_effect = Exception("timeout")
         entries = list(self.client.list_files("ws", "repo", "main"))
         self.assertEqual(entries, [])
 
@@ -108,7 +107,7 @@ class TestBitbucketClient(unittest.TestCase):
         self.assertIn("ws/repo/src/main/docs/guide.md", url)
 
     def test_get_file_content_returns_empty_on_request_exception(self):
-        self.mock_get.side_effect = requests.RequestException("403")
+        self.mock_get.side_effect = Exception("403")
         result = self.client.get_file_content("ws", "repo", "main", "secret.md")
         self.assertEqual(result, "")
 
@@ -364,29 +363,29 @@ class TestBitbucketIngestionJob(unittest.TestCase):
         self.assertEqual(meta["title"], "Makefile")
 
     # ------------------------------------------------------------------
-    # _parse_csv
+    # parse_list (replaces _parse_csv)
     # ------------------------------------------------------------------
 
-    def test_parse_csv_splits_and_lowercases(self):
-        self.assertEqual(BitbucketIngestionJob._parse_csv("MD, TXT, Py"), {"md", "txt", "py"})
+    def test_parse_list_splits_and_lowercases(self):
+        self.assertEqual(set(parse_list("MD, TXT, Py", lower=True)), {"md", "txt", "py"})
 
-    def test_parse_csv_empty_string_returns_empty_set(self):
-        self.assertEqual(BitbucketIngestionJob._parse_csv(""), set())
+    def test_parse_list_empty_string_returns_empty(self):
+        self.assertEqual(parse_list(""), [])
 
     # ------------------------------------------------------------------
-    # _parse_timestamp
+    # parse_timestamp (replaces _parse_timestamp)
     # ------------------------------------------------------------------
 
     def test_parse_timestamp_valid(self):
-        result = BitbucketIngestionJob._parse_timestamp("2024-06-15T10:30:00+00:00")
+        result = parse_timestamp("2024-06-15T10:30:00+00:00")
         self.assertIsNotNone(result)
         self.assertEqual(result.year, 2024)
 
     def test_parse_timestamp_none_returns_none(self):
-        self.assertIsNone(BitbucketIngestionJob._parse_timestamp(None))
+        self.assertIsNone(parse_timestamp(None))
 
     def test_parse_timestamp_invalid_returns_none(self):
-        self.assertIsNone(BitbucketIngestionJob._parse_timestamp("not-a-date"))
+        self.assertIsNone(parse_timestamp("not-a-date"))
 
 
 if __name__ == "__main__":

@@ -1,19 +1,18 @@
 # Standard library imports
+import base64
 import hashlib
 import logging
-import re
 from collections.abc import Iterator
-from datetime import datetime
 from typing import Any
 from urllib.parse import quote
-
-# Third-party imports
-import requests
-from requests.auth import HTTPBasicAuth
 
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.filters import path_accepted
+from utils.http import RetrySession
+from utils.parse import parse_list, parse_timestamp
+from utils.text import slugify
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -29,7 +28,9 @@ class BitbucketClient:
     API_BASE = "https://api.bitbucket.org/2.0"
 
     def __init__(self, username: str, api_token: str) -> None:
-        self._auth = HTTPBasicAuth(username, api_token)
+        token = base64.b64encode(f"{username}:{api_token}".encode()).decode()
+        self._headers = {"Authorization": f"Basic {token}"}
+        self._session = RetrySession()
 
     def _src_url(self, workspace: str, repo: str, branch: str, path: str = "") -> str:
         enc_ws = quote(workspace, safe="")
@@ -49,10 +50,10 @@ class BitbucketClient:
 
         while url:
             try:
-                resp = requests.get(url, auth=self._auth, params=params, timeout=30)
+                resp = self._session.get(url, params=params, headers=self._headers)
                 resp.raise_for_status()
                 data = resp.json()
-            except (requests.RequestException, ValueError) as e:
+            except Exception as e:
                 logger.error(f"Bitbucket API error listing {path or '/'!r} in {workspace}/{repo}@{branch}: {e}")
                 break
 
@@ -73,10 +74,10 @@ class BitbucketClient:
         """Fetch and return the raw text content of a single file."""
         url = self._src_url(workspace, repo, branch, path)
         try:
-            resp = requests.get(url, auth=self._auth, timeout=30)
+            resp = self._session.get(url, headers=self._headers)
             resp.raise_for_status()
             return resp.text
-        except requests.RequestException as e:
+        except Exception as e:
             logger.error(f"Bitbucket API error fetching {path!r} from {workspace}/{repo}@{branch}: {e}")
             return ""
 
@@ -147,10 +148,14 @@ class BitbucketIngestionJob(IngestionJob):
                 "include_directories and exclude_directories are mutually exclusive in Bitbucket connector config"
             )
 
-        self.include_extensions: set[str] = self._parse_csv(include_ext)
-        self.exclude_extensions: set[str] = self._parse_csv(exclude_ext)
-        self.include_directories: set[str] = self._parse_csv(include_dir)
-        self.exclude_directories: set[str] = self._parse_csv(exclude_dir)
+        self.include_extensions: set[str] = {
+            f".{e}" if not e.startswith(".") else e for e in parse_list(include_ext, lower=True)
+        }
+        self.exclude_extensions: set[str] = {
+            f".{e}" if not e.startswith(".") else e for e in parse_list(exclude_ext, lower=True)
+        }
+        self.include_directories: set[str] = set(parse_list(include_dir, lower=True))
+        self.exclude_directories: set[str] = set(parse_list(exclude_dir, lower=True))
 
         self._client = BitbucketClient(self.username, self.api_token)
 
@@ -179,11 +184,17 @@ class BitbucketIngestionJob(IngestionJob):
         yielded = 0
         for entry in self._client.list_files(self.workspace, self.repo, self.branch):
             path: str = entry.get("path", "")
-            if not path or not self._path_accepted(path):
+            if not path or not path_accepted(
+                path,
+                include_extensions=self.include_extensions or None,
+                exclude_extensions=self.exclude_extensions or None,
+                include_directories=self.include_directories or None,
+                exclude_directories=self.exclude_directories or None,
+            ):
                 continue
 
             modified_str = entry.get("commit", {}).get("date", "") or ""
-            last_modified = self._parse_timestamp(modified_str)
+            last_modified = parse_timestamp(modified_str)
 
             yield IngestionItem(
                 id=f"bitbucket:{self.workspace}/{self.repo}/{self.branch}/{path}",
@@ -202,8 +213,7 @@ class BitbucketIngestionJob(IngestionJob):
         """Return a filesystem-safe identifier for the file."""
         raw = f"{self.workspace}_{self.repo}_{self.branch}_{item.source_ref}"
         suffix = "_" + hashlib.sha1(raw.encode(), usedforsecurity=False).hexdigest()[:8]
-        safe = re.sub(r"[^\w\-.]", "_", raw)
-        return safe[: 255 - len(suffix)] + suffix
+        return slugify(raw, max_len=255 - len(suffix)) + suffix
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return Bitbucket-specific metadata fields."""
@@ -220,45 +230,3 @@ class BitbucketIngestionJob(IngestionJob):
             "path": path,
             "file_extension": ext,
         }
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _path_accepted(self, path: str) -> bool:
-        """Return True if the file path passes all include/exclude filters."""
-        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
-
-        if self.include_extensions and ext not in self.include_extensions:
-            return False
-        if self.exclude_extensions and ext in self.exclude_extensions:
-            return False
-
-        directory = path.rsplit("/", 1)[0] if "/" in path else ""
-
-        if self.include_directories:
-            if not any(directory == d or directory.startswith(d + "/") for d in self.include_directories):
-                return False
-
-        if self.exclude_directories:
-            if any(directory == d or directory.startswith(d + "/") for d in self.exclude_directories):
-                return False
-
-        return True
-
-    @staticmethod
-    def _parse_csv(value: str) -> set[str]:
-        """Parse a comma-separated string into a set of non-empty lowercase tokens."""
-        if not value:
-            return set()
-        return {token.strip().lower() for token in value.split(",") if token.strip()}
-
-    @staticmethod
-    def _parse_timestamp(value: str) -> datetime | None:
-        """Parse an ISO-8601 timestamp string into a datetime object."""
-        if not value:
-            return None
-        try:
-            return datetime.fromisoformat(value)
-        except (ValueError, TypeError):
-            return None
