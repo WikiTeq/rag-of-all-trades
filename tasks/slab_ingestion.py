@@ -4,6 +4,8 @@ import time
 from collections.abc import Iterator
 from typing import Any
 
+import requests.exceptions
+
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 from utils.graphql import graphql_request
@@ -97,7 +99,11 @@ class SlabGraphQLClient:
                     headers=self._headers,
                     timeout=60,
                 )
-            except Exception as e:
+            except (
+                requests.exceptions.Timeout,
+                requests.exceptions.ConnectionError,
+                requests.exceptions.HTTPError,
+            ) as e:
                 last_exc = e
                 if attempt < self.max_retries - 1:
                     logger.warning(
