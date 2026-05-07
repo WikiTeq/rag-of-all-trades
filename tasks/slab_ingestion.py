@@ -1,17 +1,15 @@
 import json
 import logging
-import re
 import time
 from collections.abc import Iterator
-from datetime import datetime
 from typing import Any
-
-import requests
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.graphql import graphql_request
+from utils.parse import parse_list, parse_timestamp
+from utils.text import slugify
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 SLAB_GRAPHQL_URL = "https://api.slab.com/v1/graphql"
@@ -41,16 +39,24 @@ _QUERY_SEARCH_POSTS = """
 """
 
 _QUERY_GET_TOPIC = """
-    query GetTopicPosts($topicId: ID!) {
+    query GetTopicPosts($topicId: ID!, $first: Int!, $after: String) {
         topic(id: $topicId) {
             id
             name
             parent { id name }
             ancestors { id name }
-            posts {
-                id
-                title
-                updatedAt
+            posts(first: $first, after: $after) {
+                edges {
+                    node {
+                        id
+                        title
+                        updatedAt
+                    }
+                }
+                pageInfo {
+                    endCursor
+                    hasNextPage
+                }
             }
         }
     }
@@ -81,19 +87,17 @@ class SlabGraphQLClient:
         self._source_name = source_name
 
     def execute(self, query: str, variables: dict[str, Any] | None = None) -> dict:
-        payload: dict[str, Any] = {"query": query}
-        if variables:
-            payload["variables"] = variables
         last_exc: Exception | None = None
         for attempt in range(self.max_retries):
             try:
-                resp = requests.post(SLAB_GRAPHQL_URL, headers=self._headers, json=payload, timeout=60)
-                resp.raise_for_status()
-                data = resp.json()
-                if data.get("errors"):
-                    raise requests.exceptions.HTTPError(f"GraphQL errors for {SLAB_GRAPHQL_URL}: {data['errors']}")
-                return data
-            except (requests.exceptions.Timeout, requests.exceptions.HTTPError) as e:
+                return graphql_request(
+                    SLAB_GRAPHQL_URL,
+                    query,
+                    variables=variables,
+                    headers=self._headers,
+                    timeout=60,
+                )
+            except Exception as e:
                 last_exc = e
                 if attempt < self.max_retries - 1:
                     logger.warning(
@@ -118,7 +122,7 @@ class SlabIngestionJob(IngestionJob):
         - config.topic_ids: comma-separated topic IDs to filter (optional)
         - config.max_retries: max GraphQL retry attempts on failure (optional, default 3)
         - config.retry_delay: seconds between retries (optional, default 2)
-        - config.search_batch_size: posts per search page (optional, default 100)
+        - config.search_batch_size: posts per search/topic page (optional, default 100)
     """
 
     @property
@@ -134,10 +138,7 @@ class SlabIngestionJob(IngestionJob):
         if not api_token:
             raise ValueError("api_token is required in Slab connector config")
 
-        raw_topics = cfg.get("topic_ids") or []
-        if isinstance(raw_topics, str):
-            raw_topics = [t.strip() for t in raw_topics.split(",") if t.strip()]
-        self.topic_ids: list[str] = list(raw_topics)
+        self.topic_ids: list[str] = parse_list(cfg.get("topic_ids"))
 
         self.search_batch_size = int(cfg.get("search_batch_size", 100))
         if self.search_batch_size <= 0:
@@ -182,10 +183,7 @@ class SlabIngestionJob(IngestionJob):
         return "\n\n".join(parts)
 
     def get_item_name(self, item: IngestionItem) -> str:
-        post = item.source_ref
-        title = post.get("title") or item.id
-        safe = re.sub(r"[^\w\-]", "_", title)
-        return f"{safe[:240]}_{item.id}"[:255]
+        return slugify(item.id, max_len=255)
 
     def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
         post = item.source_ref
@@ -212,7 +210,7 @@ class SlabIngestionJob(IngestionJob):
                 _QUERY_SEARCH_POSTS,
                 {"first": self.search_batch_size, "after": cursor},
             )
-            search = data.get("data", {}).get("search", {})
+            search = (data or {}).get("search") or {}
             page_info = search.get("pageInfo", {})
 
             for edge in search.get("edges", []):
@@ -231,30 +229,46 @@ class SlabIngestionJob(IngestionJob):
     def _list_by_topics(self) -> Iterator[IngestionItem]:
         total = 0
         for topic_id in self.topic_ids:
-            data = self._client.execute(_QUERY_GET_TOPIC, {"topicId": topic_id})
-            topic = data.get("data", {}).get("topic") or {}
+            cursor: str | None = None
+            topic_meta: dict | None = None
 
-            topic_meta = {
-                "id": topic.get("id", ""),
-                "name": topic.get("name", ""),
-                "parent_id": (topic.get("parent") or {}).get("id", ""),
-                "parent_name": (topic.get("parent") or {}).get("name", ""),
-                "ancestors": [
-                    {"id": a.get("id", ""), "name": a.get("name", "")} for a in (topic.get("ancestors") or [])
-                ],
-            }
+            while True:
+                data = self._client.execute(
+                    _QUERY_GET_TOPIC,
+                    {"topicId": topic_id, "first": self.search_batch_size, "after": cursor},
+                )
+                topic = (data or {}).get("topic") or {}
 
-            for stub in topic.get("posts") or []:
-                post_id = stub.get("id")
-                if not post_id:
-                    continue
-                post_data = self._client.execute(_QUERY_GET_POST, {"postId": post_id})
-                post = post_data.get("data", {}).get("post") or {}
-                if not post.get("id"):
-                    continue
-                post["_topic_meta"] = topic_meta
-                yield self._make_item(post)
-                total += 1
+                if topic_meta is None:
+                    topic_meta = {
+                        "id": topic.get("id", ""),
+                        "name": topic.get("name", ""),
+                        "parent_id": (topic.get("parent") or {}).get("id", ""),
+                        "parent_name": (topic.get("parent") or {}).get("name", ""),
+                        "ancestors": [
+                            {"id": a.get("id", ""), "name": a.get("name", "")} for a in (topic.get("ancestors") or [])
+                        ],
+                    }
+
+                posts_conn = topic.get("posts") or {}
+                page_info = posts_conn.get("pageInfo", {})
+
+                for edge in posts_conn.get("edges", []):
+                    stub = edge.get("node") or {}
+                    post_id = stub.get("id")
+                    if not post_id:
+                        continue
+                    post_data = self._client.execute(_QUERY_GET_POST, {"postId": post_id})
+                    post = (post_data or {}).get("post") or {}
+                    if not post.get("id"):
+                        continue
+                    post["_topic_meta"] = topic_meta
+                    yield self._make_item(post)
+                    total += 1
+
+                if not page_info.get("hasNextPage"):
+                    break
+                cursor = page_info.get("endCursor")
 
         logger.info(f"[{self.source_name}] Found {total} post(s) from {len(self.topic_ids)} topic(s)")
 
@@ -265,18 +279,18 @@ class SlabIngestionJob(IngestionJob):
         Slab stores content as a Quill delta JSON array of insert ops.
         Each op has an ``insert`` key that is either a plain string or an
         embedded object (image, hr, etc.) which we skip.
-        Falls back to returning the raw string if it is not valid JSON.
+        Falls back to returning the raw value as a string if it is not valid JSON.
         """
         if not raw:
             return ""
         try:
             ops = json.loads(raw)
         except (ValueError, TypeError):
-            return raw
+            return str(raw)
         if isinstance(ops, dict) and isinstance(ops.get("ops"), list):
             ops = ops["ops"]
         if not isinstance(ops, list):
-            return raw
+            return str(ops)
         parts = []
         for op in ops:
             insert = op.get("insert") if isinstance(op, dict) else None
@@ -287,18 +301,9 @@ class SlabIngestionJob(IngestionJob):
     @staticmethod
     def _make_item(post: dict) -> IngestionItem:
         post_id = post["id"]
-        updated_at = SlabIngestionJob._parse_timestamp(post.get("updatedAt"))
+        updated_at = parse_timestamp(post.get("updatedAt"))
         return IngestionItem(
             id=post_id,
             source_ref=post,
             last_modified=updated_at,
         )
-
-    @staticmethod
-    def _parse_timestamp(value: str | None) -> datetime | None:
-        if not value:
-            return None
-        try:
-            return datetime.fromisoformat(value)
-        except (ValueError, TypeError):
-            return None
