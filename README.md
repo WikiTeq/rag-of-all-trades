@@ -16,6 +16,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
 * Slack ingestion from channels by ID or name/regex pattern, with thread reply support
+* Slab knowledge-base ingestion via the Slab GraphQL API, with topic filtering and hierarchy metadata
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -29,6 +30,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Web
 * Pipedrive
 * Slack
+* Slab
 
 ## Embeddings support
 
@@ -259,7 +261,7 @@ sources:
 SERPAPI1_KEY=xxxx
 SERPAPI1_QUERIES=aaa
 SERPAPI1_SCHEDULES=3600
-````
+```
 
 ### Web Connector
 
