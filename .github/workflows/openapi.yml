@@ -1,0 +1,50 @@
+name: OpenAPI spec check
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install openapi-spec-validator
+        run: pip install openapi-spec-validator
+
+      - name: Validate OpenAPI spec
+        run: python -m openapi_spec_validator openapi.yaml
+
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Set up dummy env for import
+        run: |
+          cp .env.example .env
+          cp config.yaml.example config.yaml
+
+      - name: Generate spec and check for drift
+        run: |
+          python generate_openapi.py
+          if ! git diff --exit-code openapi.yaml; then
+            echo ""
+            echo "ERROR: openapi.yaml is out of date."
+            echo "Run 'python generate_openapi.py' locally and commit the result."
+            exit 1
+          fi
