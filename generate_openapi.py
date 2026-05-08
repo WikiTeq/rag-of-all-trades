@@ -13,17 +13,23 @@ import unittest.mock
 
 import yaml
 
-# Stub out celery_app before importing main so that the Celery worker
-# initialisation (which reads config.yaml sources at module level) does
-# not run during schema generation.
-_celery_stub = types.ModuleType("celery_app")
-_celery_stub.celery_app = unittest.mock.MagicMock()
-sys.modules["celery_app"] = _celery_stub
+# Stub modules that perform I/O or heavy initialisation at import time so the
+# script can run without a live Celery broker, database, or embedding model.
+for _mod, _attrs in (
+    ("celery_app", ["celery_app"]),
+    ("utils.llm_embedding", ["embed_model", "llm"]),
+    ("api.v1.chunk_retrieval.modules", ["RAGQueryEngine"]),
+):
+    if _mod not in sys.modules:
+        _stub = types.ModuleType(_mod)
+        for _attr in _attrs:
+            setattr(_stub, _attr, unittest.mock.MagicMock())
+        sys.modules[_mod] = _stub
 
 from main import app  # noqa: E402
 
 schema = app.openapi()
-with open("openapi.yaml", "w") as f:
+with open("openapi.yaml", "w", encoding="utf-8") as f:
     yaml.dump(schema, f, allow_unicode=True, sort_keys=False)
 
 print("openapi.yaml generated")
