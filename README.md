@@ -393,6 +393,23 @@ PIPEDRIVE1_API_TOKEN=your-pipedrive-api-token
 PIPEDRIVE1_SCHEDULES=3600
 ```
 
+## OpenAPI spec
+
+The `openapi.yaml` at the repo root is generated from the FastAPI app. **Do not edit it manually.**
+
+To regenerate after schema changes:
+
+```bash
+python generate_openapi.py
+```
+
+The pre-commit hook runs this automatically whenever Python files are modified (requires `.venv` to be set up).
+
+In CI, two jobs verify the spec on every push and pull request:
+
+- **validate** — checks that `openapi.yaml` is a valid OpenAPI 3.1.0 document
+- **drift-check** — fails if the committed spec does not match what the script generates
+
 ## Reference of the `config.yaml`
 
 The `config.yaml` file contains the main configuration of the service.
