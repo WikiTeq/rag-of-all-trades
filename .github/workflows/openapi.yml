@@ -16,7 +16,7 @@ jobs:
           cache: pip
 
       - name: Install openapi-spec-validator
-        run: pip install openapi-spec-validator
+        run: pip install openapi-spec-validator==0.8.5
 
       - name: Validate OpenAPI spec
         run: python -m openapi_spec_validator openapi.yaml
