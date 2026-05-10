@@ -21,6 +21,6 @@ repos:
       - id: generate-openapi
         name: Generate OpenAPI spec
         language: system
-        entry: .venv/bin/python3 generate_openapi.py
+        entry: python generate_openapi.py
         pass_filenames: false
         files: \.py$
