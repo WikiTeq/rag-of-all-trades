@@ -48,10 +48,6 @@ def validate_configuration():
         if not postgres.get(key):
             errors.append(f"PostgreSQL {key} not configured")
 
-    # Validate sources
-    if not settings.SOURCES:
-        logger.warning("No ingestion sources configured - Celery tasks will not be registered")
-
     # Validate LLM for rephrase endpoint (optional but warn)
     if settings.LLM.get("provider") not in ("openai", "openrouter", None):
         logger.warning(f"Unknown LLM provider: {settings.LLM.get('provider')}. Rephrase endpoint may not work.")

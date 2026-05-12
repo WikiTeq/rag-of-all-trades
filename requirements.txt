@@ -22,6 +22,9 @@ llama-index-vector-stores-postgres==0.7.1
 llama-index-llms-openrouter==0.4.2
 llama-index-embeddings-huggingface==0.6.1
 
+# GitHub connector
+llama-index-readers-github==0.10.0
+
 # AWS (S3 integration)
 boto3==1.40.61
 
@@ -36,6 +39,9 @@ jira==3.10.5
 
 # Web connector
 llama-index-readers-web==0.6.0
+
+# Encryption (connector secrets)
+cryptography==46.0.7
 
 # Environment management
 python-dotenv==1.2.1
