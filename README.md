@@ -61,6 +61,24 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Access the API at `:8000`
 * Access the API docs at `:8000/docs`
 
+## API Authentication
+
+By default, the API endpoints require no authentication.
+
+To enable Bearer token authorization, set `API_KEY` in your `.env` file:
+
+```dotenv
+API_KEY=your-strong-api-key
+```
+
+When set, all requests to the API must include the key as a Bearer token:
+
+```http
+Authorization: Bearer <API_KEY>
+```
+
+Requests without the header or with a wrong token will receive a `401 Unauthorized` response.
+
 ## MCP endpoint
 
 The service includes an optional MCP (Model Context Protocol) server at `/mcp/` (trailing slash required).
@@ -442,14 +460,28 @@ You must set `OPENROUTER_API_KEY` and `OPENROUTER_API_BASE` in the `.env` file.
 
 The following API endpoints are available:
 
-### /api/v1/query/
+### /api/v1/query
 
 This endpoint is used to perform a query against the vector store:
 
 ```bash
 curl -X 'POST' \
-  'http://localhost:8000/api/v1/query/' \
+  'http://localhost:8000/api/v1/query' \
   -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "query": "AWS Services",
+  "top_k": 5
+}'
+```
+
+If `API_KEY` is configured, include the `Authorization` header:
+
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/api/v1/query' \
+  -H 'accept: application/json' \
+  -H 'Authorization: Bearer your-api-key' \
   -H 'Content-Type: application/json' \
   -d '{
   "query": "AWS Services",
@@ -488,7 +520,7 @@ curl -X 'POST' \
 }
 ```
 
-### /api/v1/rephrase/
+### /api/v1/rephrase
 
 This endpoint rephrases the query and provides the best answer.
 
@@ -496,8 +528,21 @@ This endpoint rephrases the query and provides the best answer.
 
 ```bash
 curl -X 'POST' \
-  'http://localhost:8000/api/v1/rephrase/' \
+  'http://localhost:8000/api/v1/rephrase' \
   -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "query": "WAF Captcha challenges for suspicious requests"
+}'
+```
+
+If `API_KEY` is configured, include the `Authorization` header:
+
+```bash
+curl -X 'POST' \
+  'http://localhost:8000/api/v1/rephrase' \
+  -H 'accept: application/json' \
+  -H 'Authorization: Bearer your-api-key' \
   -H 'Content-Type: application/json' \
   -d '{
   "query": "WAF Captcha challenges for suspicious requests"

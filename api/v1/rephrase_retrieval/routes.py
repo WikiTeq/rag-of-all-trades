@@ -5,6 +5,7 @@ from functools import wraps
 from fastapi import APIRouter, Depends, HTTPException, Request
 from llama_index.core.llms import ChatMessage, MessageRole
 
+from api.dependencies import require_api_key
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
 from utils.config import settings
 from utils.llm_embedding import llm
@@ -48,9 +49,14 @@ def limit(func):
     return wrapper
 
 
-@router.post("/", response_model=QueryResponse)
+@router.post("", response_model=QueryResponse)
 @limit
-async def query_endpoint(request: Request, payload: QueryRequest, rag_engine: RAGQueryEngine = Depends(get_rag_engine)):
+async def query_endpoint(
+    request: Request,
+    payload: QueryRequest,
+    rag_engine: RAGQueryEngine = Depends(get_rag_engine),
+    _auth: None = Depends(require_api_key),
+):
     """
     Rephrase top-k chunks using LLM.
     """

@@ -111,6 +111,7 @@ app = FastAPI(
     title="Rag Of All Trades",
     description="RAG Service",
     version="0.1.0",
+    redirect_slashes=False,
 )
 
 # Configure MCP server (if enabled)

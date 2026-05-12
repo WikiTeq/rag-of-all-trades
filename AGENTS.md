@@ -5,7 +5,7 @@ Rag Of All Trades is a FastAPI-based RAG microservice that ingests content into 
 
 ## Architecture
 - API runtime: `main.py` initializes PGVectorStore, builds `RAGQueryEngine`, configures CORS and rate limiting, and exposes `/health`.
-- API routes: `api/v1/` provides `/api/v1/query/` (top-k chunks) and `/api/v1/rephrase/` (LLM rephrase).
+- API routes: `api/v1/` provides `/api/v1/query` (top-k chunks) and `/api/v1/rephrase` (LLM rephrase).
 - Ingestion: `celery_app.py` registers Celery tasks from `settings.SOURCES` and schedules them via RedBeat.
 - Ingestion jobs: `tasks/base.py` handles dedupe, versioning, metadata tracking, and vector insertion.
 - Vector store: `tasks/helper_classes/vector_store.py` uses LlamaIndex ingestion pipeline and PGVector.
