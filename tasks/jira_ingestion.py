@@ -233,6 +233,8 @@ class JiraIngestionJob(IngestionJob):
             if isinstance(body, dict):
                 body = self._extract_adf_text(body)
             body = self.convert_to_markdown(body).strip()
+            if not body:
+                continue
             lines.append(f"**{author}** ({created}):\n{body}")
 
         return "\n\n".join(lines)
