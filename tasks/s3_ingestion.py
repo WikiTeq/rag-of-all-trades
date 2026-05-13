@@ -21,7 +21,6 @@ class S3IngestionJob(IngestionJob):
 
         self.buckets = parse_list(cfg.get("buckets"))
 
-        # Initialize S3 client - access nested config dict
         client_params = {
             "endpoint": cfg.get("endpoint"),
             "access_key": cfg.get("access_key"),
@@ -30,9 +29,6 @@ class S3IngestionJob(IngestionJob):
             "use_ssl": cfg.get("use_ssl", True),
         }
         self.s3_client, _ = get_s3_client(**client_params)
-
-        # Markdown parser
-        self.md = MarkItDown()
 
     def list_items(self):
         """
@@ -74,7 +70,7 @@ class S3IngestionJob(IngestionJob):
         try:
             obj = self.s3_client.get_object(Bucket=bucket, Key=key)
             content_bytes = obj["Body"].read()
-            converted = self.convert_bytes_to_markdown(content_bytes)
+            converted = self.convert_to_markdown(content_bytes)
             return converted or content_bytes.decode("utf-8", errors="ignore")
         except Exception as e:
             logger.error(f"[{bucket}/{key}] Failed to fetch content: {e}")

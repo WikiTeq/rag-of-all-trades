@@ -85,54 +85,37 @@ class IngestionJob(ABC):
             self._markitdown = MarkItDown()
         return self._markitdown
 
-    def convert_bytes_to_markdown(self, content_bytes: bytes, fallback_text: str = "") -> str:
-        """Convert a byte stream to Markdown using MarkItDown.
+    def convert_to_markdown(self, content: bytes | str, fallback: str = "") -> str:
+        """Convert bytes or text to Markdown using MarkItDown.
 
-        Attempts MarkItDown conversion on the given bytes. Falls back to
-        ``fallback_text`` when the conversion produces an empty result or
-        raises an exception.
+        Falls back to ``fallback`` when conversion produces an empty result or
+        raises an exception. For str input, falls back to the original string
+        when no explicit fallback is provided.
 
         Args:
-            content_bytes: Raw bytes to convert (e.g. file contents from S3).
-            fallback_text: Text to return when conversion yields nothing.
-                           Defaults to empty string.
+            content: Raw bytes or plain-text string to convert.
+            fallback: Text to return when conversion yields nothing.
+                      Defaults to empty string; for str input defaults to the
+                      original string.
 
         Returns:
-            Converted Markdown text, or ``fallback_text`` on failure/empty result.
+            Converted Markdown string, or ``fallback`` on failure/empty result.
         """
+        if isinstance(content, str):
+            if not content.strip():
+                return content
+            fallback = fallback or content
+            content = content.encode("utf-8")
         try:
-            stream = io.BytesIO(content_bytes)
-            result = self._get_markitdown().convert_stream(stream)
-            converted = result.text_content or ""
+            result = self._get_markitdown().convert_stream(io.BytesIO(content))
+            converted = result.markdown or ""
             if converted.strip():
                 return converted
             logger.debug("MarkItDown produced empty result; using fallback text")
-            return fallback_text
+            return fallback
         except Exception as exc:
             logger.warning("MarkItDown conversion failed: %s; falling back", exc)
-            return fallback_text
-
-    def convert_text_to_markdown(self, text: str) -> str:
-        """Convert a plain-text or Jira-wiki string to Markdown using MarkItDown.
-
-        Falls back to returning the original text unchanged when conversion
-        fails or produces an empty result.
-
-        Args:
-            text: Source text to convert.
-
-        Returns:
-            Converted Markdown string, or the original ``text`` on failure.
-        """
-        if not text or not text.strip():
-            return text
-        try:
-            result = self._get_markitdown().convert_stream(io.BytesIO(text.encode("utf-8")))
-            converted = result.text_content or ""
-            return converted.strip() if converted.strip() else text
-        except Exception as exc:
-            logger.warning("MarkItDown text conversion failed: %s; returning original", exc)
-            return text
+            return fallback
 
     @property
     @abstractmethod

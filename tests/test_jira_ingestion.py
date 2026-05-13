@@ -106,7 +106,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         # By default, convert_stream returns the input text unchanged
         def _passthrough(stream):
             result = Mock()
-            result.text_content = stream.read().decode("utf-8")
+            result.markdown = stream.read().decode("utf-8")
             return result
 
         self.mock_md.convert_stream.side_effect = _passthrough
@@ -347,7 +347,7 @@ class TestJiraIngestionJob(unittest.TestCase):
 
         # MarkItDown passes text through (simulate)
         md_result = Mock()
-        md_result.text_content = "Some description text"
+        md_result.markdown = "Some description text"
         self.mock_md.convert_stream.return_value = md_result
 
         job = self._make_job()
@@ -361,7 +361,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         item = IngestionItem(id="jira:TEST-1", source_ref=issue)
 
         md_result = Mock()
-        md_result.text_content = "desc"
+        md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
         job = self._make_job()
@@ -395,7 +395,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         item = IngestionItem(id="jira:TEST-1", source_ref=issue)
 
         md_result = Mock()
-        md_result.text_content = "desc"
+        md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
         comment = Mock()
@@ -416,7 +416,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         item = IngestionItem(id="jira:TEST-1", source_ref=issue)
 
         md_result = Mock()
-        md_result.text_content = "desc"
+        md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
         job = self._make_job(load_comments=False)
@@ -429,7 +429,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         item = IngestionItem(id="jira:TEST-1", source_ref=issue)
 
         md_result = Mock()
-        md_result.text_content = "desc"
+        md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
         # 5 comments, but max_comments=2
@@ -454,7 +454,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         item = IngestionItem(id="jira:TEST-1", source_ref=issue)
 
         md_result = Mock()
-        md_result.text_content = "desc"
+        md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
         self.mock_jira.comments.side_effect = Exception("403 Forbidden")
@@ -531,7 +531,6 @@ class TestJiraIngestionJob(unittest.TestCase):
 
         self.assertEqual(extra["url"], "")
 
-
     # ------------------------------------------------------------------
     # Integration: process_item delegates to base with correct data
     # ------------------------------------------------------------------
@@ -545,7 +544,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         )
 
         md_result = Mock()
-        md_result.text_content = "desc"
+        md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
         job = self._make_job()
@@ -627,7 +626,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         item = IngestionItem(id="jira:TEST-99", source_ref=issue)
 
         md_result = Mock()
-        md_result.text_content = "same content"
+        md_result.markdown = "same content"
         self.mock_md.convert_stream.return_value = md_result
 
         job = self._make_job()

@@ -21,7 +21,7 @@ class TestS3IngestionJob:
 
         with (
             patch("tasks.s3_ingestion.get_s3_client", return_value=(self.mock_s3, None)),
-            patch("tasks.s3_ingestion.MarkItDown", return_value=self.mock_md),
+            patch("tasks.base.MarkItDown", return_value=self.mock_md),
         ):
             self.config = {"name": "test", "config": {"buckets": ["bucket-a"]}}
             yield
@@ -85,7 +85,7 @@ class TestS3IngestionJob:
         self.mock_s3.get_object.return_value = {"Body": io.BytesIO(b"raw bytes")}
 
         job = S3IngestionJob(self.config)
-        job.convert_bytes_to_markdown = Mock(return_value="Converted text")
+        job.convert_to_markdown = Mock(return_value="Converted text")
         item = IngestionItem(
             id="s3://bucket-a/file1.txt",
             source_ref=("bucket-a", "file1.txt"),
@@ -93,11 +93,10 @@ class TestS3IngestionJob:
         result = job.get_raw_content(item)
 
         assert result == "Converted text"
-        self.mock_md.convert_stream.assert_called_once()
 
     def test_get_raw_content_falls_back_on_empty_conversion(self):
         self.mock_s3.get_object.return_value = {"Body": io.BytesIO(b"raw text")}
-        conversion_result = Mock(text_content="   ")
+        conversion_result = Mock(markdown="   ")
         self.mock_md.convert_stream.return_value = conversion_result
 
         job = S3IngestionJob(self.config)

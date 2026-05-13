@@ -282,10 +282,10 @@ class TestIngestionJobMarkdownConversion:
     def test_convert_bytes_returns_converted_text(self):
         job = DummyIngestionJob({"name": "test-source"})
         mock_md = Mock()
-        mock_md.convert_stream.return_value = Mock(text_content="# Hello")
+        mock_md.convert_stream.return_value = Mock(markdown="# Hello")
         job._markitdown = mock_md
 
-        result = job.convert_bytes_to_markdown(b"raw bytes")
+        result = job.convert_to_markdown(b"raw bytes")
 
         assert result == "# Hello"
         mock_md.convert_stream.assert_called_once()
@@ -293,10 +293,10 @@ class TestIngestionJobMarkdownConversion:
     def test_convert_bytes_falls_back_on_empty_result(self):
         job = DummyIngestionJob({"name": "test-source"})
         mock_md = Mock()
-        mock_md.convert_stream.return_value = Mock(text_content="   ")
+        mock_md.convert_stream.return_value = Mock(markdown="   ")
         job._markitdown = mock_md
 
-        result = job.convert_bytes_to_markdown(b"raw", fallback_text="raw text")
+        result = job.convert_to_markdown(b"raw", fallback="raw text")
 
         assert result == "raw text"
 
@@ -306,37 +306,37 @@ class TestIngestionJobMarkdownConversion:
         mock_md.convert_stream.side_effect = RuntimeError("boom")
         job._markitdown = mock_md
 
-        result = job.convert_bytes_to_markdown(b"raw", fallback_text="fallback")
+        result = job.convert_to_markdown(b"raw", fallback="fallback")
 
         assert result == "fallback"
 
     def test_convert_bytes_default_fallback_is_empty_string(self):
         job = DummyIngestionJob({"name": "test-source"})
         mock_md = Mock()
-        mock_md.convert_stream.return_value = Mock(text_content="")
+        mock_md.convert_stream.return_value = Mock(markdown="")
         job._markitdown = mock_md
 
-        result = job.convert_bytes_to_markdown(b"raw")
+        result = job.convert_to_markdown(b"raw")
 
         assert result == ""
 
     def test_convert_text_returns_converted_text(self):
         job = DummyIngestionJob({"name": "test-source"})
         mock_md = Mock()
-        mock_md.convert_stream.return_value = Mock(text_content="# Heading")
+        mock_md.convert_stream.return_value = Mock(markdown="# Heading")
         job._markitdown = mock_md
 
-        result = job.convert_text_to_markdown("some wiki text")
+        result = job.convert_to_markdown("some wiki text")
 
         assert result == "# Heading"
 
     def test_convert_text_falls_back_on_empty_result(self):
         job = DummyIngestionJob({"name": "test-source"})
         mock_md = Mock()
-        mock_md.convert_stream.return_value = Mock(text_content="   ")
+        mock_md.convert_stream.return_value = Mock(markdown="   ")
         job._markitdown = mock_md
 
-        result = job.convert_text_to_markdown("original text")
+        result = job.convert_to_markdown("original text")
 
         assert result == "original text"
 
@@ -346,17 +346,17 @@ class TestIngestionJobMarkdownConversion:
         mock_md.convert_stream.side_effect = RuntimeError("oops")
         job._markitdown = mock_md
 
-        result = job.convert_text_to_markdown("original text")
+        result = job.convert_to_markdown("original text")
 
         assert result == "original text"
 
     def test_convert_text_returns_empty_string_unchanged(self):
         job = DummyIngestionJob({"name": "test-source"})
-        assert job.convert_text_to_markdown("") == ""
+        assert job.convert_to_markdown("") == ""
 
     def test_convert_text_returns_whitespace_only_unchanged(self):
         job = DummyIngestionJob({"name": "test-source"})
-        assert job.convert_text_to_markdown("   ") == "   "
+        assert job.convert_to_markdown("   ") == "   "
 
     def test_get_markitdown_is_lazily_created(self):
         job = DummyIngestionJob({"name": "test-source"})
