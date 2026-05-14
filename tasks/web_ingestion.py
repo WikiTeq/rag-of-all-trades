@@ -202,18 +202,21 @@ class WebIngestionJob(IngestionJob):
         """Return all URLs reachable from seed_urls within self.depth hops."""
 
         def _canon(url: str) -> str:
-            # Strip fragment and trailing slash so the same page isn't visited twice
-            # under slightly different forms (e.g. /page vs /page/).
-            return url.split("#")[0].rstrip("/") or url
+            # Strip only the fragment; preserve trailing slash because /page and
+            # /page/ are distinct resources on many servers.
+            stripped = url.split("#")[0]
+            return stripped or url
 
         # Allowed hosts are derived from seeds, not the current page being crawled.
         # This means a redirect to an external domain is still blocked when same_domain_only=True.
         seed_hosts: set[str] = {urlparse(u).netloc for u in seed_urls if u.startswith(("http://", "https://"))}
 
-        # dict.fromkeys preserves insertion order and gives O(1) membership checks.
-        # Seeds are pre-loaded so they're never re-queued even if found as links later.
-        visited: dict[str, None] = dict.fromkeys(_canon(u) for u in seed_urls)
-        frontier: list[str] = list(visited)
+        # `seen` tracks all URLs queued or visited (dedup/frontier guard).
+        # `crawled` tracks only URLs whose HTML was successfully fetched and cached;
+        # max_pages is enforced against crawled so non-HTML assets don't count against the cap.
+        seen: dict[str, None] = dict.fromkeys(_canon(u) for u in seed_urls)
+        crawled: dict[str, None] = {}
+        frontier: list[str] = list(seen)
 
         headers = {"User-Agent": "Mozilla/5.0 (compatible; rag-of-all-trades-bot/1.0)"}
 
@@ -236,11 +239,14 @@ class WebIngestionJob(IngestionJob):
                         "_crawl_text": text,
                         "_crawl_title": meta.get("title", ""),
                     }
+                    crawled[url] = None
 
-                    # Resolve relative links against <base href> if present, otherwise
-                    # against the current page URL.
+                    # Resolve relative links against the final response URL (after
+                    # redirects) so relative hrefs are correct when the server
+                    # redirects to a different path.
+                    final_url = resp.url if isinstance(resp.url, str) else url
                     base_tag = soup.find("base", href=True)
-                    base_url = urljoin(url, base_tag["href"]) if base_tag else url
+                    base_url = urljoin(final_url, base_tag["href"]) if base_tag else final_url
 
                     for tag in soup.find_all("a", href=True):
                         link = _canon(urljoin(base_url, tag["href"]))
@@ -249,11 +255,8 @@ class WebIngestionJob(IngestionJob):
                             continue
                         if self.same_domain_only and urlparse(link).netloc not in seed_hosts:
                             continue
-                        if link not in visited:
-                            # Check cap before adding so we never exceed max_pages.
-                            if self.max_pages and len(visited) >= self.max_pages:
-                                return list(visited)
-                            visited[link] = None
+                        if link not in seen:
+                            seen[link] = None
                             next_frontier.append(link)
                 except Exception as e:
                     logger.warning(f"[{self.source_name}] Link crawl failed for {url}: {e}")
@@ -270,7 +273,10 @@ class WebIngestionJob(IngestionJob):
             if not frontier:
                 break
 
-        return list(visited)
+        result = list(seen)
+        if self.max_pages:
+            result = result[: self.max_pages]
+        return result
 
     def _discover_sitemap_urls(self) -> list[str]:
         """Parse the configured sitemap and return matching URLs."""
