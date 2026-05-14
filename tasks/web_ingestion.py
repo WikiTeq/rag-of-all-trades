@@ -223,7 +223,7 @@ class WebIngestionJob(IngestionJob):
                 try:
                     resp = requests.get(url, timeout=10, headers=headers, allow_redirects=True)
                     resp.raise_for_status()
-                    ct = resp.headers.get("Content-Type", "")
+                    ct = (resp.headers.get("Content-Type", "") or "").lower()
                     # Only parse HTML; skip PDFs, images, CSS, etc.
                     if "text/html" not in ct:
                         continue
@@ -257,9 +257,13 @@ class WebIngestionJob(IngestionJob):
                             next_frontier.append(link)
                 except Exception as e:
                     logger.warning(f"[{self.source_name}] Link crawl failed for {url}: {e}")
-
-                if self.request_delay:
-                    time.sleep(self.request_delay)
+                finally:
+                    # Throttle BFS discovery requests. This is distinct from the
+                    # base class delay which fires between ingestion items — in
+                    # crawl mode those items return cached text and make no HTTP
+                    # calls, so the only place to rate-limit the crawler is here.
+                    if self.request_delay:
+                        time.sleep(self.request_delay)
 
             # Advance one BFS level; stop early if no new URLs were discovered.
             frontier = next_frontier
