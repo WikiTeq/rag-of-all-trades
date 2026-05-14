@@ -1,4 +1,6 @@
+import hashlib
 import logging
+import time
 from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
@@ -181,7 +183,13 @@ class WebIngestionJob(IngestionJob):
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe name derived from the URL."""
         url: str = item.source_ref
-        return slugify(url, max_len=255)
+        # TODO: consider moving this truncation-with-hash logic into slugify() or a
+        # dedicated utility function so other connectors can reuse it.
+        slug = slugify(url, max_len=4096)
+        if len(slug) <= 255:
+            return slug
+        url_hash = hashlib.md5(url.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+        return slugify(url, max_len=246) + "_" + url_hash
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return web-specific metadata fields."""
