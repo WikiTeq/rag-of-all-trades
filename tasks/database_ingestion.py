@@ -19,14 +19,16 @@ Example:
 
 import logging
 import re
-from datetime import datetime
-from typing import Any, Dict, Iterator, List, Optional
+from collections.abc import Iterator
+from typing import Any
 
 from llama_index.readers.database import DatabaseReader
 from sqlalchemy import create_engine, text
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_list, parse_timestamp
+from utils.text import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -63,24 +65,18 @@ class DatabaseIngestionJob(IngestionJob):
 
         self.db_type = cfg.get("type", "").lower().strip()
         if self.db_type not in ("postgres", "mysql"):
-            raise ValueError(
-                "config.type must be 'postgres' or 'mysql' in database connector config"
-            )
+            raise ValueError("config.type must be 'postgres' or 'mysql' in database connector config")
 
         self.connection_string = cfg.get("connection_string", "").strip()
         if not self.connection_string:
-            raise ValueError(
-                "connection_string is required in database connector config"
-            )
+            raise ValueError("connection_string is required in database connector config")
 
         self.query = cfg.get("query", "").strip()
         if not self.query:
             raise ValueError("query is required in database connector config")
         self._validate_select_query(self.query)
 
-        self.metadata_columns: List[str] = self._parse_list(
-            cfg.get("metadata_columns", "")
-        )
+        self.metadata_columns: list[str] = parse_list(cfg.get("metadata_columns", ""))
 
         self._reader = DatabaseReader(uri=self.connection_string)
 
@@ -114,7 +110,7 @@ class DatabaseIngestionJob(IngestionJob):
             yield IngestionItem(
                 id=f"database:{self.source_name}:{row['id']}",
                 source_ref=row,
-                last_modified=self._parse_timestamp(row.get("updated_at")),
+                last_modified=parse_timestamp(row.get("updated_at")),
             )
             count += 1
 
@@ -129,43 +125,29 @@ class DatabaseIngestionJob(IngestionJob):
         """Return a filesystem-safe name derived from the row title."""
         row = item.source_ref
         title = str(row.get("title", "") or item.id)
-        safe = re.sub(r"[^\w\-]", "_", title)
-        return safe[:255]
+        return slugify(title)
 
-    def get_document_metadata(
-        self,
-        item: IngestionItem,
-        item_name: str,
-        checksum: str,
-        version: int,
-        last_modified: Any,
-    ) -> Dict[str, Any]:
-        """Build metadata dict with base fields plus any configured extra columns."""
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return extra metadata fields: title, id, db_type, and any configured extra columns."""
         row = item.source_ref
 
-        metadata = super().get_document_metadata(
-            item, item_name, checksum, version, last_modified
-        )
-
-        metadata.update(
-            {
-                "title": str(row.get("title", "") or ""),
-                "id": str(row.get("id", "") or ""),
-                "db_type": self.db_type,
-            }
-        )
+        extra: dict[str, Any] = {
+            "title": str(row.get("title", "") or ""),
+            "id": str(row.get("id", "") or ""),
+            "db_type": self.db_type,
+        }
 
         for col in self.metadata_columns:
             if col in row:
-                metadata[col] = row[col]
+                extra[col] = row[col]
 
-        return metadata
+        return extra
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _fetch_rows(self) -> List[Dict[str, Any]]:
+    def _fetch_rows(self) -> list[dict[str, Any]]:
         """Execute the SQL query and return rows as a list of dicts."""
         engine = create_engine(self.connection_string)
         with engine.connect() as conn:
@@ -184,24 +166,3 @@ class DatabaseIngestionJob(IngestionJob):
                 "config.query must be a SELECT statement. "
                 "Use read-only database credentials to enforce this at the DB level."
             )
-
-    @staticmethod
-    def _parse_timestamp(value: Any) -> Optional[datetime]:
-        """Convert a string or datetime value to a datetime object."""
-        if value is None:
-            return None
-        if isinstance(value, datetime):
-            return value
-        try:
-            return datetime.fromisoformat(str(value))
-        except (ValueError, TypeError):
-            return None
-
-    @staticmethod
-    def _parse_list(value: Any) -> List[str]:
-        """Parse a comma-separated string or list into a list of stripped strings."""
-        if not value:
-            return []
-        if isinstance(value, list):
-            return [str(v).strip() for v in value if str(v).strip()]
-        return [v.strip() for v in str(value).split(",") if v.strip()]
