@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from tasks.database_ingestion import DatabaseIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_list, parse_timestamp
 
 BASE_CONFIG = {
     "name": "testdb",
@@ -15,8 +16,22 @@ BASE_CONFIG = {
 }
 
 SAMPLE_ROWS = [
-    {"id": 1, "title": "Book One", "updated_at": "2024-01-01T00:00:00", "content": "Content one", "author": "Alice", "year": 2020},
-    {"id": 2, "title": "Book Two", "updated_at": "2024-06-15T12:00:00", "content": "Content two", "author": "Bob", "year": 2021},
+    {
+        "id": 1,
+        "title": "Book One",
+        "updated_at": "2024-01-01T00:00:00",
+        "content": "Content one",
+        "author": "Alice",
+        "year": 2020,
+    },
+    {
+        "id": 2,
+        "title": "Book Two",
+        "updated_at": "2024-06-15T12:00:00",
+        "content": "Content two",
+        "author": "Bob",
+        "year": 2021,
+    },
 ]
 
 
@@ -26,7 +41,6 @@ def _make_job(config=None):
 
 
 class TestDatabaseIngestionJobInit(unittest.TestCase):
-
     def _job(self, overrides=None):
         config = {
             "name": "testdb",
@@ -65,7 +79,9 @@ class TestDatabaseIngestionJobInit(unittest.TestCase):
     def test_missing_query_raises(self):
         with patch("tasks.database_ingestion.DatabaseReader"):
             with self.assertRaises(ValueError):
-                DatabaseIngestionJob({"name": "x", "config": {"type": "postgres", "connection_string": "postgresql+psycopg2://x/y"}})
+                DatabaseIngestionJob(
+                    {"name": "x", "config": {"type": "postgres", "connection_string": "postgresql+psycopg2://x/y"}}
+                )
 
     def test_non_select_query_raises(self):
         with self.assertRaises(ValueError):
@@ -100,7 +116,6 @@ class TestDatabaseIngestionJobInit(unittest.TestCase):
 
 
 class TestDatabaseIngestionJobListItems(unittest.TestCase):
-
     def _job(self, rows=None, overrides=None):
         config = {
             "name": "testdb",
@@ -150,7 +165,6 @@ class TestDatabaseIngestionJobListItems(unittest.TestCase):
 
 
 class TestDatabaseIngestionJobContent(unittest.TestCase):
-
     def _job(self, metadata_columns=""):
         config = {
             "name": "testdb",
@@ -201,64 +215,59 @@ class TestDatabaseIngestionJobContent(unittest.TestCase):
         )
         self.assertIn("testdb", job.get_item_name(item))
 
-    def test_get_document_metadata_base_fields(self):
+    def test_get_extra_metadata_base_fields(self):
         job = self._job()
         item = self._item(SAMPLE_ROWS[0])
-        with patch.object(job.__class__.__bases__[0], "get_document_metadata", return_value={}):
-            meta = job.get_document_metadata(item, "book_one", "abc123", 1, None)
+        meta = job.get_extra_metadata(item, "", {})
         self.assertEqual(meta["title"], "Book One")
         self.assertEqual(meta["id"], "1")
         self.assertEqual(meta["db_type"], "postgres")
 
-    def test_get_document_metadata_extra_columns(self):
+    def test_get_extra_metadata_extra_columns(self):
         job = self._job(metadata_columns="author,year")
         item = self._item(SAMPLE_ROWS[0])
-        with patch.object(job.__class__.__bases__[0], "get_document_metadata", return_value={}):
-            meta = job.get_document_metadata(item, "book_one", "abc123", 1, None)
+        meta = job.get_extra_metadata(item, "", {})
         self.assertEqual(meta["author"], "Alice")
         self.assertEqual(meta["year"], 2020)
 
-    def test_get_document_metadata_skips_missing_extra_columns(self):
+    def test_get_extra_metadata_skips_missing_extra_columns(self):
         job = self._job(metadata_columns="author,year")
         row = {"id": 1, "title": "T", "updated_at": None, "content": "C"}
         item = self._item(row)
-        with patch.object(job.__class__.__bases__[0], "get_document_metadata", return_value={}):
-            meta = job.get_document_metadata(item, "t", "abc", 1, None)
+        meta = job.get_extra_metadata(item, "", {})
         self.assertNotIn("author", meta)
         self.assertNotIn("year", meta)
 
 
-class TestDatabaseIngestionJobParseTimestamp(unittest.TestCase):
-
+class TestParseTimestamp(unittest.TestCase):
     def test_none_returns_none(self):
-        self.assertIsNone(DatabaseIngestionJob._parse_timestamp(None))
+        self.assertIsNone(parse_timestamp(None))
 
     def test_datetime_passthrough(self):
         dt = datetime(2024, 1, 1, 12, 0)
-        self.assertEqual(DatabaseIngestionJob._parse_timestamp(dt), dt)
+        self.assertEqual(parse_timestamp(dt), dt)
 
     def test_iso_string(self):
-        result = DatabaseIngestionJob._parse_timestamp("2024-06-15T12:00:00")
+        result = parse_timestamp("2024-06-15T12:00:00")
         self.assertIsInstance(result, datetime)
         self.assertEqual(result.month, 6)
 
     def test_invalid_string_returns_none(self):
-        self.assertIsNone(DatabaseIngestionJob._parse_timestamp("not-a-date"))
+        self.assertIsNone(parse_timestamp("not-a-date"))
 
 
-class TestDatabaseIngestionJobParseList(unittest.TestCase):
-
+class TestParseList(unittest.TestCase):
     def test_comma_string(self):
-        self.assertEqual(DatabaseIngestionJob._parse_list("a, b, c"), ["a", "b", "c"])
+        self.assertEqual(parse_list("a, b, c"), ["a", "b", "c"])
 
     def test_list_input(self):
-        self.assertEqual(DatabaseIngestionJob._parse_list(["a", "b"]), ["a", "b"])
+        self.assertEqual(parse_list(["a", "b"]), ["a", "b"])
 
     def test_empty_string(self):
-        self.assertEqual(DatabaseIngestionJob._parse_list(""), [])
+        self.assertEqual(parse_list(""), [])
 
     def test_none(self):
-        self.assertEqual(DatabaseIngestionJob._parse_list(None), [])
+        self.assertEqual(parse_list(None), [])
 
     def test_strips_empty_entries(self):
-        self.assertEqual(DatabaseIngestionJob._parse_list("a,,b, "), ["a", "b"])
+        self.assertEqual(parse_list("a,,b, "), ["a", "b"])
