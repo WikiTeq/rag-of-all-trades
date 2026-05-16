@@ -11,7 +11,6 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 from utils.parse import parse_bool, parse_list, parse_timestamp
 from utils.text import slugify
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
