@@ -496,6 +496,37 @@ IMAP1_MAILBOXES=INBOX,Sent
 IMAP1_SCHEDULES=3600
 ```
 
+### BookStack Connector
+
+Ingests shelves, books, chapters, and pages from a [BookStack](https://www.bookstackapp.com/) instance using the BookStack REST API.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "bookstack"
+    name: "bookstack1"
+    config:
+      base_url: "${BOOKSTACK1_BASE_URL}"
+      token_id: "${BOOKSTACK1_TOKEN_ID}"
+      token_secret: "${BOOKSTACK1_TOKEN_SECRET}"
+      item_types:              # optional, default: all types
+        - "shelves"
+        - "books"
+        - "chapters"
+        - "pages"
+      schedules: "${BOOKSTACK1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+BOOKSTACK1_BASE_URL=https://wiki.example.com
+BOOKSTACK1_TOKEN_ID=your-token-id-here
+BOOKSTACK1_TOKEN_SECRET=your-token-secret-here
+BOOKSTACK1_SCHEDULES=3600
+```
+
 ## Reference of the `config.yaml`
 
 The `config.yaml` file contains the main configuration of the service.
