@@ -393,6 +393,44 @@ PIPEDRIVE1_API_TOKEN=your-pipedrive-api-token
 PIPEDRIVE1_SCHEDULES=3600
 ```
 
+### Wiki.js Connector
+
+The Wiki.js connector ingests pages from a self-hosted [Wiki.js](https://js.wiki/) instance via the
+GraphQL API. Both `markdown` and `html` content types are handled; HTML is automatically converted to
+Markdown. Metadata collected per page includes: page_id, path, locale, title, url, updated_at, tags, is_published.
+
+The API token requires two permission scopes:
+
+- `read:pages` — required for `pages.list` and `pages.single` (page discovery and metadata)
+- `read:source` — required for `Page.content` (page body); without it the content field is returned empty with no error
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "wikijs"
+    name: "wikijs1"
+    config:
+      base_url: "${WIKIJS1_BASE_URL}"
+      api_token: "${WIKIJS1_API_TOKEN}"   # must have read:pages and read:source scopes
+      schedules: "${WIKIJS1_SCHEDULES}"
+      # Optional filters:
+      # paths:                            # ingest only pages under these path prefixes
+      #   - "/engineering"
+      #   - "/product"
+      # tags: "public"                    # server-side tag filter (comma-separated)
+      # locale: "en"                      # server-side locale filter
+      # include_unpublished: false        # default false
+```
+
+```dotenv
+# .env
+
+WIKIJS1_BASE_URL=https://wiki.example.com
+WIKIJS1_API_TOKEN=your-wikijs-api-token
+WIKIJS1_SCHEDULES=3600
+```
+
 ## Reference of the `config.yaml`
 
 The `config.yaml` file contains the main configuration of the service.
