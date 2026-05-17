@@ -20,6 +20,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Notion ingestion from pages and databases via a Notion integration token
 * Dropbox ingestion — files and folders from Dropbox using the official Dropbox SDK with flexible path and extension filters
 * Confluence ingestion from Cloud and Server/Data Center instances via LlamaIndex reader
+* BookStack ingestion of shelves, books, chapters, and pages via the REST API
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -39,6 +40,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * OneDrive (OneDrive for Business — App authentication)
 * Notion
 * Dropbox
+* BookStack
 
 ## Embeddings support
 
