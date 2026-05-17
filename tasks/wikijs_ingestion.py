@@ -123,9 +123,12 @@ class WikiJsIngestionJob(IngestionJob):
         try:
             tags = self.tags or None
             pages = self._client.list_pages(tags=tags, locale=self.locale)
-        except (GraphQLError, Exception) as e:
+        except GraphQLError as e:
             logger.error(f"[{self.source_name}] Failed to list pages: {e}")
             return
+        except Exception:
+            logger.exception(f"[{self.source_name}] Unexpected error listing pages")
+            raise
 
         count = 0
         for page in pages:
