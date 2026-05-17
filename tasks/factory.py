@@ -21,6 +21,7 @@ from tasks.sharepoint_ingestion import SharePointIngestionJob
 from tasks.slack_ingestion import SlackIngestionJob
 from tasks.trello_ingestion import TrelloIngestionJob
 from tasks.web_ingestion import WebIngestionJob
+from tasks.wikijs_ingestion import WikiJsIngestionJob
 
 
 class IngestionJobFactory:
@@ -62,3 +63,4 @@ IngestionJobFactory.register("gitlab", GitLabIngestionJob)
 IngestionJobFactory.register("trello", TrelloIngestionJob)
 IngestionJobFactory.register("gitbook", GitBookIngestionJob)
 IngestionJobFactory.register("database", DatabaseIngestionJob)
+IngestionJobFactory.register("wikijs", WikiJsIngestionJob)
