@@ -34,6 +34,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * SerpAPI
 * Jira
 * Confluence
+* Wiki.js
 * Web
 * Pipedrive
 * Box
