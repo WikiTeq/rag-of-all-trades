@@ -16,6 +16,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
 * Slack ingestion from channels by ID or name/regex pattern, with thread reply support
+* BookStack ingestion of shelves, books, chapters, and pages via the REST API
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -30,6 +31,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Pipedrive
 * Slack
 * IMAP
+* BookStack
 
 ## Embeddings support
 
