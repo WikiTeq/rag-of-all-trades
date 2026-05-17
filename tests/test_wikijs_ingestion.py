@@ -3,6 +3,7 @@ from unittest.mock import Mock, patch
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.wikijs_ingestion import WikiJsIngestionJob
+from utils.graphql import GraphQLError
 
 
 def _make_config(**kwargs):
@@ -103,11 +104,17 @@ class TestWikiJsIngestionJob(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].id, "wikijs:2")
 
-    def test_list_items_returns_empty_on_client_error(self):
-        self.mock_client.list_pages.side_effect = Exception("network error")
+    def test_list_items_returns_empty_on_graphql_error(self):
+        self.mock_client.list_pages.side_effect = GraphQLError("query failed")
         job = self._make_job()
         items = list(job.list_items())
         self.assertEqual(items, [])
+
+    def test_list_items_reraises_unexpected_exception(self):
+        self.mock_client.list_pages.side_effect = RuntimeError("network error")
+        job = self._make_job()
+        with self.assertRaises(RuntimeError):
+            list(job.list_items())
 
     def test_list_items_filters_unpublished_by_default(self):
         self.mock_client.list_pages.return_value = [
