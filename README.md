@@ -15,6 +15,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Ingestion from MediaWiki with Wiki-to-Markdown conversion via [html2text](https://github.com/Alir3z4/html2text)
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
+* BookStack ingestion of shelves, books, chapters, and pages via the REST API
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -27,6 +28,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Jira
 * Web
 * Pipedrive
+* BookStack
 
 ## Embeddings support
 
