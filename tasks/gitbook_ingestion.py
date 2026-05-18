@@ -270,7 +270,8 @@ class GitBookIngestionJob(IngestionJob):
                     page_id = page.get("id")
                     if not page_id:
                         logger.warning(
-                            f"[{self.source_name}] Skipping page with missing id in space {space_id!r}: {page}"
+                            f"[{self.source_name}] Skipping page with missing id in space {space_id!r}: "
+                            f"title={page.get('title')!r} slug={page.get('slug')!r}"
                         )
                         continue
 
