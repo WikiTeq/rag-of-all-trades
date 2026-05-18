@@ -611,7 +611,8 @@ class PipedriveIngestionJob(IngestionJob):
             "pipeline": self._client.resolve_pipeline(record.get("pipeline_id")),
             "stage": self._client.resolve_stage(record.get("stage_id")),
             "status": record.get("status", "") or "",
-            "owner": record.get("owner_name") or self._client.resolve_user(record.get("user_id")),
+            "owner": record.get("owner_name")
+            or self._client.resolve_user(record.get("owner_id") or record.get("user_id")),
             "org_name": record.get("org_name", "") or "",
             "person_name": record.get("person_name", "") or "",
             "value": str(record.get("value", "") or ""),
