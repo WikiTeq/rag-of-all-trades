@@ -26,6 +26,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * SerpAPI
 * Jira
 * Web
+* GitBook
 
 ## Embeddings support
 
@@ -341,6 +342,26 @@ JIRA1_SCHEDULES=3600
 # JIRA1_SERVER_URL=https://jira.your-company.com
 # JIRA1_API_TOKEN=your-personal-access-token
 # (set auth_type: "token" in config.yaml; email is not needed)
+```
+
+### GitBook Connector
+
+Ingests pages from [GitBook](https://www.gitbook.com/) spaces via the GitBook REST API.
+
+```yaml
+sources:
+  - type: "gitbook"
+    name: "gitbook1"
+    config:
+      api_token: "${GITBOOK1_API_TOKEN}"
+      schedules: "${GITBOOK1_SCHEDULES}"
+      # space_ids:                   # optional; if omitted, all accessible spaces are ingested
+      #   - "space_abc123"
+```
+
+```dotenv
+GITBOOK1_API_TOKEN=your-gitbook-api-token
+GITBOOK1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
