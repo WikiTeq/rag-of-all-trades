@@ -92,6 +92,14 @@ sources:
   #    max_comments: 10          # optional, default 10
   #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
+  #- type: "gitbook"
+  #  name: "gitbook1"
+  #  config:
+  #    api_token: "${GITBOOK1_API_TOKEN}"
+  #    schedules: "${GITBOOK1_SCHEDULES}"
+  #    #space_ids:                   # optional; if omitted, all accessible spaces are ingested
+  #    #  - "space_abc123"
+
 embedding:
   provider: openrouter
   model_config: sentence-transformers/all-mpnet-base-v2
