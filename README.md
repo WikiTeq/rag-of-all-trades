@@ -41,6 +41,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Notion
 * Dropbox
 * BookStack
+* GitBook
 
 ## Embeddings support
 
@@ -822,6 +823,30 @@ BOOKSTACK1_BASE_URL=https://wiki.example.com
 BOOKSTACK1_TOKEN_ID=your-token-id-here
 BOOKSTACK1_TOKEN_SECRET=your-token-secret-here
 BOOKSTACK1_SCHEDULES=3600
+```
+
+### GitBook Connector
+
+Ingests pages from [GitBook](https://www.gitbook.com/) spaces via the GitBook REST API.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "gitbook"
+    name: "gitbook1"
+    config:
+      api_token: "${GITBOOK1_API_TOKEN}"
+      schedules: "${GITBOOK1_SCHEDULES}"
+      # space_ids:                   # optional; if omitted, all accessible spaces are ingested
+      #   - "space_abc123"
+```
+
+```dotenv
+# .env
+
+GITBOOK1_API_TOKEN=your-gitbook-api-token
+GITBOOK1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
