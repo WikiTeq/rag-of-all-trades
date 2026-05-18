@@ -245,7 +245,7 @@ class PipedriveIngestionJob(IngestionJob):
                         if entity_type == "deals" and len(self.filter_deals_stages_ids) > 1:
                             if str(record.get("stage_id", "")) not in [str(s) for s in self.filter_deals_stages_ids]:
                                 continue
-                        record_id = record.get("id") or record.get("cc_email")
+                        record_id = record.get("id")
                         if record_id in seen_ids:
                             continue
                         seen_ids.add(record_id)
@@ -284,7 +284,7 @@ class PipedriveIngestionJob(IngestionJob):
         """Return a filesystem-safe identifier: ``pipedrive_{type}_{id}``."""
         entity_type = item.source_ref["type"]
         record = item.source_ref["data"]
-        record_id = record.get("id") or slugify(str(record.get("cc_email", "")))
+        record_id = record.get("id")
         return slugify(f"pipedrive_{entity_type}_{record_id}")
 
     def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
