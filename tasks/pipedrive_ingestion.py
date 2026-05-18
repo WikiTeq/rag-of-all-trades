@@ -245,6 +245,29 @@ class PipedriveIngestionJob(IngestionJob):
                         if entity_type == "deals" and len(self.filter_deals_stages_ids) > 1:
                             if str(record.get("stage_id", "")) not in [str(s) for s in self.filter_deals_stages_ids]:
                                 continue
+                        if entity_type == "mails":
+                            # The mailThreads endpoint returns thread stubs, not individual
+                            # messages. Fetch each thread's messages separately so every
+                            # email is ingested as its own IngestionItem. Thread metadata
+                            # is stored under the "_thread" key for use in content/metadata
+                            # builders.
+                            thread_id = record.get("id")
+                            if thread_id in seen_ids:
+                                continue
+                            seen_ids.add(thread_id)
+                            messages_resp = self._client.get(f"/mailbox/mailThreads/{thread_id}/mailMessages")
+                            for message in messages_resp.get("data") or []:
+                                if self.max_items is not None and count >= self.max_items:
+                                    break
+                                message_id = message.get("id")
+                                updated_at = parse_timestamp(message.get("update_time") or message.get("add_time"))
+                                yield IngestionItem(
+                                    id=f"pipedrive:mails:{message_id}",
+                                    source_ref={"type": "mails", "data": {**message, "_thread": record}},
+                                    last_modified=updated_at,
+                                )
+                                count += 1
+                            continue
                         record_id = record.get("id")
                         if record_id in seen_ids:
                             continue
@@ -560,11 +583,7 @@ class PipedriveIngestionJob(IngestionJob):
         return "\n".join(parts)
 
     def _build_mails_content(self, record: dict) -> str:
-        """Build Markdown content for a Mail (email) record.
-
-        Prefers body_text over body_html. Falls back to body_html with basic tag
-        stripping if body_text is unavailable, then to the snippet field.
-        """
+        """Build Markdown content for an individual mail message."""
         parts: list[str] = []
         subject = record.get("subject", "") or ""
         parts.append(f"# Mail: {subject}\n")
@@ -584,14 +603,18 @@ class PipedriveIngestionJob(IngestionJob):
             if recipients:
                 parts.append(f"**To:** {', '.join(recipients)}")
 
-        body_html = record.get("body_html")
-        body_text = record.get("body_text")
-        if body_text:
-            body = body_text
-        elif body_html:
-            body = html_to_markdown(body_html)
-        else:
-            body = record.get("snippet", "") or ""
+        # body_html/body_text are not present on list responses; fetch the full
+        # message with include_body=1 to get the actual email body.
+        message_id = record.get("id")
+        full_resp = self._client.get(f"/mailbox/mailMessages/{message_id}", params={"include_body": 1})
+        full_record = full_resp.get("data") or {}
+
+        body = (
+            full_record.get("body_text")
+            or html_to_markdown(full_record.get("body_html") or "")
+            or record.get("snippet", "")
+            or ""
+        )
         if body.strip():
             parts.append(f"\n{body}")
 
@@ -720,8 +743,6 @@ class PipedriveIngestionJob(IngestionJob):
     def _build_record_url(self, entity_type: str, record: dict) -> str:
         """Build a Pipedrive app URL for the given record."""
         record_id = record.get("id")
-        if not record_id:
-            return ""
         _url_paths = {
             "deals": "deal",
             "persons": "person",

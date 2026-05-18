@@ -91,12 +91,14 @@ class TestPipedriveListItems(unittest.TestCase):
 
     def test_list_items_yields_mail_records(self):
         job = _make_job(load_types=["mails"])
-        job._client.paginate.return_value = iter(
-            [
+        job._client.paginate.return_value = iter([{"id": 5, "subject": "Thread", "update_time": None}])
+        job._client.get.return_value = {
+            "success": True,
+            "data": [
                 {"id": 10, "subject": "Hello", "update_time": None},
                 {"id": 11, "subject": "World", "update_time": None},
-            ]
-        )
+            ],
+        }
         items = list(job.list_items())
         self.assertEqual(len(items), 2)
         self.assertEqual(items[0].id, "pipedrive:mails:10")
