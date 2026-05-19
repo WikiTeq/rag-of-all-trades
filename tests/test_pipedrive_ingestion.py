@@ -141,6 +141,28 @@ class TestPipedriveGetRawContent(unittest.TestCase):
         content = job.get_raw_content(item)
         self.assertIn("Important note about the client.", content)
 
+    def test_mail_content_fetches_body_url(self):
+        from unittest.mock import MagicMock
+
+        job = _make_job(load_types=["mails"])
+        record = {"id": 10, "subject": "Hello", "snippet": "short..."}
+        job._client.get.return_value = {"success": True, "data": {"body_url": "https://example.com/body"}}
+        mock_resp = MagicMock()
+        mock_resp.text = "Full email body text"
+        mock_resp.raise_for_status = MagicMock()
+        job._client._retry.get = MagicMock(return_value=mock_resp)
+        item = self._item("mails", record)
+        content = job.get_raw_content(item)
+        self.assertIn("Full email body text", content)
+
+    def test_mail_content_falls_back_to_snippet(self):
+        job = _make_job(load_types=["mails"])
+        record = {"id": 10, "subject": "Hello", "snippet": "short snippet"}
+        job._client.get.return_value = {"success": True, "data": {}}
+        item = self._item("mails", record)
+        content = job.get_raw_content(item)
+        self.assertIn("short snippet", content)
+
     def test_unknown_entity_falls_back_to_generic(self):
         job = _make_job(load_types=["leads"])
         record = {"id": 9, "title": "Lead title", "owner_name": "Bob"}

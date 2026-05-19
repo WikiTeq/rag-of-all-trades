@@ -603,18 +603,25 @@ class PipedriveIngestionJob(IngestionJob):
             if recipients:
                 parts.append(f"**To:** {', '.join(recipients)}")
 
-        # body_html/body_text are not present on list responses; fetch the full
-        # message with include_body=1 to get the actual email body.
+        # body_url is a pre-signed Cloudfront URL (24h expiry) that contains the
+        # full email body. include_body=1 only returns a snippet, not the full text.
         message_id = record.get("id")
-        full_resp = self._client.get(f"/mailbox/mailMessages/{message_id}", params={"include_body": 1})
-        full_record = full_resp.get("data") or {}
+        msg_resp = self._client.get(f"/mailbox/mailMessages/{message_id}")
+        body_url = (msg_resp.get("data") or {}).get("body_url")
 
-        body = (
-            full_record.get("body_text")
-            or html_to_markdown(full_record.get("body_html") or "")
-            or record.get("snippet", "")
-            or ""
-        )
+        body = ""
+        if body_url:
+            try:
+                resp = self._client._retry.get(body_url)
+                resp.raise_for_status()
+                raw = resp.text
+                body = html_to_markdown(raw) if raw.lstrip().startswith("<") else raw
+            except Exception as exc:
+                logger.warning("[%s] Failed to fetch mail body from body_url: %s", self.source_name, exc)
+
+        if not body.strip():
+            body = record.get("snippet", "") or ""
+
         if body.strip():
             parts.append(f"\n{body}")
 
