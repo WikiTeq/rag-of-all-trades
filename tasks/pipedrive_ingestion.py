@@ -774,5 +774,7 @@ class PipedriveIngestionJob(IngestionJob):
         for key in ("title", "subject", "name", "content"):
             val = record.get(key)
             if val and isinstance(val, str):
+                if key == "content":
+                    val = html_to_markdown(val)
                 return val[:120]
         return f"{entity_type}:{record.get('id', '')}"
