@@ -69,6 +69,12 @@ class PipedriveClient:
         resp.raise_for_status()
         return resp.json()
 
+    def get_external(self, url: str, timeout: int = 30) -> requests.Response:
+        """Fetch an external URL without the Pipedrive api_token session params."""
+        resp = requests.get(url, timeout=timeout)
+        resp.raise_for_status()
+        return resp
+
     def paginate(self, path: str, params: dict | None = None, limit: int | None = None) -> Iterator[dict]:
         """Yield all records from a paginated Pipedrive endpoint."""
         params = dict(params or {})
@@ -612,12 +618,11 @@ class PipedriveIngestionJob(IngestionJob):
         body = ""
         if body_url:
             try:
-                resp = self._client._retry.get(body_url)
-                resp.raise_for_status()
+                resp = self._client.get_external(body_url)
                 raw = resp.text
                 body = html_to_markdown(raw) if raw.lstrip().startswith("<") else raw
-            except Exception as exc:
-                logger.warning("[%s] Failed to fetch mail body from body_url: %s", self.source_name, exc)
+            except Exception:
+                logger.warning("[%s] Failed to fetch mail body for message %s", self.source_name, message_id)
 
         if not body.strip():
             body = record.get("snippet", "") or ""

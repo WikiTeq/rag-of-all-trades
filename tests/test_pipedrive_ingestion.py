@@ -1,5 +1,6 @@
+import logging
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.pipedrive_ingestion import PipedriveIngestionJob
@@ -142,18 +143,33 @@ class TestPipedriveGetRawContent(unittest.TestCase):
         self.assertIn("Important note about the client.", content)
 
     def test_mail_content_fetches_body_url(self):
-        from unittest.mock import MagicMock
-
         job = _make_job(load_types=["mails"])
         record = {"id": 10, "subject": "Hello", "snippet": "short..."}
         job._client.get.return_value = {"success": True, "data": {"body_url": "https://example.com/body"}}
         mock_resp = MagicMock()
         mock_resp.text = "Full email body text"
-        mock_resp.raise_for_status = MagicMock()
-        job._client._retry.get = MagicMock(return_value=mock_resp)
+        job._client.get_external = MagicMock(return_value=mock_resp)
         item = self._item("mails", record)
         content = job.get_raw_content(item)
+        job._client.get_external.assert_called_once_with("https://example.com/body")
         self.assertIn("Full email body text", content)
+
+    def test_mail_body_url_failure_does_not_log_url(self):
+        """Warning log on body_url fetch failure must not contain the URL."""
+        job = _make_job(load_types=["mails"])
+        record = {"id": 10, "subject": "Hello", "snippet": "fallback"}
+        job._client.get.return_value = {
+            "success": True,
+            "data": {"body_url": "https://secret.cdn.example.com/body?token=abc"},
+        }
+        job._client.get_external = MagicMock(side_effect=Exception("403 Forbidden"))
+        item = self._item("mails", record)
+        with self.assertLogs("tasks.pipedrive_ingestion", level=logging.WARNING) as cm:
+            content = job.get_raw_content(item)
+        logged = "\n".join(cm.output)
+        self.assertNotIn("https://secret.cdn.example.com", logged)
+        self.assertNotIn("token=abc", logged)
+        self.assertIn("fallback", content)
 
     def test_mail_content_falls_back_to_snippet(self):
         job = _make_job(load_types=["mails"])
