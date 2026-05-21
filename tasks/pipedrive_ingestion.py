@@ -69,7 +69,7 @@ class PipedriveClient:
         try:
             me = self.get("/users/me")
             self.company_domain: str = (me.get("data") or {}).get("company_domain") or "app"
-        except Exception as exc:
+        except (requests.exceptions.RequestException, TypeError, AttributeError, KeyError) as exc:
             logger.warning("Failed to fetch Pipedrive company domain, falling back to app.pipedrive.com: %s", exc)
             self.company_domain = "app"
 
