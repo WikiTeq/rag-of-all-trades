@@ -241,6 +241,13 @@ class TestPipedriveGetDocumentMetadata(unittest.TestCase):
         title = job._record_title("deals", record)
         self.assertEqual(title, "Plain deal title")
 
+    def test_record_title_strips_markdown_special_chars_from_note_content(self):
+        job = _make_job()
+        record = {"id": 99, "content": "<h1>Meeting summary</h1><p>Key points discussed.</p>"}
+        title = job._record_title("notes", record)
+        self.assertNotIn("#", title)
+        self.assertIn("Meeting summary", title)
+
     def test_record_title_truncates_to_120_chars(self):
         job = _make_job()
         long_html = "<p>" + "a" * 200 + "</p>"

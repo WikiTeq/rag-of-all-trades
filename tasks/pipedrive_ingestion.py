@@ -1,5 +1,6 @@
 # Standard library imports
 import logging
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -776,5 +777,6 @@ class PipedriveIngestionJob(IngestionJob):
             if val and isinstance(val, str):
                 if key == "content":
                     val = html_to_markdown(val)
+                    val = re.sub(r"[^a-zA-Z0-9\s.,\-_]", "", val).strip()
                 return val[:120]
         return f"{entity_type}:{record.get('id', '')}"
