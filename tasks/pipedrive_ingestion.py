@@ -65,6 +65,14 @@ class PipedriveClient:
         self._pipeline_resolver = CachedResolver(self._fetch_pipeline, logger)
         self._stage_resolver = CachedResolver(self._fetch_stage, logger)
 
+        # Fetch company domain once for building app URLs (e.g. "teqinc" → teqinc.pipedrive.com)
+        try:
+            me = self.get("/users/me")
+            self.company_domain: str = (me.get("data") or {}).get("company_domain") or "app"
+        except Exception as exc:
+            logger.warning("Failed to fetch Pipedrive company domain, falling back to app.pipedrive.com: %s", exc)
+            self.company_domain = "app"
+
     def get(self, path: str, params: dict | None = None) -> dict:
         """Perform a GET request with retry/backoff logic."""
         url = f"{_API_BASE}{path}"
@@ -141,6 +149,10 @@ class PipedriveClient:
         if stage_id is None:
             return ""
         return self._stage_resolver.resolve(stage_id) or str(stage_id)
+
+    @property
+    def base_url(self) -> str:
+        return f"https://{self.company_domain}.pipedrive.com"
 
 
 class PipedriveIngestionJob(IngestionJob):
@@ -309,10 +321,6 @@ class PipedriveIngestionJob(IngestionJob):
         else:
             content = self._build_generic_content(entity_type, record)
 
-        # Cache the record URL for metadata
-        item._metadata_cache["record_url"] = self._build_record_url(entity_type, record)
-        item._metadata_cache["entity_type"] = entity_type
-
         return content
 
     def get_item_name(self, item: IngestionItem) -> str:
@@ -331,7 +339,7 @@ class PipedriveIngestionJob(IngestionJob):
             "entity_type": entity_type,
             "pipedrive_id": str(record.get("id", "")),
             "title": self._record_title(entity_type, record),
-            "url": item._metadata_cache.get("record_url", ""),
+            "url": self._build_record_url(entity_type, record),
             "add_time": record.get("add_time", "") or "",
             "update_time": record.get("update_time") or record.get("updated_at", "") or "",
         }
@@ -765,18 +773,35 @@ class PipedriveIngestionJob(IngestionJob):
     def _build_record_url(self, entity_type: str, record: dict) -> str:
         """Build a Pipedrive app URL for the given record."""
         record_id = record.get("id")
+        if not record_id:
+            return ""
+        if entity_type == "activities":
+            return f"{self._client.base_url}/activities/list/user/everyone?selected={record_id}&tab=activity"
+
+        # Notes have no standalone page; link to the primary linked entity instead.
+        if entity_type == "notes":
+            for linked_id, path in (
+                (record.get("deal_id"), "deal"),
+                (record.get("person_id"), "person"),
+                (record.get("org_id"), "organization"),
+                (record.get("lead_id"), "lead"),
+                (record.get("project_id"), "project"),
+            ):
+                if linked_id:
+                    return f"{self._client.base_url}/{path}/{linked_id}/detail"
+            return ""
+
         _url_paths = {
             "deals": "deal",
             "persons": "person",
             "organizations": "organization",
-            "activities": "activity",
             "leads": "lead",
             "products": "product",
             "projects": "project",
         }
         path = _url_paths.get(entity_type)
         if path:
-            return f"https://app.pipedrive.com/{path}/{record_id}/detail"
+            return f"{self._client.base_url}/{path}/{record_id}/detail"
         return ""
 
     def _record_title(self, entity_type: str, record: dict) -> str:
