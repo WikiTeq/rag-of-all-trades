@@ -179,7 +179,17 @@ class TestPipedriveGetRawContent(unittest.TestCase):
         content = job.get_raw_content(item)
         self.assertIn("short snippet", content)
 
-    def test_unknown_entity_falls_back_to_generic(self):
+    def test_note_content_converts_html(self):
+        job = _make_job(load_types=["notes"])
+        record = {"id": 5, "content": "<p>Hello <b>world</b></p>"}
+        job._client.get.return_value = {"success": True, "data": []}
+        item = self._item("notes", record)
+        content = job.get_raw_content(item)
+        self.assertNotIn("<b>", content)
+        self.assertNotIn("<p>", content)
+        self.assertIn("world", content)
+
+    def test_unknown_entity_falls_back_to_generic_with_entity_type_header(self):
         job = _make_job(load_types=["leads"])
         record = {"id": 9, "title": "Lead title", "owner_name": "Bob"}
         item = IngestionItem(
@@ -190,6 +200,17 @@ class TestPipedriveGetRawContent(unittest.TestCase):
         content = job.get_raw_content(item)
         self.assertIsInstance(content, str)
         self.assertGreater(len(content), 0)
+        self.assertIn("Unknown Entity", content)
+        self.assertNotIn("# Record", content)
+
+    def test_mail_empty_body_logs_warning(self):
+        job = _make_job(load_types=["mails"])
+        record = {"id": 10, "subject": "Hello", "snippet": ""}
+        job._client.get.return_value = {"success": True, "data": {}}
+        item = self._item("mails", record)
+        with self.assertLogs("tasks.pipedrive_ingestion", level=logging.WARNING) as cm:
+            job.get_raw_content(item)
+        self.assertTrue(any("Empty body" in line for line in cm.output))
 
 
 class TestPipedriveGetItemName(unittest.TestCase):
