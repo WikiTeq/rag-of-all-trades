@@ -248,6 +248,18 @@ class TestPipedriveGetDocumentMetadata(unittest.TestCase):
         self.assertNotIn("#", title)
         self.assertIn("Meeting summary", title)
 
+    def test_record_title_preserves_non_ascii_in_note_content(self):
+        job = _make_job()
+        record = {"id": 5, "content": "<p>Встреча с клиентом</p>"}
+        title = job._record_title("notes", record)
+        self.assertIn("Встреча", title)
+
+    def test_record_title_falls_back_to_id_when_content_is_only_markers(self):
+        job = _make_job()
+        record = {"id": 7, "content": "<hr/>"}
+        title = job._record_title("notes", record)
+        self.assertEqual(title, "notes:7")
+
     def test_record_title_truncates_to_120_chars(self):
         job = _make_job()
         long_html = "<p>" + "a" * 200 + "</p>"

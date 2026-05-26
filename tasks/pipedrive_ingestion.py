@@ -17,6 +17,8 @@ from utils.text import html_to_markdown, slugify
 
 logger = logging.getLogger(__name__)
 
+_MARKDOWN_LEADER_RE = re.compile(r"^[#*\->`~\s]+")
+
 # Pipedrive REST API base URL
 _API_BASE = "https://api.pipedrive.com/v1"
 
@@ -776,7 +778,13 @@ class PipedriveIngestionJob(IngestionJob):
             val = record.get(key)
             if val and isinstance(val, str):
                 if key == "content":
-                    val = html_to_markdown(val)
-                    val = re.sub(r"[^a-zA-Z0-9\s.,\-_]", "", val).strip()
+                    val = html_to_markdown(val[:2000])
+                    for line in val.splitlines():
+                        line = _MARKDOWN_LEADER_RE.sub("", line).strip()
+                        if line:
+                            val = line
+                            break
+                    else:
+                        return f"{entity_type}:{record.get('id', '')}"
                 return val[:120]
         return f"{entity_type}:{record.get('id', '')}"
