@@ -2,8 +2,6 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
-from llama_index.core import Document
-
 from tasks.box_ingestion import BoxIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
@@ -19,21 +17,17 @@ def _make_config(**kwargs) -> dict:
     return {"name": "box1", "config": cfg}
 
 
-def _make_doc(
-    file_id="file123",
-    name="report.pdf",
-    path_collection="All Files/Reports",
-    text="Hello world",
-    modified_at="2024-01-15T10:30:00+00:00",
-) -> Document:
-    doc = Document(text=text)
-    doc.metadata = {
-        "box_file_id": file_id,
-        "name": name,
-        "path_collection": path_collection,
-        "modified_at": modified_at,
-    }
-    return doc
+def _make_box_file(
+    file_id="file123", name="report.pdf", path_collection="All Files/Reports", modified_at="2024-01-15T10:30:00+00:00"
+):
+    box_file = MagicMock()
+    box_file.id = file_id
+    box_file.name = name
+    box_file.modified_at = MagicMock()
+    box_file.modified_at.isoformat.return_value = modified_at
+    box_file.path_collection = MagicMock()
+    box_file.path_collection.entries = [MagicMock(name=p) for p in path_collection.split("/")]
+    return box_file
 
 
 class TestBoxIngestionJob(unittest.TestCase):
@@ -42,6 +36,16 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.mock_reader_class = self.reader_patcher.start()
         self.mock_reader = MagicMock()
         self.mock_reader_class.return_value = self.mock_reader
+
+        self.get_files_patcher = patch("tasks.box_ingestion.get_box_files_details")
+        self.mock_get_files = self.get_files_patcher.start()
+
+        self.get_content_patcher = patch("tasks.box_ingestion.get_file_content_by_id")
+        self.mock_get_content = self.get_content_patcher.start()
+        self.mock_get_content.return_value = b"file content"
+
+        self.meta_patcher = patch("tasks.box_ingestion.box_file_to_llama_document_metadata")
+        self.mock_meta = self.meta_patcher.start()
 
         self.box_sdk_patcher = patch.dict(
             "sys.modules",
@@ -59,6 +63,9 @@ class TestBoxIngestionJob(unittest.TestCase):
 
     def tearDown(self):
         self.reader_patcher.stop()
+        self.get_files_patcher.stop()
+        self.get_content_patcher.stop()
+        self.meta_patcher.stop()
         self.box_sdk_patcher.stop()
 
     def _make_job(self, **kwargs) -> BoxIngestionJob:
@@ -80,6 +87,21 @@ class TestBoxIngestionJob(unittest.TestCase):
         with self.assertRaises(ValueError):
             BoxIngestionJob(
                 {"name": "x", "config": {"box_client_id": "id", "box_client_secret": "s", "box_enterprise_id": "e"}}
+            )
+
+    def test_ccg_user_id_only_accepted(self):
+        job = BoxIngestionJob(
+            {
+                "name": "x",
+                "config": {"box_client_id": "id", "box_client_secret": "s", "box_user_id": "u", "folder_id": "0"},
+            }
+        )
+        self.assertIsNotNone(job.box_client)
+
+    def test_ccg_missing_enterprise_and_user_id_raises(self):
+        with self.assertRaises(ValueError):
+            BoxIngestionJob(
+                {"name": "x", "config": {"box_client_id": "id", "box_client_secret": "s", "folder_id": "0"}}
             )
 
     def test_invalid_auth_type_raises(self):
@@ -143,9 +165,9 @@ class TestBoxIngestionJob(unittest.TestCase):
             )
 
     def test_list_items_folder_mode(self):
-        doc1 = _make_doc(file_id="f1")
-        doc2 = _make_doc(file_id="f2", name="notes.docx")
-        self.mock_reader.load_data.return_value = [doc1, doc2]
+        f1, f2 = _make_box_file("f1"), _make_box_file("f2", name="notes.docx")
+        self.mock_reader.list_resources.return_value = ["f1", "f2"]
+        self.mock_get_files.return_value = [f1, f2]
 
         items = list(self._make_job().list_items())
 
@@ -155,25 +177,26 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.assertIsInstance(items[0], IngestionItem)
 
     def test_list_items_file_ids_mode(self):
-        doc = _make_doc(file_id="abc")
-        self.mock_reader.load_data.return_value = [doc]
+        box_file = _make_box_file("abc")
+        self.mock_reader.list_resources.return_value = ["abc"]
+        self.mock_get_files.return_value = [box_file]
 
         job = self._make_job(folder_id=None, file_ids="abc")
         items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].id, "box:abc")
-        self.mock_reader.load_data.assert_called_once_with(folder_id=None, file_ids=["abc"], is_recursive=False)
+        self.mock_reader.list_resources.assert_called_once_with(folder_id=None, file_ids=["abc"], is_recursive=False)
 
     def test_list_items_passes_is_recursive(self):
-        self.mock_reader.load_data.return_value = []
+        self.mock_reader.list_resources.return_value = []
         list(self._make_job(is_recursive="true").list_items())
-        self.mock_reader.load_data.assert_called_once_with(folder_id="0", file_ids=None, is_recursive=True)
+        self.mock_reader.list_resources.assert_called_once_with(folder_id="0", file_ids=None, is_recursive=True)
 
     def test_list_items_search_mode(self):
-        doc = _make_doc(file_id="s1")
+        box_file = _make_box_file("s1")
         self.mock_reader.search_resources.return_value = ["s1"]
-        self.mock_reader.load_data.return_value = [doc]
+        self.mock_get_files.return_value = [box_file]
 
         job = self._make_job(folder_id=None, search_query="quarterly")
         items = list(job.list_items())
@@ -184,12 +207,11 @@ class TestBoxIngestionJob(unittest.TestCase):
             file_extensions=None,
             ancestor_folder_ids=None,
         )
-        self.mock_reader.load_data.assert_called_once_with(file_ids=["s1"])
 
     def test_list_items_metadata_search_mode(self):
-        doc = _make_doc(file_id="m1")
+        box_file = _make_box_file("m1")
         self.mock_reader.search_resources_by_metadata.return_value = ["m1"]
-        self.mock_reader.load_data.return_value = [doc]
+        self.mock_get_files.return_value = [box_file]
 
         job = self._make_job(
             folder_id=None,
@@ -208,38 +230,41 @@ class TestBoxIngestionJob(unittest.TestCase):
             query_params={"status": "active"},
         )
 
-    def test_list_items_combined_modes(self):
-        doc1 = _make_doc(file_id="f1")
-        doc2 = _make_doc(file_id="s1")
-        self.mock_reader.load_data.side_effect = [[doc1], [doc2]]
-        self.mock_reader.search_resources.return_value = ["s1"]
+    def test_list_items_combined_modes_deduplicates(self):
+        f1, f2 = _make_box_file("f1"), _make_box_file("s1")
+        self.mock_reader.list_resources.return_value = ["f1"]
+        self.mock_reader.search_resources.return_value = ["f1", "s1"]  # f1 duplicate
+        self.mock_get_files.return_value = [f1, f2]
 
         job = self._make_job(folder_id="0", search_query="quarterly")
         items = list(job.list_items())
 
         self.assertEqual(len(items), 2)
-        self.assertEqual(self.mock_reader.load_data.call_count, 2)
+        self.mock_get_files.assert_called_once()
+        args = self.mock_get_files.call_args
+        self.assertEqual(len(args.kwargs.get("file_ids", args.args[1] if len(args.args) > 1 else [])), 2)
 
     def test_list_items_empty(self):
-        self.mock_reader.load_data.return_value = []
+        self.mock_reader.list_resources.return_value = []
         self.assertEqual(list(self._make_job().list_items()), [])
 
     def test_list_items_raises_on_reader_error(self):
-        self.mock_reader.load_data.side_effect = RuntimeError("auth failed")
+        self.mock_reader.list_resources.side_effect = RuntimeError("auth failed")
         with self.assertRaises(RuntimeError):
             list(self._make_job().list_items())
 
     def test_list_items_parses_last_modified(self):
-        doc = _make_doc(modified_at="2024-06-01T12:00:00+00:00")
-        self.mock_reader.load_data.return_value = [doc]
+        box_file = _make_box_file(modified_at="2024-06-01T12:00:00+00:00")
+        self.mock_reader.list_resources.return_value = ["file123"]
+        self.mock_get_files.return_value = [box_file]
         items = list(self._make_job().list_items())
         self.assertEqual(items[0].last_modified, datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC))
 
     def test_list_items_falls_back_to_now_on_missing_modified_at(self):
-        doc = _make_doc(modified_at=None)
-        doc.metadata.pop("modified_at", None)
-        doc.metadata.pop("content_modified_at", None)
-        self.mock_reader.load_data.return_value = [doc]
+        box_file = _make_box_file()
+        box_file.modified_at = None
+        self.mock_reader.list_resources.return_value = ["file123"]
+        self.mock_get_files.return_value = [box_file]
         before = datetime.now(UTC)
         items = list(self._make_job().list_items())
         after = datetime.now(UTC)
@@ -248,62 +273,53 @@ class TestBoxIngestionJob(unittest.TestCase):
             abs((items[0].last_modified - before).total_seconds()), (after - before).total_seconds() + 1
         )
 
-    def test_list_items_page_label_suffix(self):
-        doc = _make_doc(file_id="f1")
-        doc.metadata["page_label"] = "3"
-        self.mock_reader.load_data.return_value = [doc]
+    def test_list_items_source_ref_is_box_file(self):
+        box_file = _make_box_file()
+        self.mock_reader.list_resources.return_value = ["file123"]
+        self.mock_get_files.return_value = [box_file]
         items = list(self._make_job().list_items())
-        self.assertEqual(items[0].id, "box:f1:3")
+        self.assertIs(items[0].source_ref, box_file)
 
-    def test_list_items_source_ref_is_document(self):
-        doc = _make_doc()
-        self.mock_reader.load_data.return_value = [doc]
-        items = list(self._make_job().list_items())
-        self.assertIs(items[0].source_ref, doc)
-
-    def test_get_raw_content_returns_text(self):
-        doc = _make_doc(text="Box file content")
-        item = IngestionItem(id="box:f1", source_ref=doc)
+    def test_get_raw_content_returns_decoded_bytes(self):
+        box_file = _make_box_file(file_id="f1")
+        self.mock_get_content.return_value = b"Box file content"
+        self.mock_meta.return_value = {"box_file_id": "f1", "name": "report.pdf", "path_collection": "All Files"}
+        item = IngestionItem(id="box:f1", source_ref=box_file)
         self.assertEqual(self._make_job().get_raw_content(item), "Box file content")
 
     def test_get_raw_content_populates_metadata_cache(self):
-        doc = _make_doc(file_id="f99", name="x.pdf", path_collection="All Files")
-        item = IngestionItem(id="box:f99", source_ref=doc)
+        box_file = _make_box_file(file_id="f99", name="x.pdf")
+        self.mock_get_content.return_value = b"content"
+        self.mock_meta.return_value = {"box_file_id": "f99", "name": "x.pdf", "path_collection": "All Files"}
+        item = IngestionItem(id="box:f99", source_ref=box_file)
         self._make_job().get_raw_content(item)
         self.assertEqual(item._metadata_cache["box_file_id"], "f99")
         self.assertEqual(item._metadata_cache["box_file_name"], "x.pdf")
         self.assertEqual(item._metadata_cache["path_collection"], "All Files")
-        self.assertEqual(item._metadata_cache["page_label"], "")
 
     def test_get_item_name_basic(self):
-        doc = _make_doc(file_id="abc123", name="my report.pdf")
-        item = IngestionItem(id="box:abc123", source_ref=doc)
+        box_file = _make_box_file(file_id="abc123", name="my report.pdf")
+        item = IngestionItem(id="box:abc123", source_ref=box_file)
         name = self._make_job().get_item_name(item)
         self.assertLessEqual(len(name), 255)
         self.assertIn("abc123", name)
 
     def test_get_item_name_truncates_to_255(self):
-        doc = _make_doc(file_id="x", name="a" * 300)
-        item = IngestionItem(id="box:x", source_ref=doc)
+        box_file = _make_box_file(file_id="x", name="a" * 300)
+        item = IngestionItem(id="box:x", source_ref=box_file)
         self.assertLessEqual(len(self._make_job().get_item_name(item)), 255)
 
-    def test_get_item_name_preserves_page_suffix(self):
-        doc = _make_doc(file_id="f1", name="a" * 300)
-        doc.metadata["page_label"] = "5"
-        item = IngestionItem(id="box:f1:5", source_ref=doc)
-        name = self._make_job().get_item_name(item)
-        self.assertLessEqual(len(name), 255)
-        self.assertTrue(name.endswith(":5"))
-
     def test_get_extra_metadata(self):
-        doc = _make_doc(file_id="meta1", name="doc.pdf", path_collection="All Files/Docs")
-        item = IngestionItem(id="box:meta1", source_ref=doc)
-        self._make_job().get_raw_content(item)
-        extra = self._make_job().get_extra_metadata(item, "content", {})
+        box_file = _make_box_file(file_id="meta1", name="doc.pdf")
+        self.mock_get_content.return_value = b"content"
+        self.mock_meta.return_value = {"box_file_id": "meta1", "name": "doc.pdf", "path_collection": "All Files/Docs"}
+        item = IngestionItem(id="box:meta1", source_ref=box_file)
+        job = self._make_job()
+        job.get_raw_content(item)
+        extra = job.get_extra_metadata(item, "content", {})
         self.assertEqual(extra["box_file_id"], "meta1")
         self.assertEqual(extra["box_file_name"], "doc.pdf")
         self.assertEqual(extra["path_collection"], "All Files/Docs")
-        self.assertIn("page_label", extra)
 
     def test_parse_kv_pairs(self):
         result = BoxIngestionJob._parse_kv_pairs("status=active,owner=alice")
