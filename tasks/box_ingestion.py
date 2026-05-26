@@ -4,8 +4,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from box_sdk_gen import BoxCCGAuth, BoxClient, BoxJWTAuth, CCGConfig, JWTConfig
-from llama_index.core import Document
+from box_sdk_gen.schemas.file import File
 from llama_index.readers.box import BoxReader
+from llama_index.readers.box.BoxAPI.box_api import get_box_files_details, get_file_content_by_id
+from llama_index.readers.box.BoxAPI.box_llama_adaptors import box_file_to_llama_document_metadata
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -85,6 +87,8 @@ class BoxIngestionJob(IngestionJob):
         else:
             raise ValueError(f"Unsupported auth_type {auth_type!r}; expected 'ccg' or 'jwt'")
 
+        del self.box_client_id, self.box_client_secret
+
         self.folder_id: str | None = (cfg.get("folder_id") or "").strip() or None
         self.file_ids: list[str] | None = parse_list(cfg.get("file_ids")) or None
         self.is_recursive: bool = parse_bool(cfg.get("is_recursive"), default=False)
@@ -110,8 +114,8 @@ class BoxIngestionJob(IngestionJob):
             )
 
     def _build_ccg_client(self) -> BoxClient:
-        if not self.box_enterprise_id:
-            raise ValueError("box_enterprise_id is required for CCG auth")
+        if not self.box_enterprise_id and not self.box_user_id:
+            raise ValueError("box_enterprise_id or box_user_id is required for CCG auth")
         ccg_config = CCGConfig(
             client_id=self.box_client_id,
             client_secret=self.box_client_secret,
@@ -122,7 +126,7 @@ class BoxIngestionJob(IngestionJob):
 
     def _build_jwt_client(self, cfg: dict) -> BoxClient:
         jwt_key_id = (cfg.get("box_jwt_key_id") or "").strip()
-        private_key = (cfg.get("box_private_key") or "").strip()
+        private_key = (cfg.get("box_private_key") or "").strip().replace("\\n", "\n")
         private_key_passphrase = (cfg.get("box_private_key_passphrase") or "").strip()
         if not jwt_key_id:
             raise ValueError("box_jwt_key_id is required for JWT auth")
@@ -152,98 +156,94 @@ class BoxIngestionJob(IngestionJob):
         return result
 
     def list_items(self) -> Iterator[IngestionItem]:
-        """Load all Box documents via configured modes and yield one IngestionItem per document."""
+        """Discover Box file IDs via configured modes and yield one IngestionItem per file."""
         reader = BoxReader(box_client=self.box_client)
-        docs: list[Document] = []
+        file_ids: list[str] = []
 
         if self.folder_id is not None or self.file_ids is not None:
-            logger.info(f"[{self.source_name}] Loading documents by folder/file IDs from Box")
+            logger.info(f"[{self.source_name}] Listing files by folder/file IDs from Box")
             try:
-                docs += reader.load_data(
+                file_ids += reader.list_resources(
                     folder_id=self.folder_id,
                     file_ids=self.file_ids,
                     is_recursive=self.is_recursive,
                 )
             except Exception:
-                logger.exception(f"[{self.source_name}] Failed to load documents by folder/file IDs")
+                logger.exception(f"[{self.source_name}] Failed to list files by folder/file IDs")
                 raise
 
         if self.search_query is not None:
             logger.info(f"[{self.source_name}] Searching Box by content query: {self.search_query!r}")
             try:
-                file_ids = reader.search_resources(
+                file_ids += reader.search_resources(
                     query=self.search_query,
                     file_extensions=self.search_file_extensions,
                     ancestor_folder_ids=self.search_ancestor_folder_ids,
                 )
-                if file_ids:
-                    docs += reader.load_data(file_ids=file_ids)
             except Exception:
-                logger.exception(f"[{self.source_name}] Failed to load documents by content search")
+                logger.exception(f"[{self.source_name}] Failed to search files by content query")
                 raise
 
         if self.metadata_template is not None and self.metadata_ancestor_folder_id is not None:
             logger.info(f"[{self.source_name}] Searching Box by metadata template: {self.metadata_template!r}")
             try:
-                file_ids = reader.search_resources_by_metadata(
+                file_ids += reader.search_resources_by_metadata(
                     from_=self.metadata_template,
                     ancestor_folder_id=self.metadata_ancestor_folder_id,
                     query=self.metadata_query,
                     query_params=self.metadata_query_params,
                 )
-                if file_ids:
-                    docs += reader.load_data(file_ids=file_ids)
             except Exception:
-                logger.exception(f"[{self.source_name}] Failed to load documents by metadata search")
+                logger.exception(f"[{self.source_name}] Failed to search files by metadata")
                 raise
 
-        if not docs:
-            logger.info(f"[{self.source_name}] Found 0 document(s)")
+        file_ids = list(dict.fromkeys(file_ids))  # deduplicate, preserve order
+
+        if not file_ids:
+            logger.info(f"[{self.source_name}] Found 0 file(s)")
             return
 
-        logger.info(f"[{self.source_name}] Found {len(docs)} document(s)")
+        logger.info(f"[{self.source_name}] Found {len(file_ids)} file(s), fetching details")
 
-        for doc in docs:
-            file_id = doc.metadata.get("box_file_id") or doc.id_ or ""
-            last_modified = parse_timestamp(doc.metadata.get("modified_at") or doc.metadata.get("content_modified_at"))
+        box_files: list[File] = get_box_files_details(box_client=self.box_client, file_ids=file_ids)
+
+        for box_file in box_files:
+            last_modified = parse_timestamp(box_file.modified_at.isoformat() if box_file.modified_at else None)
             if last_modified is None:
-                logger.warning(f"[{self.source_name}] Could not parse modified_at for file_id={file_id!r}, using now")
+                logger.warning(
+                    f"[{self.source_name}] Could not parse modified_at for file_id={box_file.id!r}, using now"
+                )
                 last_modified = datetime.now(UTC)
 
-            page_label = doc.metadata.get("page_label") or ""
-            page_suffix = f":{page_label}" if page_label else ""
             yield IngestionItem(
-                id=f"box:{file_id}{page_suffix}",
-                source_ref=doc,
+                id=f"box:{box_file.id}",
+                source_ref=box_file,
                 last_modified=last_modified,
             )
 
     def get_raw_content(self, item: IngestionItem) -> str:
-        """Return the text content of the Box document."""
-        doc: Document = item.source_ref
+        """Download and return the text content of the Box file."""
+        box_file: File = item.source_ref
+        meta = box_file_to_llama_document_metadata(box_file)
 
-        item._metadata_cache["box_file_id"] = doc.metadata.get("box_file_id") or ""
-        item._metadata_cache["box_file_name"] = doc.metadata.get("name") or ""
-        item._metadata_cache["path_collection"] = doc.metadata.get("path_collection") or ""
-        item._metadata_cache["page_label"] = doc.metadata.get("page_label") or ""
+        item._metadata_cache["box_file_id"] = meta.get("box_file_id") or ""
+        item._metadata_cache["box_file_name"] = meta.get("name") or ""
+        item._metadata_cache["path_collection"] = meta.get("path_collection") or ""
 
-        return doc.text or ""
+        content_bytes = get_file_content_by_id(box_client=self.box_client, box_file_id=box_file.id)
+        return content_bytes.decode("utf-8", errors="replace")
 
     def get_item_name(self, item: IngestionItem) -> str:
-        """Return a filesystem-safe name for the Box document."""
-        doc: Document = item.source_ref
-        file_id = doc.metadata.get("box_file_id") or item.id
-        file_name = doc.metadata.get("name") or ""
-        page_label = doc.metadata.get("page_label") or ""
-        safe_suffix = f":{slugify(page_label)}" if page_label else ""
-        max_len = 255 - len(safe_suffix)
-        return slugify(f"box_{file_id}_{file_name}", max_len=max_len) + safe_suffix
+        """Return a filesystem-safe name for the Box file."""
+        box_file: File = item.source_ref
+        file_id = box_file.id or item.id
+        file_name = box_file.name or ""
+        return slugify(f"box_{file_id}_{file_name}", max_len=255)
 
-    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:  # noqa: ARG002
         """Return Box-specific metadata fields."""
         return {
             "box_file_id": item._metadata_cache.get("box_file_id", ""),
             "box_file_name": item._metadata_cache.get("box_file_name", ""),
             "path_collection": item._metadata_cache.get("path_collection", ""),
-            "page_label": item._metadata_cache.get("page_label", ""),
         }
