@@ -24,11 +24,11 @@ class BookStackClient:
     def __init__(self, base_url: str, token_id: str, token_secret: str) -> None:
         self.base_url = base_url.rstrip("/")
         self._auth_header = {"Authorization": f"Token {token_id}:{token_secret}"}
+        self._session = RetrySession()
 
     def get(self, path: str, params: dict | None = None) -> dict:
         url = f"{self.base_url}/api/{path.lstrip('/')}"
-        with RetrySession() as session:
-            response = session.get(url, headers=self._auth_header, params=params)
+        response = self._session.get(url, headers=self._auth_header, params=params)
         if response.status_code in (requests.codes.unauthorized, requests.codes.forbidden):
             raise PermissionError(f"BookStack API auth failed ({response.status_code}) for {url}")
         response.raise_for_status()
@@ -113,14 +113,23 @@ class BookStackIngestionJob(IngestionJob):
 
         name = data.get("name", "") or ""
         description = data.get("description", "") or data.get("description_html", "") or ""
-        url = f"{self._client.base_url}/{item_type}/{data['id']}"
+        url = (
+            f"{self._client.base_url}/link/{data['id']}"
+            if item_type == "pages"
+            else f"{self._client.base_url}/{item_type}/{data['slug']}"
+        )
         item._metadata_cache["url"] = url
         item._metadata_cache["title"] = name
 
         if item_type == "pages":
             detail = self._client.get(f"pages/{data['id']}")
-            html = detail.get("html", "") or ""
-            content = html_to_markdown(html) if html.strip() else ""
+            item._metadata_cache["detail"] = detail
+            markdown = detail.get("markdown", "") or ""
+            if markdown.strip():
+                content = markdown
+            else:
+                raw_html = detail.get("raw_html", "") or ""
+                content = html_to_markdown(raw_html) if raw_html.strip() else ""
         else:
             content = html_to_markdown(description) if description.strip() else ""
 
@@ -130,6 +139,13 @@ class BookStackIngestionJob(IngestionJob):
 
         return "\n\n".join(parts)
 
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        data: dict = item.source_ref["data"]
+        updated_at = data.get("updated_at", "")
+        if updated_at:
+            return f"{data['id']}:{updated_at}"
+        return None
+
     def get_item_name(self, item: IngestionItem) -> str:
         item_type: str = item.source_ref["type"]
         data: dict = item.source_ref["data"]
@@ -137,10 +153,32 @@ class BookStackIngestionJob(IngestionJob):
         return slugify(f"bookstack-{item_type}-{data['id']}-{name}", max_len=255)
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        item_type: str = item.source_ref["type"]
         data: dict = item.source_ref["data"]
-        return {
-            "item_type": item.source_ref["type"],
+        detail: dict = item._metadata_cache.get("detail", {})
+
+        extra: dict[str, Any] = {
+            "item_type": item_type,
             "title": item._metadata_cache.get("title", ""),
             "url": item._metadata_cache.get("url", ""),
             "updated_at": str(data.get("updated_at", "") or ""),
+            "book_id": str(data.get("book_id", "") or ""),
+            "chapter_id": str(data.get("chapter_id", "") or ""),
+            "shelf_id": str(data.get("shelf_id", "") or ""),
         }
+
+        if item_type == "pages":
+            owner = detail.get("owned_by") or data.get("owned_by") or {}
+            editor = detail.get("updated_by") or {}
+            extra["owner"] = owner.get("name", "") if isinstance(owner, dict) else str(owner)
+            extra["editor"] = editor.get("name", "") if isinstance(editor, dict) else str(editor)
+            draft = detail.get("draft", data.get("draft", ""))
+            extra["draft"] = str(draft) if draft != "" else ""
+            tags = detail.get("tags") or data.get("tags") or []
+            extra["tags"] = ",".join(t.get("name", "") for t in tags if isinstance(t, dict))
+
+        if item_type == "shelves":
+            tags = data.get("tags") or []
+            extra["tags"] = ",".join(t.get("name", "") for t in tags if isinstance(t, dict))
+
+        return extra
