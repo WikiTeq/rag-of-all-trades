@@ -43,17 +43,15 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.mock_reader = MagicMock()
         self.mock_reader_class.return_value = self.mock_reader
 
-        self.ccg_patcher = patch("tasks.box_ingestion.BoxCCGAuth", create=True)
-        self.client_patcher = patch("tasks.box_ingestion.BoxClient", create=True)
-
-        # patch inside the function's local import scope
         self.box_sdk_patcher = patch.dict(
             "sys.modules",
             {
                 "box_sdk_gen": MagicMock(
                     BoxCCGAuth=MagicMock(return_value=MagicMock()),
+                    BoxJWTAuth=MagicMock(return_value=MagicMock()),
                     BoxClient=MagicMock(return_value=MagicMock()),
                     CCGConfig=MagicMock(return_value=MagicMock()),
+                    JWTConfig=MagicMock(return_value=MagicMock()),
                 ),
             },
         )
@@ -78,32 +76,15 @@ class TestBoxIngestionJob(unittest.TestCase):
                 {"name": "x", "config": {"box_client_id": "id", "box_enterprise_id": "e", "folder_id": "0"}}
             )
 
-    def test_missing_enterprise_id_raises(self):
-        with self.assertRaises(ValueError):
-            BoxIngestionJob(
-                {"name": "x", "config": {"box_client_id": "id", "box_client_secret": "s", "folder_id": "0"}}
-            )
-
-    def test_both_folder_id_and_file_ids_raises(self):
-        with self.assertRaises(ValueError):
-            BoxIngestionJob(
-                {
-                    "name": "x",
-                    "config": {
-                        "box_client_id": "id",
-                        "box_client_secret": "s",
-                        "box_enterprise_id": "e",
-                        "folder_id": "0",
-                        "file_ids": "123",
-                    },
-                }
-            )
-
-    def test_missing_folder_and_file_ids_raises(self):
+    def test_no_ingestion_mode_raises(self):
         with self.assertRaises(ValueError):
             BoxIngestionJob(
                 {"name": "x", "config": {"box_client_id": "id", "box_client_secret": "s", "box_enterprise_id": "e"}}
             )
+
+    def test_invalid_auth_type_raises(self):
+        with self.assertRaises(ValueError):
+            self._make_job(auth_type="oauth")
 
     def test_defaults(self):
         job = self._make_job()
@@ -111,6 +92,8 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.assertFalse(job.is_recursive)
         self.assertIsNone(job.file_ids)
         self.assertIsNone(job.box_user_id)
+        self.assertIsNone(job.search_query)
+        self.assertIsNone(job.metadata_template)
 
     def test_file_ids_from_comma_string(self):
         job = self._make_job(folder_id=None, file_ids="id1, id2, id3")
@@ -120,6 +103,44 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.assertTrue(self._make_job(is_recursive="true").is_recursive)
         self.assertFalse(self._make_job(is_recursive="false").is_recursive)
         self.assertTrue(self._make_job(is_recursive="1").is_recursive)
+
+    def test_folder_and_file_ids_can_coexist(self):
+        job = self._make_job(folder_id="0", file_ids="123")
+        self.assertEqual(job.folder_id, "0")
+        self.assertEqual(job.file_ids, ["123"])
+
+    def test_search_query_alone_is_valid(self):
+        job = self._make_job(folder_id=None, search_query="quarterly report")
+        self.assertEqual(job.search_query, "quarterly report")
+
+    def test_metadata_search_alone_is_valid(self):
+        job = self._make_job(
+            folder_id=None,
+            metadata_template="enterprise_12345.myTemplate",
+            metadata_ancestor_folder_id="0",
+        )
+        self.assertEqual(job.metadata_template, "enterprise_12345.myTemplate")
+
+    def test_metadata_search_requires_both_template_and_folder(self):
+        with self.assertRaises(ValueError):
+            self._make_job(folder_id=None, metadata_template="t")
+
+    def test_jwt_auth_type_accepted(self):
+        job = self._make_job(
+            auth_type="jwt",
+            box_jwt_key_id="key1",
+            box_private_key="-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----",
+            box_private_key_passphrase="passphrase",
+        )
+        self.assertIsNotNone(job.box_client)
+
+    def test_jwt_missing_key_id_raises(self):
+        with self.assertRaises(ValueError):
+            self._make_job(
+                auth_type="jwt",
+                box_private_key="key",
+                box_private_key_passphrase="pass",
+            )
 
     def test_list_items_folder_mode(self):
         doc1 = _make_doc(file_id="f1")
@@ -149,12 +170,58 @@ class TestBoxIngestionJob(unittest.TestCase):
         list(self._make_job(is_recursive="true").list_items())
         self.mock_reader.load_data.assert_called_once_with(folder_id="0", file_ids=None, is_recursive=True)
 
+    def test_list_items_search_mode(self):
+        doc = _make_doc(file_id="s1")
+        self.mock_reader.search_resources.return_value = ["s1"]
+        self.mock_reader.load_data.return_value = [doc]
+
+        job = self._make_job(folder_id=None, search_query="quarterly")
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        self.mock_reader.search_resources.assert_called_once_with(
+            query="quarterly",
+            file_extensions=None,
+            ancestor_folder_ids=None,
+        )
+        self.mock_reader.load_data.assert_called_once_with(file_ids=["s1"])
+
+    def test_list_items_metadata_search_mode(self):
+        doc = _make_doc(file_id="m1")
+        self.mock_reader.search_resources_by_metadata.return_value = ["m1"]
+        self.mock_reader.load_data.return_value = [doc]
+
+        job = self._make_job(
+            folder_id=None,
+            metadata_template="enterprise_123.myTemplate",
+            metadata_ancestor_folder_id="0",
+            metadata_query="status = :status",
+            metadata_query_params="status=active",
+        )
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        self.mock_reader.search_resources_by_metadata.assert_called_once_with(
+            from_="enterprise_123.myTemplate",
+            ancestor_folder_id="0",
+            query="status = :status",
+            query_params={"status": "active"},
+        )
+
+    def test_list_items_combined_modes(self):
+        doc1 = _make_doc(file_id="f1")
+        doc2 = _make_doc(file_id="s1")
+        self.mock_reader.load_data.side_effect = [[doc1], [doc2]]
+        self.mock_reader.search_resources.return_value = ["s1"]
+
+        job = self._make_job(folder_id="0", search_query="quarterly")
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 2)
+        self.assertEqual(self.mock_reader.load_data.call_count, 2)
+
     def test_list_items_empty(self):
         self.mock_reader.load_data.return_value = []
-        self.assertEqual(list(self._make_job().list_items()), [])
-
-    def test_list_items_none_result(self):
-        self.mock_reader.load_data.return_value = None
         self.assertEqual(list(self._make_job().list_items()), [])
 
     def test_list_items_raises_on_reader_error(self):
@@ -206,6 +273,7 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.assertEqual(item._metadata_cache["box_file_id"], "f99")
         self.assertEqual(item._metadata_cache["box_file_name"], "x.pdf")
         self.assertEqual(item._metadata_cache["path_collection"], "All Files")
+        self.assertEqual(item._metadata_cache["page_label"], "")
 
     def test_get_item_name_basic(self):
         doc = _make_doc(file_id="abc123", name="my report.pdf")
@@ -235,6 +303,14 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.assertEqual(extra["box_file_id"], "meta1")
         self.assertEqual(extra["box_file_name"], "doc.pdf")
         self.assertEqual(extra["path_collection"], "All Files/Docs")
+        self.assertIn("page_label", extra)
+
+    def test_parse_kv_pairs(self):
+        result = BoxIngestionJob._parse_kv_pairs("status=active,owner=alice")
+        self.assertEqual(result, {"status": "active", "owner": "alice"})
+
+    def test_parse_kv_pairs_empty(self):
+        self.assertEqual(BoxIngestionJob._parse_kv_pairs(""), {})
 
 
 if __name__ == "__main__":
