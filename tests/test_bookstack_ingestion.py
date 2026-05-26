@@ -111,11 +111,15 @@ class TestBookStackListItems(unittest.TestCase):
 
 
 class TestBookStackGetRawContent(unittest.TestCase):
-    def test_page_content_fetches_html(self):
+    def test_page_prefers_markdown_field(self):
         job = _make_job()
         job._client = MagicMock()
         job._client.base_url = "https://wiki.example.com"
-        job._client.get.return_value = {"html": "<h1>Hello</h1><p>World</p>"}
+        job._client.get.return_value = {
+            "markdown": "# Hello\n\nWorld",
+            "raw_html": "<h1>Hello</h1>",
+            "html": "<h1>Hello</h1>",
+        }
 
         item = _make_item("pages", {"id": 1, "name": "My Page", "updated_at": None})
         content = job.get_raw_content(item)
@@ -124,9 +128,36 @@ class TestBookStackGetRawContent(unittest.TestCase):
         self.assertIn("My Page", content)
         job._client.get.assert_called_once_with("pages/1")
 
+    def test_page_falls_back_to_raw_html(self):
+        job = _make_job()
+        job._client = MagicMock()
+        job._client.base_url = "https://wiki.example.com"
+        job._client.get.return_value = {
+            "markdown": "",
+            "raw_html": "<h1>Hello</h1><p>World</p>",
+            "html": "<h1>escaped</h1>",
+        }
+
+        item = _make_item("pages", {"id": 2, "name": "My Page", "updated_at": None})
+        content = job.get_raw_content(item)
+
+        self.assertIn("Hello", content)
+
+    def test_page_url_uses_link_format(self):
+        job = _make_job()
+        job._client = MagicMock()
+        job._client.base_url = "https://wiki.example.com"
+        job._client.get.return_value = {"markdown": "content", "raw_html": "", "html": ""}
+
+        item = _make_item("pages", {"id": 5, "name": "A Page", "updated_at": None})
+        job.get_raw_content(item)
+        self.assertEqual(item._metadata_cache["url"], "https://wiki.example.com/link/5")
+
     def test_book_content_uses_description(self):
         job = _make_job()
-        item = _make_item("books", {"id": 2, "name": "My Book", "description": "A great book", "updated_at": None})
+        item = _make_item(
+            "books", {"id": 2, "name": "My Book", "description": "A great book", "slug": "my-book", "updated_at": None}
+        )
 
         content = job.get_raw_content(item)
 
@@ -135,17 +166,33 @@ class TestBookStackGetRawContent(unittest.TestCase):
 
     def test_empty_description_returns_name_only(self):
         job = _make_job()
-        item = _make_item("books", {"id": 3, "name": "Empty Book", "description": "", "updated_at": None})
+        item = _make_item(
+            "books", {"id": 3, "name": "Empty Book", "description": "", "slug": "empty-book", "updated_at": None}
+        )
 
         content = job.get_raw_content(item)
 
         self.assertIn("Empty Book", content)
 
-    def test_url_cached_in_metadata(self):
+    def test_non_page_url_uses_slug(self):
         job = _make_job()
-        item = _make_item("books", {"id": 4, "name": "Book", "description": "", "updated_at": None})
+        item = _make_item(
+            "books", {"id": 4, "name": "Book", "description": "", "slug": "my-book-slug", "updated_at": None}
+        )
         job.get_raw_content(item)
-        self.assertEqual(item._metadata_cache["url"], "https://wiki.example.com/books/4")
+        self.assertEqual(item._metadata_cache["url"], "https://wiki.example.com/books/my-book-slug")
+
+
+class TestBookStackGetItemChecksum(unittest.TestCase):
+    def test_checksum_uses_id_and_updated_at(self):
+        job = _make_job()
+        item = _make_item("pages", {"id": 7, "name": "Page", "updated_at": "2024-03-01T12:00:00Z"})
+        self.assertEqual(job.get_item_checksum(item), "7:2024-03-01T12:00:00Z")
+
+    def test_checksum_returns_none_when_no_updated_at(self):
+        job = _make_job()
+        item = _make_item("pages", {"id": 7, "name": "Page", "updated_at": None})
+        self.assertIsNone(job.get_item_checksum(item))
 
 
 class TestBookStackGetItemName(unittest.TestCase):
@@ -164,21 +211,53 @@ class TestBookStackGetItemName(unittest.TestCase):
 
 
 class TestBookStackGetExtraMetadata(unittest.TestCase):
-    def _make_item_with_cache(self, item_type, data):
+    def _make_item_with_cache(self, item_type, data, detail=None):
         item = _make_item(item_type, data)
         item._metadata_cache["url"] = f"https://wiki.example.com/{item_type}/{data['id']}"
         item._metadata_cache["title"] = data.get("name", "")
+        if detail is not None:
+            item._metadata_cache["detail"] = detail
         return item
 
-    def test_extra_metadata_fields(self):
+    def test_extra_metadata_base_fields(self):
         job = _make_job()
-        item = self._make_item_with_cache("pages", {"id": 1, "name": "Test Page", "updated_at": "2024-01-01T00:00:00Z"})
+        item = self._make_item_with_cache("books", {"id": 1, "name": "Test Book", "updated_at": "2024-01-01T00:00:00Z"})
         meta = job.get_extra_metadata(item, "content", {})
 
-        self.assertEqual(meta["item_type"], "pages")
-        self.assertEqual(meta["title"], "Test Page")
-        self.assertEqual(meta["url"], "https://wiki.example.com/pages/1")
+        self.assertEqual(meta["item_type"], "books")
+        self.assertEqual(meta["title"], "Test Book")
         self.assertEqual(meta["updated_at"], "2024-01-01T00:00:00Z")
+
+    def test_extra_metadata_page_fields(self):
+        job = _make_job()
+        detail = {
+            "owned_by": {"name": "Alice"},
+            "updated_by": {"name": "Bob"},
+            "draft": False,
+            "tags": [{"name": "tag1"}, {"name": "tag2"}],
+        }
+        item = self._make_item_with_cache(
+            "pages",
+            {"id": 1, "name": "Test Page", "updated_at": "2024-01-01T00:00:00Z", "book_id": 10, "chapter_id": 5},
+            detail=detail,
+        )
+        meta = job.get_extra_metadata(item, "content", {})
+
+        self.assertEqual(meta["owner"], "Alice")
+        self.assertEqual(meta["editor"], "Bob")
+        self.assertEqual(meta["draft"], "False")
+        self.assertEqual(meta["tags"], "tag1,tag2")
+        self.assertEqual(meta["book_id"], "10")
+        self.assertEqual(meta["chapter_id"], "5")
+
+    def test_extra_metadata_shelf_tags(self):
+        job = _make_job()
+        item = self._make_item_with_cache(
+            "shelves",
+            {"id": 2, "name": "Shelf", "updated_at": None, "tags": [{"name": "docs"}]},
+        )
+        meta = job.get_extra_metadata(item, "content", {})
+        self.assertEqual(meta["tags"], "docs")
 
     def test_no_reserved_keys_overwritten(self):
         from tasks.base import IngestionJob
