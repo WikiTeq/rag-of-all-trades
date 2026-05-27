@@ -227,6 +227,45 @@ class TestPipedriveGetDocumentMetadata(unittest.TestCase):
         meta = job.get_extra_metadata(item, "", {})
         self.assertEqual(meta.get("entity_type"), "persons")
 
+    def test_record_title_strips_html_from_note_content(self):
+        job = _make_job()
+        record = {"id": 99, "content": "<p>This is a <b>bold</b> note.</p>"}
+        title = job._record_title("notes", record)
+        self.assertNotIn("<", title)
+        self.assertNotIn(">", title)
+        self.assertIn("bold", title)
+
+    def test_record_title_plain_text_unchanged(self):
+        job = _make_job()
+        record = {"id": 1, "title": "Plain deal title"}
+        title = job._record_title("deals", record)
+        self.assertEqual(title, "Plain deal title")
+
+    def test_record_title_strips_markdown_special_chars_from_note_content(self):
+        job = _make_job()
+        record = {"id": 99, "content": "<h1>Meeting summary</h1><p>Key points discussed.</p>"}
+        title = job._record_title("notes", record)
+        self.assertNotIn("#", title)
+        self.assertIn("Meeting summary", title)
+
+    def test_record_title_preserves_non_ascii_in_note_content(self):
+        job = _make_job()
+        record = {"id": 5, "content": "<p>Встреча с клиентом</p>"}
+        title = job._record_title("notes", record)
+        self.assertIn("Встреча", title)
+
+    def test_record_title_falls_back_to_id_when_content_is_only_markers(self):
+        job = _make_job()
+        record = {"id": 7, "content": "<hr/>"}
+        title = job._record_title("notes", record)
+        self.assertEqual(title, "notes:7")
+
+    def test_record_title_truncates_to_120_chars(self):
+        job = _make_job()
+        long_html = "<p>" + "a" * 200 + "</p>"
+        title = job._record_title("notes", {"id": 1, "content": long_html})
+        self.assertLessEqual(len(title), 120)
+
 
 if __name__ == "__main__":
     unittest.main()
