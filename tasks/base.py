@@ -16,8 +16,11 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.helper_classes.metadata_tracker import MetadataTracker
 from tasks.helper_classes.vector_store import VectorStoreManager
 from tasks.schemas import BaseMetadataSchema
+from utils.config import settings
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_USER_AGENT = "rag-of-all-trades/1.0"
 
 
 class IngestionJob(ABC):
@@ -32,6 +35,11 @@ class IngestionJob(ABC):
     def content_format(self) -> str:
         """Content format reported in document metadata. Override in subclasses if needed."""
         return "markdown"
+
+    @property
+    def user_agent(self) -> str:
+        """Return the configured User-Agent string, or the default if not set."""
+        return settings.yaml.get("user_agent", DEFAULT_USER_AGENT)
 
     def __init__(self, config: dict):
         """Initialize the ingestion job with configuration and core components.

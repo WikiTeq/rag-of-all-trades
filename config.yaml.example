@@ -1,3 +1,7 @@
+# Optional. Custom User-Agent sent by all connectors that make HTTP requests.
+# Default: rag-of-all-trades/1.0
+#user_agent: "rag-of-all-trades/1.0"
+
 sources:
   - type: "s3"
     name: "account1"
