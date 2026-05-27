@@ -928,3 +928,12 @@ class TestGetItemChecksum:
         item = _make_item("Page", revision=98765)
 
         assert job_off.get_item_checksum(item) != job_on.get_item_checksum(item)
+
+
+class TestMediaWikiUserAgent:
+    def test_user_agent_set_on_mwclient_connection(self):
+        with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
+            mock_reader = MagicMock()
+            MockReader.return_value = mock_reader
+            MediaWikiIngestionJob(_default_config(host="example.com"))
+        mock_reader.site.connection.headers.update.assert_called_with({"User-Agent": "rag-of-all-trades/1.0"})

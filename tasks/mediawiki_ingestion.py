@@ -152,6 +152,7 @@ class MediaWikiIngestionJob(IngestionJob):
             self._reader.login(username, password)
 
         self.load_semantics = parse_bool(cfg.get("load_semantics"))
+        self._reader.site.connection.headers.update({"User-Agent": self.user_agent})
 
         logger.info(
             "Initialized MediaWiki connector for %s://%s%s",
