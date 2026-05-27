@@ -1,9 +1,9 @@
 import logging
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.pipedrive_ingestion import PipedriveIngestionJob
+from tasks.pipedrive_ingestion import PipedriveClient, PipedriveIngestionJob
 
 
 def _make_config(**overrides):
@@ -265,6 +265,17 @@ class TestPipedriveGetDocumentMetadata(unittest.TestCase):
         long_html = "<p>" + "a" * 200 + "</p>"
         title = job._record_title("notes", {"id": 1, "content": long_html})
         self.assertLessEqual(len(title), 120)
+
+    def test_get_external_sends_user_agent_header(self):
+        with patch("tasks.pipedrive_ingestion.RetrySession"):
+            client = PipedriveClient(api_token="tok", max_retries=1, user_agent="test-agent/1.0")
+        with patch("tasks.pipedrive_ingestion.requests.get") as mock_get:
+            mock_response = Mock()
+            mock_response.raise_for_status.return_value = None
+            mock_get.return_value = mock_response
+            client.get_external("https://example.com/file.pdf")
+        _, kwargs = mock_get.call_args
+        self.assertEqual(kwargs["headers"]["User-Agent"], "test-agent/1.0")
 
 
 if __name__ == "__main__":

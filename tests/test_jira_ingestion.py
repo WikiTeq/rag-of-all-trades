@@ -120,19 +120,17 @@ class TestJiraIngestionJob(unittest.TestCase):
 
     def test_basic_auth_creates_jira_client_with_basic_auth(self):
         self._make_job(auth_type="basic", email="u@example.com", api_token="tok")
-        self.mock_jira_class.assert_called_once_with(
-            server="https://jira.example.com",
-            basic_auth=("u@example.com", "tok"),
-        )
+        call_kwargs = self.mock_jira_class.call_args.kwargs
+        self.assertEqual(call_kwargs["server"], "https://jira.example.com")
+        self.assertEqual(call_kwargs["basic_auth"], ("u@example.com", "tok"))
+        self.assertEqual(call_kwargs["options"]["headers"]["User-Agent"], "rag-of-all-trades/1.0")
 
     def test_token_auth_creates_jira_client_with_bearer_header(self):
         self._make_job(auth_type="token", api_token="myPAT")
-        self.mock_jira_class.assert_called_once_with(
-            options={
-                "server": "https://jira.example.com",
-                "headers": {"Authorization": "Bearer myPAT"},
-            }
-        )
+        call_kwargs = self.mock_jira_class.call_args.kwargs
+        self.assertEqual(call_kwargs["options"]["server"], "https://jira.example.com")
+        self.assertEqual(call_kwargs["options"]["headers"]["Authorization"], "Bearer myPAT")
+        self.assertEqual(call_kwargs["options"]["headers"]["User-Agent"], "rag-of-all-trades/1.0")
 
     def test_server_url_trailing_slash_is_stripped(self):
         self._make_job(server_url="https://jira.example.com/")
