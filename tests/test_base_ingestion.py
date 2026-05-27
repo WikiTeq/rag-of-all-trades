@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from tasks.base import IngestionJob
+from tasks.base import DEFAULT_USER_AGENT, IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
 
@@ -265,6 +265,24 @@ class TestIngestionJob:
         assert result == 0
         mock_fetch.assert_not_called()
         job.vector_manager.insert_documents.assert_not_called()
+
+    def test_user_agent_returns_default_when_not_configured(self, base_config):
+        job = DummyIngestionJob(base_config)
+        with patch("tasks.base.settings") as mock_settings:
+            mock_settings.yaml = {}
+            assert job.user_agent == DEFAULT_USER_AGENT
+
+    def test_user_agent_returns_configured_value(self, base_config):
+        job = DummyIngestionJob(base_config)
+        with patch("tasks.base.settings") as mock_settings:
+            mock_settings.yaml = {"user_agent": "my-bot/2.0"}
+            assert job.user_agent == "my-bot/2.0"
+
+    def test_user_agent_returns_empty_string_when_explicitly_set(self, base_config):
+        job = DummyIngestionJob(base_config)
+        with patch("tasks.base.settings") as mock_settings:
+            mock_settings.yaml = {"user_agent": ""}
+            assert job.user_agent == ""
 
     def test_run_reports_totals(self, base_config):
         item1 = IngestionItem(id="item-1", source_ref="src")
