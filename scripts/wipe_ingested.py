@@ -31,21 +31,21 @@ def wipe(source: str | None, filter_key: str | None, filter_value: str | None) -
         if source is None and filter_key is None:
             # Full wipe — server-side, no Python-side key collection
             del_emb = db.execute(text("DELETE FROM public.data_embeddings"))
-            del_meta = db.execute(text("DELETE FROM metadata"))
+            del_meta = db.execute(text("DELETE FROM public.metadata"))
         elif filter_key is None:
             # Wipe by source — server-side join on computed key_text
             del_emb = db.execute(
                 text(
                     "DELETE FROM public.data_embeddings "
                     "WHERE key_text IN ("
-                    "  SELECT key FROM metadata "
+                    "  SELECT key FROM public.metadata "
                     "  WHERE metadata_content->>'source_name' = :source"
                     ")"
                 ),
                 {"source": source},
             )
             del_meta = db.execute(
-                text("DELETE FROM metadata WHERE metadata_content->>'source_name' = :source"),
+                text("DELETE FROM public.metadata WHERE metadata_content->>'source_name' = :source"),
                 {"source": source},
             )
         else:
@@ -54,7 +54,7 @@ def wipe(source: str | None, filter_key: str | None, filter_value: str | None) -
                 text(
                     "DELETE FROM public.data_embeddings "
                     "WHERE key_text IN ("
-                    "  SELECT key FROM metadata "
+                    "  SELECT key FROM public.metadata "
                     "  WHERE metadata_content->>'source_name' = :source"
                     ") "
                     "AND metadata_->>:fk = :fv"
@@ -64,12 +64,12 @@ def wipe(source: str | None, filter_key: str | None, filter_value: str | None) -
             # Only delete metadata rows for this source+filter that have no remaining embeddings
             del_meta = db.execute(
                 text(
-                    "DELETE FROM metadata "
+                    "DELETE FROM public.metadata "
                     "WHERE metadata_content->>'source_name' = :source "
                     "AND key NOT IN ("
                     "  SELECT key_text FROM public.data_embeddings "
                     "  WHERE key_text IN ("
-                    "    SELECT key FROM metadata "
+                    "    SELECT key FROM public.metadata "
                     "    WHERE metadata_content->>'source_name' = :source"
                     "  ) "
                     "  AND metadata_->>:fk = :fv"

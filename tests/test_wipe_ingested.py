@@ -88,7 +88,7 @@ class TestWipe(unittest.TestCase):
         self.assertEqual(session.execute.call_count, 2)
         sqls = [str(c.args[0]) for c in session.execute.call_args_list]
         self.assertTrue(any("data_embeddings" in s for s in sqls))
-        self.assertTrue(any("FROM metadata" in s for s in sqls))
+        self.assertTrue(any("FROM public.metadata" in s for s in sqls))
 
     def test_source_wipe_filters_by_source_name(self):
         session = _mock_session([2, 2])
