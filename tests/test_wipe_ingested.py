@@ -108,9 +108,10 @@ class TestWipe(unittest.TestCase):
 
     def test_no_matching_records_prints_message(self):
         session = _mock_session([0, 0])
-        with _make_db_patch(session):
+        with _make_db_patch(session), patch("builtins.print") as mock_print:
             wipe("pipedrive1", None, None)
         self.assertEqual(session.execute.call_count, 2)
+        mock_print.assert_called_once_with("No records found for source_name='pipedrive1'.")
 
     def test_filter_requires_source(self):
         with self.assertRaises(ValueError):

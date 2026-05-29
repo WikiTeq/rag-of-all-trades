@@ -61,7 +61,7 @@ def wipe(source: str | None, filter_key: str | None, filter_value: str | None) -
                 ),
                 {"source": source, "fk": filter_key, "fv": filter_value},
             )
-            # Only delete metadata rows for this source that have no remaining embeddings
+            # Only delete metadata rows for this source+filter that have no remaining embeddings
             del_meta = db.execute(
                 text(
                     "DELETE FROM metadata "
@@ -71,10 +71,11 @@ def wipe(source: str | None, filter_key: str | None, filter_value: str | None) -
                     "  WHERE key_text IN ("
                     "    SELECT key FROM metadata "
                     "    WHERE metadata_content->>'source_name' = :source"
-                    "  )"
+                    "  ) "
+                    "  AND metadata_->>:fk = :fv"
                     ")"
                 ),
-                {"source": source},
+                {"source": source, "fk": filter_key, "fv": filter_value},
             )
 
         if del_emb.rowcount == 0 and del_meta.rowcount == 0:
