@@ -142,6 +142,19 @@ class TestPipedriveGetRawContent(unittest.TestCase):
         content = job.get_raw_content(item)
         self.assertIn("Important note about the client.", content)
 
+    def test_note_comments_convert_html(self):
+        job = _make_job(load_types=["notes"])
+        record = {"id": 5, "content": "Plain note."}
+        job._client.get.return_value = {
+            "success": True,
+            "data": [{"user": {"name": "Alice"}, "add_time": "2024-01-01", "content": "<p>Comment <b>text</b></p>"}],
+        }
+        item = self._item("notes", record)
+        content = job.get_raw_content(item)
+        self.assertNotIn("<p>", content)
+        self.assertNotIn("<b>", content)
+        self.assertIn("text", content)
+
     def test_mail_content_fetches_body_url(self):
         job = _make_job(load_types=["mails"])
         record = {"id": 10, "subject": "Hello", "snippet": "short..."}

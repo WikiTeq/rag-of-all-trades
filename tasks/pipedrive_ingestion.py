@@ -758,7 +758,7 @@ class PipedriveIngestionJob(IngestionJob):
             user_name = (comment.get("user") or {}).get("name") or ""
             add_time = comment.get("add_time", "") or ""
             content = comment.get("content", "") or ""
-            lines.append(f"**{user_name}** ({add_time}):\n{content}")
+            lines.append(f"**{user_name}** ({add_time}):\n{html_to_markdown(content)}")
 
         return "\n\n".join(lines)
 
