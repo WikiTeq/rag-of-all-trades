@@ -35,7 +35,7 @@ class TestBookStackIngestionInit(unittest.TestCase):
     def test_valid_config(self):
         job = _make_job()
         self.assertEqual(job._client.base_url, "https://wiki.example.com")
-        self.assertEqual(set(job.item_types), {"shelves", "books", "chapters", "pages"})
+        self.assertEqual(set(job.item_types), {"pages"})
 
     def test_missing_base_url(self):
         with self.assertRaises(ValueError, msg="base_url is required"):
@@ -221,6 +221,7 @@ class TestBookStackGetExtraMetadata(unittest.TestCase):
 
     def test_extra_metadata_base_fields(self):
         job = _make_job()
+        job._book_shelf_map = {}
         item = self._make_item_with_cache("books", {"id": 1, "name": "Test Book", "updated_at": "2024-01-01T00:00:00Z"})
         meta = job.get_extra_metadata(item, "content", {})
 
@@ -259,10 +260,58 @@ class TestBookStackGetExtraMetadata(unittest.TestCase):
         meta = job.get_extra_metadata(item, "content", {})
         self.assertEqual(meta["tags"], "docs")
 
+    def test_get_book_shelf_map_builds_from_shelves(self):
+        job = _make_job()
+        job._client.paginate = MagicMock(
+            return_value=iter([{"id": 99, "books": [{"id": 7}, {"id": 8}]}, {"id": 100, "books": [{"id": 9}]}])
+        )
+        result = job._get_book_shelf_map()
+        self.assertEqual(result, {7: 99, 8: 99, 9: 100})
+        job._client.paginate.assert_called_once_with("shelves")
+
+    def test_get_book_shelf_map_cached(self):
+        job = _make_job()
+        job._book_shelf_map = {1: 2}
+        result = job._get_book_shelf_map()
+        self.assertEqual(result, {1: 2})
+
+    def test_extra_metadata_book_resolves_shelf_id(self):
+        job = _make_job()
+        job._book_shelf_map = {7: 99, 8: 99}
+        item = self._make_item_with_cache("books", {"id": 7, "name": "My Book", "updated_at": None})
+        meta = job.get_extra_metadata(item, "content", {})
+        self.assertEqual(meta["shelf_id"], "99")
+
+    def test_extra_metadata_book_no_shelf(self):
+        job = _make_job()
+        job._book_shelf_map = {}
+        item = self._make_item_with_cache("books", {"id": 7, "name": "Orphan Book", "updated_at": None})
+        meta = job.get_extra_metadata(item, "content", {})
+        self.assertEqual(meta["shelf_id"], "")
+
+    def test_extra_metadata_chapter_resolves_shelf_id(self):
+        job = _make_job()
+        job._book_shelf_map = {7: 99}
+        item = self._make_item_with_cache("chapters", {"id": 3, "name": "Ch 1", "book_id": 7, "updated_at": None})
+        meta = job.get_extra_metadata(item, "content", {})
+        self.assertEqual(meta["shelf_id"], "99")
+        self.assertEqual(meta["book_id"], "7")
+
+    def test_extra_metadata_page_resolves_shelf_id(self):
+        job = _make_job()
+        job._book_shelf_map = {7: 99}
+        item = self._make_item_with_cache(
+            "pages",
+            {"id": 5, "name": "Page", "book_id": 7, "chapter_id": 3, "updated_at": None},
+        )
+        meta = job.get_extra_metadata(item, "content", {})
+        self.assertEqual(meta["shelf_id"], "99")
+
     def test_no_reserved_keys_overwritten(self):
         from tasks.base import IngestionJob
 
         job = _make_job()
+        job._book_shelf_map = {}
         item = self._make_item_with_cache("books", {"id": 2, "name": "Book", "updated_at": None})
         meta = job.get_extra_metadata(item, "content", {})
         for key in IngestionJob.RESERVED_METADATA_KEYS:

@@ -57,7 +57,7 @@ class BookStackIngestionJob(IngestionJob):
         - config.token_id: API token ID (required)
         - config.token_secret: API token secret (required)
         - config.item_types: item types to ingest, comma-separated or list
-          (optional, default: shelves,books,chapters,pages)
+          (optional, default: pages)
     """
 
     VALID_ITEM_TYPES = {"shelves", "books", "chapters", "pages"}
@@ -83,7 +83,7 @@ class BookStackIngestionJob(IngestionJob):
         if not token_secret:
             raise ValueError("token_secret is required in BookStack connector config")
 
-        raw_types = cfg.get("item_types", list(self.VALID_ITEM_TYPES))
+        raw_types = cfg.get("item_types", ["pages"])
         self.item_types = parse_list(raw_types, lower=True)
         invalid = set(self.item_types) - self.VALID_ITEM_TYPES
         if invalid:
@@ -92,6 +92,22 @@ class BookStackIngestionJob(IngestionJob):
             raise ValueError("item_types must not be empty")
 
         self._client = BookStackClient(base_url, token_id, token_secret)
+        self._book_shelf_map: dict[int, int] | None = None
+
+    def _get_book_shelf_map(self) -> dict[int, int]:
+        """Return a mapping of book_id → shelf_id, built by fetching all shelves once."""
+        if self._book_shelf_map is None:
+            self._book_shelf_map = {}
+            try:
+                for shelf in self._client.paginate("shelves"):
+                    shelf_id = shelf.get("id")
+                    for book in shelf.get("books") or []:
+                        book_id = book.get("id")
+                        if book_id and shelf_id:
+                            self._book_shelf_map[book_id] = shelf_id
+            except Exception as exc:
+                logger.warning("[%s] Failed to build book→shelf map: %s", self.source_name, exc)
+        return self._book_shelf_map
 
     def list_items(self) -> Iterator[IngestionItem]:
         for item_type in self.item_types:
@@ -157,6 +173,17 @@ class BookStackIngestionJob(IngestionJob):
         data: dict = item.source_ref["data"]
         detail: dict = item._metadata_cache.get("detail", {})
 
+        # For books, resolve shelf_id via the shelf→book map (not available in list endpoint).
+        # shelf_id is not returned by the API for books, chapters, or pages — resolve via map.
+        # Shelves return it directly; books/chapters/pages need a lookup.
+        shelf_id = str(data.get("shelf_id", "") or "")
+        if item_type in ("books", "chapters", "pages"):
+            book_shelf_map = self._get_book_shelf_map()
+            book_id = data.get("id") if item_type == "books" else data.get("book_id")
+            resolved_shelf_id = book_shelf_map.get(book_id) if book_id else None
+            if resolved_shelf_id:
+                shelf_id = str(resolved_shelf_id)
+
         extra: dict[str, Any] = {
             "item_type": item_type,
             "title": item._metadata_cache.get("title", ""),
@@ -164,7 +191,7 @@ class BookStackIngestionJob(IngestionJob):
             "updated_at": str(data.get("updated_at", "") or ""),
             "book_id": str(data.get("book_id", "") or ""),
             "chapter_id": str(data.get("chapter_id", "") or ""),
-            "shelf_id": str(data.get("shelf_id", "") or ""),
+            "shelf_id": shelf_id,
         }
 
         if item_type == "pages":
