@@ -704,6 +704,23 @@ prek run --all-files
 
 Ruff configuration is in [pyproject.toml](pyproject.toml) under `[tool.ruff]`.
 
+## 🔩 Maintenance
+
+### Wipe ingested records
+
+Use `scripts/wipe_ingested.py` to selectively delete ingested records from the database.
+
+Run it inside the running `api` container:
+
+```bash
+docker compose exec api python scripts/wipe_ingested.py --all                                        # full wipe
+docker compose exec api python scripts/wipe_ingested.py --source pipedrive1                           # by source_name
+docker compose exec api python scripts/wipe_ingested.py --source pipedrive1 --filter entity_type=note
+```
+
+`--filter` accepts a single `key=value` pair matched against the connector metadata.
+Requires `--source`.
+
 ## ✨ Contributions
 
 Contributions, suggestions, bug reports, and fixes are welcome!
