@@ -90,9 +90,7 @@ class NotionIngestionJob(IngestionJob):
         page_id: str = item.source_ref
         try:
             text = self._read_page(page_id)
-        except (
-            Exception
-        ) as e:  # _read_page is recursive and may raise unexpected errors, such as KeyError or RecursionError.
+        except (APIResponseError, KeyError, TypeError, RecursionError) as e:  # noqa: BLE001
             logger.error(f"[{self.source_name}] Failed to read page {page_id}: {e}")
             return ""
         finally:
@@ -112,6 +110,7 @@ class NotionIngestionJob(IngestionJob):
         cache = item._metadata_cache
         extra = {
             "id": page_id,
+            "title": cache.get("title", ""),
             "url": cache.get("url") or f"https://notion.so/{page_id.replace('-', '')}",
             "created_time": cache.get("created_time"),
             "parent_type": cache.get("parent_type"),
@@ -150,9 +149,10 @@ class NotionIngestionJob(IngestionJob):
 
                 if "rich_text" in block_obj:
                     for rich_text in block_obj["rich_text"]:
-                        if "text" in rich_text:
+                        content = rich_text.get("plain_text", "")
+                        if content:
                             prefix = "\t" * num_tabs
-                            text_parts.append(prefix + rich_text["text"]["content"])
+                            text_parts.append(prefix + content)
 
                 if block.get("has_children"):
                     children_text = self._read_page(block["id"], num_tabs=num_tabs + 1)
@@ -161,7 +161,7 @@ class NotionIngestionJob(IngestionJob):
                 if text_parts:
                     result_lines.append("\n".join(text_parts))
 
-            if not data.get("next_cursor"):
+            if not data.get("has_more"):
                 break
             cursor = data["next_cursor"]
 
@@ -220,7 +220,7 @@ class NotionIngestionJob(IngestionJob):
                 logger.error(f"[{self.source_name}] Failed to query database {db_id}: {e}")
 
     def _query_database(self, database_id: str) -> list[str]:
-        """Return all page IDs from a Notion database using the DataSources API."""
+        """Return all page IDs from a Notion database."""
         page_ids = []
         kwargs: dict[str, Any] = {"page_size": 100}
         while True:
@@ -260,7 +260,7 @@ class NotionIngestionJob(IngestionJob):
                 "public_url": page.get("public_url"),
                 "created_time": created_time,
                 "parent_type": parent.get("type"),
-                "parent_id": parent.get(parent.get("type")),
+                "parent_id": (None if parent.get("type") == "workspace" else parent.get(parent.get("type"))),
                 "created_by": created_by,
                 "last_edited_by": last_edited_by,
             }

@@ -17,6 +17,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
 * Slack ingestion from channels by ID or name/regex pattern, with thread reply support
 * GitHub ingestion from repository files and issues via Personal Access Token or GitHub App
+* Notion ingestion from pages and databases via a Notion integration token
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -33,6 +34,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * GitHub
 * IMAP
 * OneDrive (OneDrive for Business — App authentication)
+* Notion
 
 ## Embeddings support
 
@@ -660,6 +662,33 @@ GITHUB1_PERSONAL_TOKEN=your-personal-access-token
 GITHUB1_OWNER=your-org-or-username
 GITHUB1_REPO=your-repo-name
 GITHUB1_SCHEDULES=3600
+```
+
+### Notion Connector
+
+The Notion connector ingests pages and database entries from a Notion workspace using a Notion integration token.
+Pages can be selected explicitly by ID, by database, or all accessible pages are ingested when neither is specified.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "notion"
+    name: "notion1"
+    config:
+      integration_token: "${NOTION1_INTEGRATION_TOKEN}"
+      page_ids: "${NOTION1_PAGE_IDS}"          # optional: comma-separated page IDs
+      database_ids: "${NOTION1_DATABASE_IDS}"  # optional: comma-separated database IDs
+      schedules: "${NOTION1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+NOTION1_INTEGRATION_TOKEN=secret_your-notion-integration-token
+NOTION1_PAGE_IDS=page-id-1,page-id-2
+NOTION1_DATABASE_IDS=database-id-1
+NOTION1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
