@@ -430,6 +430,9 @@ SLACK1_TOKEN=xoxb-your-bot-token
 SLACK1_CHANNEL_IDS=C0123456789,C9876543210
 SLACK1_CHANNEL_PATTERNS=general,^dev.*
 SLACK1_SCHEDULES=3600
+SLACK2_TOKEN=xoxb-your-second-bot-token
+SLACK2_CHANNEL_PATTERNS=^marketing.*,^sales.*
+SLACK2_SCHEDULES=3600
 ```
 
 > `channel_ids` and `channel_patterns` are mutually exclusive. `latest_date` requires `earliest_date`.
