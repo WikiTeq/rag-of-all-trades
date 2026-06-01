@@ -478,7 +478,7 @@ sources:
 ```dotenv
 # .env
 
-GITHUB1_PERSONAL_TOKEN=ghp_your-personal-access-token
+GITHUB1_PERSONAL_TOKEN=your-github-personal-access-token
 GITHUB1_OWNER=your-org-or-username
 GITHUB1_REPO=your-repo-name
 GITHUB1_SCHEDULES=3600
