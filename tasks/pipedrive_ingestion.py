@@ -303,8 +303,11 @@ class PipedriveIngestionJob(IngestionJob):
         entity_type = item.source_ref["type"]
         record = item.source_ref["data"]
 
-        builder = getattr(self, f"_build_{entity_type}_content", self._build_generic_content)
-        content = builder(record)
+        specific_builder = getattr(self, f"_build_{entity_type}_content", None)
+        if specific_builder:
+            content = specific_builder(record)
+        else:
+            content = self._build_generic_content(entity_type, record)
 
         # Cache the record URL for metadata
         item._metadata_cache["record_url"] = self._build_record_url(entity_type, record)
@@ -391,7 +394,7 @@ class PipedriveIngestionJob(IngestionJob):
         content = record.get("content", "") or ""
         parts.append("# Note\n")
         if content.strip():
-            parts.append(content)
+            parts.append(html_to_markdown(content))
 
         # Fetch and append comments
         note_id = record.get("id")
@@ -507,7 +510,7 @@ class PipedriveIngestionJob(IngestionJob):
 
         description = record.get("description", "") or ""
         if description.strip():
-            parts.append(f"\n{description}")
+            parts.append(f"\n{html_to_markdown(description)}")
 
         price_list = record.get("prices") or []
         for price_entry in price_list[:3]:
@@ -530,7 +533,7 @@ class PipedriveIngestionJob(IngestionJob):
 
         description = record.get("description", "") or ""
         if description.strip():
-            parts.append(f"\n{description}")
+            parts.append(f"\n{html_to_markdown(description)}")
 
         owner_id = record.get("owner_id")
         owner = self._client.resolve_user(owner_id)
@@ -587,7 +590,7 @@ class PipedriveIngestionJob(IngestionJob):
 
         description = record.get("description", "") or ""
         if description.strip():
-            parts.append(f"\n{description}")
+            parts.append(f"\n{html_to_markdown(description)}")
 
         return "\n".join(parts)
 
@@ -630,14 +633,18 @@ class PipedriveIngestionJob(IngestionJob):
         if not body.strip():
             body = record.get("snippet", "") or ""
 
+        if not body.strip():
+            logger.warning("[%s] Empty body for mail message %s", self.source_name, message_id)
+
         if body.strip():
             parts.append(f"\n{body}")
 
         return "\n\n".join(parts)
 
-    def _build_generic_content(self, record: dict) -> str:
+    def _build_generic_content(self, entity_type: str, record: dict) -> str:
         """Fallback: render all string/number fields as a Markdown list."""
-        lines: list[str] = ["# Record\n"]
+        record_id = record.get("id", "")
+        lines: list[str] = [f"# {entity_type.replace('_', ' ').title()}: {record_id}\n"]
         for key, value in record.items():
             if isinstance(value, str | int | float | bool) and value not in (None, ""):
                 lines.append(f"- **{key}:** {value}")
@@ -751,7 +758,7 @@ class PipedriveIngestionJob(IngestionJob):
             user_name = (comment.get("user") or {}).get("name") or ""
             add_time = comment.get("add_time", "") or ""
             content = comment.get("content", "") or ""
-            lines.append(f"**{user_name}** ({add_time}):\n{content}")
+            lines.append(f"**{user_name}** ({add_time}):\n{html_to_markdown(content)}")
 
         return "\n\n".join(lines)
 
