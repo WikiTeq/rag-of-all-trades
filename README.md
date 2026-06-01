@@ -226,7 +226,7 @@ sources:
 
 MEDIAWIKI1_API_URL=https://en.wikipedia.org/w/api.php
 MEDIAWIKI1_SCHEDULES=3600
-````
+```
 
 ### SerpAPI Connector
 
@@ -352,10 +352,6 @@ The Pipedrive connector ingests CRM records from Pipedrive using the REST API v1
 deals, notes, organizations, persons, products, projects, leads, tasks, and mails. Metadata collected
 per record includes type-specific fields such as linked entities, pipeline/stage names, assignees,
 authors, and timestamps.
-### Slack Connector
-
-The Slack connector ingests messages from Slack channels. Each message (with its thread replies) is
-ingested as an individual item. Channels can be specified by ID or resolved via name/regex patterns.
 
 ```yaml
 # config.yaml
@@ -390,6 +386,24 @@ sources:
       # filter_persons_filter_id: "xxx"
       # filter_mail_folders:
       #   - inbox
+```
+
+```dotenv
+# .env
+
+PIPEDRIVE1_API_TOKEN=your-pipedrive-api-token
+PIPEDRIVE1_SCHEDULES=3600
+```
+
+### Slack Connector
+
+The Slack connector ingests messages from Slack channels. Each message (with its thread replies) is
+ingested as an individual item. Channels can be specified by ID or resolved via name/regex patterns.
+
+```yaml
+# config.yaml
+
+sources:
   - type: "slack"
     name: "slack1"
     config:
@@ -411,10 +425,6 @@ sources:
 
 ```dotenv
 # .env
-
-PIPEDRIVE1_API_TOKEN=your-pipedrive-api-token
-PIPEDRIVE1_SCHEDULES=3600
-```
 
 SLACK1_TOKEN=xoxb-your-bot-token
 SLACK1_CHANNEL_IDS=C0123456789,C9876543210
