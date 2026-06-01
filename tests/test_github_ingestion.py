@@ -1,4 +1,5 @@
 import unittest
+from datetime import UTC, datetime
 from unittest.mock import Mock, patch
 
 from llama_index.readers.github import GitHubRepositoryIssuesReader, GithubRepositoryReader
@@ -255,10 +256,11 @@ class TestGitHubIngestionJob(unittest.TestCase):
 
     def test_list_items_file_last_modified_from_head_commit(self):
         self.mock_repo_reader.load_data.return_value = [_make_file_doc("README.md")]
+        expected_dt = datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC)
         job = self._make_job(branch="main")
-        with patch.object(job, "_get_head_commit_date", return_value="2024-01-15T10:00:00Z"):
+        with patch.object(job, "_get_head_commit_date", return_value=expected_dt):
             items = list(job.list_items())
-        self.assertEqual(items[0].last_modified, "2024-01-15T10:00:00Z")
+        self.assertEqual(items[0].last_modified, expected_dt)
 
     def test_list_items_repo_error_yields_nothing(self):
         self.mock_repo_reader.load_data.side_effect = Exception("API error")
