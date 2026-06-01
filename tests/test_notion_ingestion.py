@@ -182,10 +182,10 @@ class TestNotionGetRawContent(unittest.TestCase):
                     "type": "paragraph",
                     "id": "block-1",
                     "has_children": False,
-                    "paragraph": {"rich_text": [{"text": {"content": "Hello world"}}]},
+                    "paragraph": {"rich_text": [{"plain_text": "Hello world"}]},
                 }
             ],
-            "next_cursor": None,
+            "has_more": False,
         }
         job = _make_job(self.mock_client)
         item = IngestionItem(id="notion:page-1", source_ref="page-1")
@@ -193,14 +193,14 @@ class TestNotionGetRawContent(unittest.TestCase):
         self.assertIn("Hello world", content)
 
     def test_returns_empty_on_error(self):
-        self.mock_client.blocks.children.list.side_effect = Exception("API error")
+        self.mock_client.blocks.children.list.side_effect = _api_error(500, "API error", "internal_server_error")
         job = _make_job(self.mock_client)
         item = IngestionItem(id="notion:page-1", source_ref="page-1")
         content = job.get_raw_content(item)
         self.assertEqual(content, "")
 
     def test_applies_request_delay(self):
-        self.mock_client.blocks.children.list.return_value = {"results": [], "next_cursor": None}
+        self.mock_client.blocks.children.list.return_value = {"results": [], "has_more": False}
         job = _make_job(self.mock_client, request_delay=0.01)
         item = IngestionItem(id="notion:page-1", source_ref="page-1")
         with patch("tasks.notion_ingestion.time.sleep") as mock_sleep:
@@ -215,9 +215,10 @@ class TestNotionGetRawContent(unittest.TestCase):
                         "type": "paragraph",
                         "id": "block-1",
                         "has_children": False,
-                        "paragraph": {"rich_text": [{"text": {"content": "Page 1"}}]},
+                        "paragraph": {"rich_text": [{"plain_text": "Page 1"}]},
                     }
                 ],
+                "has_more": True,
                 "next_cursor": "cursor-1",
             },
             {
@@ -226,10 +227,10 @@ class TestNotionGetRawContent(unittest.TestCase):
                         "type": "paragraph",
                         "id": "block-2",
                         "has_children": False,
-                        "paragraph": {"rich_text": [{"text": {"content": "Page 2"}}]},
+                        "paragraph": {"rich_text": [{"plain_text": "Page 2"}]},
                     }
                 ],
-                "next_cursor": None,
+                "has_more": False,
             },
         ]
         job = _make_job(self.mock_client)
@@ -246,10 +247,10 @@ class TestNotionGetRawContent(unittest.TestCase):
                         "type": "paragraph",
                         "id": "child-block",
                         "has_children": True,
-                        "paragraph": {"rich_text": [{"text": {"content": "Parent"}}]},
+                        "paragraph": {"rich_text": [{"plain_text": "Parent"}]},
                     }
                 ],
-                "next_cursor": None,
+                "has_more": False,
             },
             {
                 "results": [
@@ -257,10 +258,10 @@ class TestNotionGetRawContent(unittest.TestCase):
                         "type": "paragraph",
                         "id": "grandchild-block",
                         "has_children": False,
-                        "paragraph": {"rich_text": [{"text": {"content": "Child"}}]},
+                        "paragraph": {"rich_text": [{"plain_text": "Child"}]},
                     }
                 ],
-                "next_cursor": None,
+                "has_more": False,
             },
         ]
         job = _make_job(self.mock_client)

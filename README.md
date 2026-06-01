@@ -16,6 +16,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
 * Slack ingestion from channels by ID or name/regex pattern, with thread reply support
+* Notion ingestion from pages and databases via a Notion integration token
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -31,6 +32,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Slack
 * IMAP
 * OneDrive (OneDrive for Business — App authentication)
+* Notion
 
 ## Embeddings support
 
@@ -547,6 +549,33 @@ ONEDRIVE1_CLIENT_SECRET=your-azure-app-client-secret
 ONEDRIVE1_TENANT_ID=your-azure-tenant-id
 ONEDRIVE1_USER_PRINCIPAL_NAME=user@your-org.onmicrosoft.com
 ONEDRIVE1_SCHEDULES=3600
+```
+
+### Notion Connector
+
+The Notion connector ingests pages and database entries from a Notion workspace using a Notion integration token.
+Pages can be selected explicitly by ID, by database, or all accessible pages are ingested when neither is specified.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "notion"
+    name: "notion1"
+    config:
+      integration_token: "${NOTION1_INTEGRATION_TOKEN}"
+      page_ids: "${NOTION1_PAGE_IDS}"          # optional: comma-separated page IDs
+      database_ids: "${NOTION1_DATABASE_IDS}"  # optional: comma-separated database IDs
+      schedules: "${NOTION1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+NOTION1_INTEGRATION_TOKEN=secret_your-notion-integration-token
+NOTION1_PAGE_IDS=page-id-1,page-id-2
+NOTION1_DATABASE_IDS=database-id-1
+NOTION1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
