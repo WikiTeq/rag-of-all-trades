@@ -15,6 +15,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Ingestion from MediaWiki with Wiki-to-Markdown conversion via [html2text](https://github.com/Alir3z4/html2text)
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
+* Notion ingestion from pages and databases via a Notion integration token
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -25,6 +26,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * MediaWiki
 * SerpAPI
 * Jira
+* Notion
 * Web
 * Pipedrive
 
@@ -159,7 +161,7 @@ sources:
       ...
 ```
 
-````dotenv
+```dotenv
 # .env
 
 S3_ACCOUNT1_ENDPOINT=https://s3.amazonaws.com
@@ -169,7 +171,7 @@ S3_ACCOUNT1_REGION=us-east-1
 S3_ACCOUNT1_USE_SSL=True
 S3_ACCOUNT1_BUCKETS=bucket1,bucket2
 S3_ACCOUNT1_SCHEDULES=3600,60
-````
+```
 
 ### Directory Connector
 
@@ -224,7 +226,7 @@ sources:
 
 MEDIAWIKI1_API_URL=https://en.wikipedia.org/w/api.php
 MEDIAWIKI1_SCHEDULES=3600
-````
+```
 
 ### SerpAPI Connector
 
@@ -257,7 +259,7 @@ sources:
 SERPAPI1_KEY=xxxx
 SERPAPI1_QUERIES=aaa
 SERPAPI1_SCHEDULES=3600
-````
+```
 
 ### Web Connector
 
@@ -342,6 +344,33 @@ JIRA1_SCHEDULES=3600
 # JIRA1_SERVER_URL=https://jira.your-company.com
 # JIRA1_API_TOKEN=your-personal-access-token
 # (set auth_type: "token" in config.yaml; email is not needed)
+```
+
+### Notion Connector
+
+The Notion connector ingests pages and database entries from a Notion workspace using a Notion integration token.
+Pages can be selected explicitly by ID, by database, or all accessible pages are ingested when neither is specified.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "notion"
+    name: "notion1"
+    config:
+      integration_token: "${NOTION1_INTEGRATION_TOKEN}"
+      page_ids: "${NOTION1_PAGE_IDS}"          # optional: comma-separated page IDs
+      database_ids: "${NOTION1_DATABASE_IDS}"  # optional: comma-separated database IDs
+      schedules: "${NOTION1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+NOTION1_INTEGRATION_TOKEN=secret_your-notion-integration-token
+NOTION1_PAGE_IDS=page-id-1,page-id-2
+NOTION1_DATABASE_IDS=database-id-1
+NOTION1_SCHEDULES=3600
 ```
 
 ### Pipedrive Connector
