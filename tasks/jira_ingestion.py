@@ -94,13 +94,14 @@ class JiraIngestionJob(IngestionJob):
             return JIRA(
                 server=self.server_url,
                 basic_auth=(self.email, self.api_token),
+                options={"headers": {"User-Agent": self.user_agent}},
             )
         else:
             # Personal Access Token — supported by Jira Server / Data Center
             # and by Atlassian Cloud when passed as a Bearer token.
             options = {
                 "server": self.server_url,
-                "headers": {"Authorization": f"Bearer {self.api_token}"},
+                "headers": {"Authorization": f"Bearer {self.api_token}", "User-Agent": self.user_agent},
             }
             return JIRA(options=options)
 

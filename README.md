@@ -397,6 +397,20 @@ PIPEDRIVE1_SCHEDULES=3600
 
 The `config.yaml` file contains the main configuration of the service.
 
+### Global parameters
+
+The following parameters are set at the root level of `config.yaml` and apply to the entire service:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `user_agent` | string | `rag-of-all-trades/1.0` | Custom `User-Agent` header sent by all connectors that make HTTP requests. |
+
+Example:
+
+```yaml
+user_agent: "my-bot/2.0"
+```
+
 ### Common connector parameters
 
 The following parameters are supported by all connector types:

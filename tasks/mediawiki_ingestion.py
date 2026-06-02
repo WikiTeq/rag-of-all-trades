@@ -84,6 +84,8 @@ class MediaWikiIngestionJob(IngestionJob):
         if username and password:
             self._reader.login(username, password)
 
+        self._reader.site.connection.headers.update({"User-Agent": self.user_agent})
+
         logger.info(
             "Initialized MediaWiki connector for %s://%s%s",
             self._reader.scheme,

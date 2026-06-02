@@ -56,7 +56,8 @@ class PipedriveClient:
     429 / 5xx responses via RetrySession.
     """
 
-    def __init__(self, api_token: str, max_retries: int):
+    def __init__(self, api_token: str, max_retries: int, user_agent: str = "rag-of-all-trades/1.0"):
+        self._user_agent = user_agent
         self._retry = RetrySession(max_retries=max_retries)
         self._retry._session.params = {"api_token": api_token}  # type: ignore[assignment]
 
@@ -74,7 +75,7 @@ class PipedriveClient:
 
     def get_external(self, url: str, timeout: int = 30) -> requests.Response:
         """Fetch an external URL without the Pipedrive api_token session params."""
-        resp = requests.get(url, timeout=timeout)
+        resp = requests.get(url, timeout=timeout, headers={"User-Agent": self._user_agent})
         resp.raise_for_status()
         return resp
 
@@ -218,6 +219,7 @@ class PipedriveIngestionJob(IngestionJob):
         self._client = PipedriveClient(
             api_token=self.api_token,
             max_retries=self.max_retries,
+            user_agent=self.user_agent,
         )
 
         logger.info(f"Initialized Pipedrive connector (load_types={self.load_types}, max_items={self.max_items})")
