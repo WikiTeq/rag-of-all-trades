@@ -113,6 +113,8 @@ class FirefliesIngestionJob(IngestionJob):
             if v
         }
         self.max_items = int(cfg.get("max_items", 100))
+        if self.max_items <= 0:
+            raise ValueError("max_items must be greater than 0")
 
         self._headers = {
             "Content-Type": "application/json",

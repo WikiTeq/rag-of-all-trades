@@ -83,6 +83,12 @@ class TestFirefliesIngestionInit(unittest.TestCase):
         with self.assertRaises(ValueError, msg="api_key is required"):
             _make_job(api_key="")
 
+    def test_invalid_max_items_raises(self):
+        with self.assertRaises(ValueError):
+            _make_job(max_items=0)
+        with self.assertRaises(ValueError):
+            _make_job(max_items=-1)
+
     def test_valid_config(self):
         job = _make_job()
         self.assertEqual(job.api_key, "test-key")
