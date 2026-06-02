@@ -28,6 +28,8 @@ def _make_job(config=None, **overrides):
         instance.resolve_user.return_value = "Unknown User"
         instance.resolve_pipeline.return_value = "Unknown Pipeline"
         instance.resolve_stage.return_value = "Unknown Stage"
+        instance.company_domain = "testcompany"
+        instance.base_url = "https://testcompany.pipedrive.com"
         job = PipedriveIngestionJob(config)
         job._client = instance
     return job
@@ -299,6 +301,58 @@ class TestPipedriveGetDocumentMetadata(unittest.TestCase):
         long_html = "<p>" + "a" * 200 + "</p>"
         title = job._record_title("notes", {"id": 1, "content": long_html})
         self.assertLessEqual(len(title), 120)
+
+    def test_activity_url_uses_list_deep_link(self):
+        job = _make_job()
+        item = IngestionItem(
+            id="pipedrive:activities:7",
+            source_ref={"type": "activities", "data": {"id": 7, "subject": "Call"}},
+            last_modified=None,
+        )
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(
+            meta.get("url"), "https://testcompany.pipedrive.com/activities/list/user/everyone?selected=7&tab=activity"
+        )
+
+    def test_deal_url_without_calling_get_raw_content(self):
+        job = _make_job()
+        item = IngestionItem(
+            id="pipedrive:deals:388",
+            source_ref={"type": "deals", "data": {"id": 388, "title": "Big Deal"}},
+            last_modified=None,
+        )
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta.get("url"), "https://testcompany.pipedrive.com/deal/388/detail")
+
+    def test_note_url_links_to_deal(self):
+        job = _make_job()
+        item = IngestionItem(
+            id="pipedrive:notes:42",
+            source_ref={"type": "notes", "data": {"id": 42, "content": "A note", "deal_id": 7, "person_id": 3}},
+            last_modified=None,
+        )
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta.get("url"), "https://testcompany.pipedrive.com/deal/7/detail")
+
+    def test_note_url_falls_back_to_person(self):
+        job = _make_job()
+        item = IngestionItem(
+            id="pipedrive:notes:43",
+            source_ref={"type": "notes", "data": {"id": 43, "content": "A note", "deal_id": None, "person_id": 3}},
+            last_modified=None,
+        )
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta.get("url"), "https://testcompany.pipedrive.com/person/3/detail")
+
+    def test_note_url_empty_when_no_linked_entity(self):
+        job = _make_job()
+        item = IngestionItem(
+            id="pipedrive:notes:44",
+            source_ref={"type": "notes", "data": {"id": 44, "content": "A note"}},
+            last_modified=None,
+        )
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta.get("url"), "")
 
 
 if __name__ == "__main__":
