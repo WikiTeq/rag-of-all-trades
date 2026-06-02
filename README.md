@@ -444,7 +444,7 @@ SLACK2_SCHEDULES=3600
 The Fireflies connector ingests meeting transcripts from [Fireflies.ai](https://fireflies.ai) via its
 GraphQL API. Document content is composed from the transcript summary (overview, outline/sentences, notes).
 Metadata collected per transcript includes: title, host_email, organizer_email, participants, date,
-transcript_url, audio_url, video_url, duration, meeting_link, speakers, keywords, gist, action_items.
+transcript_url, duration, meeting_link, speakers, keywords, gist, action_items.
 
 ```yaml
 # config.yaml
