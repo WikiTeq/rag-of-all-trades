@@ -2,6 +2,8 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, Mock, patch
 
+from slack_sdk.errors import SlackApiError
+
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.slack_ingestion import SlackIngestionJob
 
@@ -356,6 +358,9 @@ class TestSlackIngestionJob(unittest.TestCase):
 
     def test_get_extra_metadata_contains_channel_id_ts_and_url(self):
         job = self._make_job(channel_ids="C123456")
+        self.mock_client.chat_getPermalink.return_value = {
+            "permalink": "https://workspace.slack.com/archives/C123456/p1700000001000001"
+        }
         item = IngestionItem(
             id="slack:test_slack:C123456:1700000001.000001",
             source_ref={
@@ -368,7 +373,14 @@ class TestSlackIngestionJob(unittest.TestCase):
 
         self.assertEqual(extra["channel_id"], "C123456")
         self.assertEqual(extra["message_ts"], "1700000001.000001")
-        self.assertIn("C123456", extra["url"])
+        self.assertEqual(extra["url"], "https://workspace.slack.com/archives/C123456/p1700000001000001")
+
+    def test_get_permalink_falls_back_on_api_error(self):
+        job = self._make_job(channel_ids="C123456")
+        self.mock_client.chat_getPermalink.side_effect = SlackApiError("error", {"error": "channel_not_found"})
+        url = job._get_permalink("C123456", "1700000001.000001")
+        self.assertIn("C123456", url)
+        self.assertIn("app_redirect", url)
 
     # ------------------------------------------------------------------
     # _get_channel_ids_by_patterns

@@ -118,13 +118,20 @@ class SlackIngestionJob(IngestionJob):
         """Return Slack-specific metadata fields."""
         channel_id = item.source_ref.get("channel_id", "")
         message_ts = item.source_ref.get("message_ts", "")
-        # Convert ts "1234567890.123456" → "1234567890123456" for Slack URL anchor
-        ts_anchor = message_ts.replace(".", "")
         return {
             "channel_id": channel_id,
             "message_ts": message_ts,
-            "url": f"https://slack.com/app_redirect?channel={channel_id}&message_ts={ts_anchor}",
+            "url": self._get_permalink(channel_id, message_ts),
         }
+
+    def _get_permalink(self, channel_id: str, message_ts: str) -> str:
+        try:
+            result = self._client.chat_getPermalink(channel=channel_id, message_ts=message_ts)
+            return result["permalink"]
+        except SlackApiError as e:
+            logger.warning(f"[{self.source_name}] chat.getPermalink failed for {channel_id}/{message_ts}: {e}")
+            ts_anchor = message_ts.replace(".", "")
+            return f"https://slack.com/app_redirect?channel={channel_id}&message_ts={ts_anchor}"
 
     # ------------------------------------------------------------------
     # Internal helpers
