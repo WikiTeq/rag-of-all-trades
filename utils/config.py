@@ -119,6 +119,8 @@ class Settings:
             if isinstance(schedules, str):
                 schedules = [s.strip() for s in schedules.split(",") if s.strip()]
 
+            enabled = source.get("enabled", True)
+
             if buckets:
                 for i, bucket in enumerate(buckets):
                     try:
@@ -133,11 +135,14 @@ class Settings:
                             "name": f"{name}_{bucket}",
                             "config": {**config, "buckets": [bucket], "bucket_override": bucket},
                             "schedule": schedule_seconds,
+                            "enabled": enabled,
                         }
                     )
             else:
                 schedule_seconds = int(schedules[0]) if schedules else 3600
-                sources.append({"type": src_type, "name": name, "config": config, "schedule": schedule_seconds})
+                sources.append(
+                    {"type": src_type, "name": name, "config": config, "schedule": schedule_seconds, "enabled": enabled}
+                )
         return sources
 
     @property

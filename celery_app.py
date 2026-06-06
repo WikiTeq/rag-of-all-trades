@@ -81,6 +81,9 @@ def create_task_for_source(source_config):
 # Register all sources
 try:
     for source in settings.SOURCES:
+        if not source.get("enabled", True):
+            logger.info("Connector '%s' (%s) is disabled — skipping", source["name"], source["type"])
+            continue
         create_task_for_source(source)
 except Exception:
     logger.exception("Failed during source task registration")
