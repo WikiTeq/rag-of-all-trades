@@ -356,23 +356,30 @@ class TestSlackIngestionJob(unittest.TestCase):
     # get_extra_metadata
     # ------------------------------------------------------------------
 
-    def test_get_extra_metadata_contains_channel_id_ts_and_url(self):
+    def test_get_extra_metadata_contains_all_fields(self):
         job = self._make_job(channel_ids="C123456")
         self.mock_client.chat_getPermalink.return_value = {
             "permalink": "https://workspace.slack.com/archives/C123456/p1700000001000001"
         }
+        self.mock_client.users_info.return_value = {"user": {"real_name": "Alice"}}
+        self.mock_client.conversations_info.return_value = {"channel": {"name": "general"}}
         item = IngestionItem(
             id="slack:test_slack:C123456:1700000001.000001",
             source_ref={
                 "channel_id": "C123456",
                 "message_ts": "1700000001.000001",
+                "thread_ts": "1700000001.000001",
+                "user_id": "U123",
                 "text": "msg",
             },
         )
         extra = job.get_extra_metadata(item=item, content="msg", metadata={})
 
         self.assertEqual(extra["channel_id"], "C123456")
+        self.assertEqual(extra["channel_name"], "general")
         self.assertEqual(extra["message_ts"], "1700000001.000001")
+        self.assertEqual(extra["thread_ts"], "1700000001.000001")
+        self.assertEqual(extra["username"], "Alice")
         self.assertEqual(extra["url"], "https://workspace.slack.com/archives/C123456/p1700000001000001")
 
     def test_get_permalink_falls_back_on_api_error(self):
@@ -381,6 +388,57 @@ class TestSlackIngestionJob(unittest.TestCase):
         url = job._get_permalink("C123456", "1700000001.000001")
         self.assertIn("C123456", url)
         self.assertIn("app_redirect", url)
+
+    # ------------------------------------------------------------------
+    # _resolve_username / _resolve_channel_name
+    # ------------------------------------------------------------------
+
+    def test_resolve_username_returns_real_name(self):
+        job = self._make_job(channel_ids="C123")
+        self.mock_client.users_info.return_value = {"user": {"real_name": "Alice Smith", "name": "alice"}}
+        self.assertEqual(job._resolve_username("U001"), "Alice Smith")
+
+    def test_resolve_username_caches_result(self):
+        job = self._make_job(channel_ids="C123")
+        self.mock_client.users_info.return_value = {"user": {"real_name": "Alice"}}
+        job._resolve_username("U001")
+        job._resolve_username("U001")
+        self.mock_client.users_info.assert_called_once()
+
+    def test_resolve_username_falls_back_on_api_error(self):
+        job = self._make_job(channel_ids="C123")
+        self.mock_client.users_info.side_effect = SlackApiError("error", {"error": "user_not_found"})
+        self.assertEqual(job._resolve_username("U001"), "U001")
+
+    def test_resolve_channel_name_returns_name(self):
+        job = self._make_job(channel_ids="C123")
+        self.mock_client.conversations_info.return_value = {"channel": {"name": "general"}}
+        self.assertEqual(job._resolve_channel_name("C123"), "general")
+
+    def test_resolve_channel_name_caches_result(self):
+        job = self._make_job(channel_ids="C123")
+        self.mock_client.conversations_info.return_value = {"channel": {"name": "general"}}
+        job._resolve_channel_name("C123")
+        job._resolve_channel_name("C123")
+        self.mock_client.conversations_info.assert_called_once()
+
+    # ------------------------------------------------------------------
+    # _resolve_mentions
+    # ------------------------------------------------------------------
+
+    def test_resolve_mentions_user(self):
+        job = self._make_job(channel_ids="C123")
+        self.mock_client.users_info.return_value = {"user": {"real_name": "Alice"}}
+        self.assertEqual(job._resolve_mentions("<@U001> hello"), "@Alice hello")
+
+    def test_resolve_mentions_channel_with_label(self):
+        job = self._make_job(channel_ids="C123")
+        self.assertEqual(job._resolve_mentions("join <#C001|general> "), "join #general")
+
+    def test_resolve_mentions_channel_without_label(self):
+        job = self._make_job(channel_ids="C123")
+        self.mock_client.conversations_info.return_value = {"channel": {"name": "general"}}
+        self.assertEqual(job._resolve_mentions("join <#C001> "), "join #general")
 
     # ------------------------------------------------------------------
     # _get_channel_ids_by_patterns

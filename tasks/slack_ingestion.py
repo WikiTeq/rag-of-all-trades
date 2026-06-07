@@ -74,6 +74,8 @@ class SlackIngestionJob(IngestionJob):
             raise ValueError("latest_date must be greater than or equal to earliest_date in Slack connector config")
 
         self._client = WebClient(token=self.token)
+        self._user_cache: dict[str, str] = {}
+        self._channel_name_cache: dict[str, str] = {}
 
         logger.info(
             f"Initialized Slack connector "
@@ -118,11 +120,54 @@ class SlackIngestionJob(IngestionJob):
         """Return Slack-specific metadata fields."""
         channel_id = item.source_ref.get("channel_id", "")
         message_ts = item.source_ref.get("message_ts", "")
+        thread_ts = item.source_ref.get("thread_ts")
+        user_id = item.source_ref.get("user_id", "")
         return {
             "channel_id": channel_id,
+            "channel_name": self._resolve_channel_name(channel_id),
             "message_ts": message_ts,
+            "thread_ts": thread_ts,
+            "username": self._resolve_username(user_id) if user_id else "",
             "url": self._get_permalink(channel_id, message_ts),
         }
+
+    def _resolve_username(self, user_id: str) -> str:
+        if user_id in self._user_cache:
+            return self._user_cache[user_id]
+        try:
+            result = self._client.users_info(user=user_id)
+            username = result["user"].get("real_name") or result["user"].get("name", user_id)
+        except SlackApiError as e:
+            logger.warning(f"[{self.source_name}] users_info failed for {user_id}: {e}")
+            username = user_id
+        self._user_cache[user_id] = username
+        return username
+
+    def _resolve_channel_name(self, channel_id: str) -> str:
+        if channel_id in self._channel_name_cache:
+            return self._channel_name_cache[channel_id]
+        try:
+            result = self._client.conversations_info(channel=channel_id)
+            name = result["channel"].get("name", channel_id)
+        except SlackApiError as e:
+            logger.warning(f"[{self.source_name}] conversations_info failed for {channel_id}: {e}")
+            name = channel_id
+        self._channel_name_cache[channel_id] = name
+        return name
+
+    def _resolve_mentions(self, text: str) -> str:
+        """Replace Slack mention tokens with human-readable names."""
+
+        def replace_user(m: re.Match) -> str:
+            return f"@{self._resolve_username(m.group(1))}"
+
+        def replace_channel(m: re.Match) -> str:
+            label = m.group(2)
+            return f"#{label}" if label else f"#{self._resolve_channel_name(m.group(1))}"
+
+        text = re.sub(r"<@([A-Z0-9]+)>", replace_user, text)
+        text = re.sub(r"<#([A-Z0-9]+)(?:\|([^>]*))?> ?", replace_channel, text)
+        return text
 
     def _get_permalink(self, channel_id: str, message_ts: str) -> str:
         try:
@@ -167,8 +212,8 @@ class SlackIngestionJob(IngestionJob):
                 logger.info(f"[{self.source_name}] {len(messages)} message(s) fetched from {channel_id}")
 
                 for message in messages:
-                    # Skip thread reply broadcasts — they are not top-level messages
-                    if message.get("subtype") == "thread_broadcast":
+                    # Skip all system/bot messages (join, leave, file, thread_broadcast, etc.)
+                    if message.get("subtype"):
                         continue
                     # Skip thread replies appearing in channel history
                     ts = message.get("ts", "")
@@ -179,18 +224,22 @@ class SlackIngestionJob(IngestionJob):
                     if has_replies:
                         text = self._fetch_message_with_replies(channel_id, ts)
                     else:
-                        text = message.get("text", "") or ""
+                        text = self._resolve_mentions(message.get("text", "") or "")
                     last_modified = datetime.fromtimestamp(float(ts), tz=UTC) if ts else None
                     yield IngestionItem(
                         id=f"slack:{self.source_name}:{channel_id}:{ts}",
                         source_ref={
                             "channel_id": channel_id,
                             "message_ts": ts,
+                            "thread_ts": thread_ts if thread_ts else None,
+                            "user_id": message.get("user", ""),
                             "text": text,
                         },
                         last_modified=last_modified,
                     )
 
+                # TODO: track latest ingested TS per channel and use it as oldest on subsequent
+                # runs to skip already-seen messages and reduce API calls (at the cost of missing edits)
                 if not result["has_more"]:
                     break
                 next_cursor = result["response_metadata"]["next_cursor"]
@@ -213,7 +262,6 @@ class SlackIngestionJob(IngestionJob):
         client = self._client
         texts: list[str] = []
         next_cursor = None
-        earliest_ts = str(self.earliest_date.timestamp()) if self.earliest_date else None
         latest_ts = (
             str((self.latest_date + timedelta(days=1) - timedelta(microseconds=1)).timestamp())
             if self.latest_date
@@ -228,14 +276,12 @@ class SlackIngestionJob(IngestionJob):
                     "cursor": next_cursor,
                     "latest": latest_ts,
                 }
-                if earliest_ts:
-                    kwargs["oldest"] = earliest_ts
 
                 result = client.conversations_replies(**kwargs)
                 for m in result.get("messages", []):
                     text = m.get("text")
                     if text:
-                        texts.append(text)
+                        texts.append(self._resolve_mentions(text))
 
                 if not result["has_more"]:
                     break
