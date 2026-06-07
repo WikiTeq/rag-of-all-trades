@@ -279,6 +279,8 @@ class SlackIngestionJob(IngestionJob):
 
                 result = client.conversations_replies(**kwargs)
                 for m in result.get("messages", []):
+                    if m.get("subtype"):
+                        continue
                     text = m.get("text")
                     if text:
                         texts.append(self._resolve_mentions(text))
