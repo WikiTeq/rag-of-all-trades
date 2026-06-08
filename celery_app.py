@@ -3,8 +3,6 @@ import logging
 from celery import Celery
 from celery.signals import worker_process_init, worker_process_shutdown
 
-from utils.celery_heartbeat_singleton import HeartbeatingSingleton
-from utils.celery_utils import ingestion_task_name
 from utils.config import settings
 from utils.db import engine
 from utils.logger import configure_logging
@@ -63,15 +61,14 @@ def shutdown_worker(**kwargs):
 
 def create_task_for_source(source_config):
     """Register a Celery task and Beat schedule for one source (S3, MediaWiki, etc.)."""
-    task_name = ingestion_task_name(source_config)
+    source_name = source_config["name"]
+    task_name = f"{source_config['type']}_ingest_{source_name}"
 
-    @celery_app.task(name=task_name, base=HeartbeatingSingleton, ignore_result=True, bind=True)
+    @celery_app.task(name=task_name, base=Singleton, ignore_result=True, bind=True)
     def run_source(self, pipeline_config=source_config):
         from tasks.factory import IngestionJobFactory
 
-        override = pipeline_config["config"].get("bucket_override")
-        log_name = f"{pipeline_config['name']}_{override}" if override else pipeline_config["name"]
-        logger.info(f"Starting ingestion for {log_name}")
+        logger.info(f"Starting ingestion for {pipeline_config['name']}")
 
         job = IngestionJobFactory.create(pipeline_config["type"], pipeline_config)
         return job.run()
