@@ -5,7 +5,6 @@ from markitdown import MarkItDown
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from utils.parse import parse_list
 from utils.s3_client import get_s3_client
 from utils.text import sanitize_ascii_key
 
@@ -22,7 +21,7 @@ class S3IngestionJob(IngestionJob):
 
         cfg = config.get("config", {})
 
-        self.buckets = parse_list(cfg.get("buckets"))
+        self.bucket = cfg.get("bucket")
 
         # Initialize S3 client - access nested config dict
         client_params = {
@@ -42,35 +41,32 @@ class S3IngestionJob(IngestionJob):
         Generator that yields S3 items one at a time to avoid loading
         all items into memory at once (critical for large buckets).
         """
-        for bucket in self.buckets:
-            continuation_token = None
-            while True:
-                try:
-                    params = {"Bucket": bucket, "MaxKeys": 1000}
-                    if continuation_token:
-                        params["ContinuationToken"] = continuation_token
+        continuation_token = None
+        while True:
+            try:
+                params = {"Bucket": self.bucket, "MaxKeys": 1000}
+                if continuation_token:
+                    params["ContinuationToken"] = continuation_token
 
-                    resp = self.s3_client.list_objects_v2(**params)
-                    contents = resp.get("Contents", [])
+                resp = self.s3_client.list_objects_v2(**params)
+                contents = resp.get("Contents", [])
 
-                    # Yield items one at a time
-                    for obj in contents:
-                        if not obj["Key"].endswith("/"):
-                            yield IngestionItem(
-                                id=f"s3://{bucket}/{obj['Key']}",
-                                source_ref=(bucket, obj["Key"]),
-                                last_modified=obj["LastModified"],
-                            )
+                for obj in contents:
+                    if not obj["Key"].endswith("/"):
+                        yield IngestionItem(
+                            id=f"s3://{self.bucket}/{obj['Key']}",
+                            source_ref=(self.bucket, obj["Key"]),
+                            last_modified=obj["LastModified"],
+                        )
 
-                    # Check if there are more objects
-                    if resp.get("IsTruncated"):
-                        continuation_token = resp.get("NextContinuationToken")
-                    else:
-                        break
-
-                except Exception as e:
-                    logger.error(f"[{bucket}] Failed to list objects: {e}")
+                if resp.get("IsTruncated"):
+                    continuation_token = resp.get("NextContinuationToken")
+                else:
                     break
+
+            except Exception as e:
+                logger.error(f"[{self.bucket}] Failed to list objects: {e}")
+                break
 
     def get_raw_content(self, item: IngestionItem):
         bucket, key = item.source_ref

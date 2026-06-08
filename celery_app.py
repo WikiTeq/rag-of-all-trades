@@ -51,21 +51,13 @@ def shutdown_worker(**kwargs):
 def create_task_for_source(source_config):
     """Register a Celery task and Beat schedule for one source (S3, MediaWiki, etc.)."""
     source_name = source_config["name"]
-    # S3 uses bucket_override when one account has multiple buckets; other sources leave it None
-    config_override = source_config["config"].get("bucket_override")
-
-    if config_override:
-        task_name = f"{source_config['type']}_ingest_{source_name}_{config_override}"
-    else:
-        task_name = f"{source_config['type']}_ingest_{source_name}"
+    task_name = f"{source_config['type']}_ingest_{source_name}"
 
     @celery_app.task(name=task_name, base=Singleton, ignore_result=True, bind=True)
     def run_source(self, pipeline_config=source_config):
         from tasks.factory import IngestionJobFactory
 
-        override = pipeline_config["config"].get("bucket_override")
-        log_name = f"{pipeline_config['name']}_{override}" if override else pipeline_config["name"]
-        logger.info(f"Starting ingestion for {log_name}")
+        logger.info(f"Starting ingestion for {pipeline_config['name']}")
 
         job = IngestionJobFactory.create(pipeline_config["type"], pipeline_config)
         return job.run()
