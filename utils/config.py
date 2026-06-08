@@ -110,34 +110,8 @@ class Settings:
             name = source.get("name", "unknown_source")
             config = source.get("config", {})
 
-            # Handle buckets as list
-            buckets = config.get("buckets", [])
-            if isinstance(buckets, str):
-                buckets = [b.strip() for b in buckets.split(",") if b.strip()]
-
-            schedules = config.get("schedules", [])
-            if isinstance(schedules, str):
-                schedules = [s.strip() for s in schedules.split(",") if s.strip()]
-
-            if buckets:
-                for i, bucket in enumerate(buckets):
-                    try:
-                        schedule_seconds = int(schedules[i]) if i < len(schedules) else 3600
-                    except ValueError:
-                        schedule_seconds = 3600
-
-                    # Merge common chunk settings from embedding
-                    sources.append(
-                        {
-                            "type": src_type,
-                            "name": f"{name}_{bucket}",
-                            "config": {**config, "buckets": [bucket], "bucket_override": bucket},
-                            "schedule": schedule_seconds,
-                        }
-                    )
-            else:
-                schedule_seconds = int(schedules[0]) if schedules else 3600
-                sources.append({"type": src_type, "name": name, "config": config, "schedule": schedule_seconds})
+            schedule_seconds = int(config.get("schedules", 3600))
+            sources.append({"type": src_type, "name": name, "config": config, "schedule": schedule_seconds})
         return sources
 
     @property

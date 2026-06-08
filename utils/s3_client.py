@@ -25,7 +25,7 @@ def get_s3_client(
 
             source = s3_sources[0]
             cfg = source["config"]
-            bucket = bucket or cfg.get("bucket_override")
+            bucket = bucket or cfg.get("bucket")
             endpoint = endpoint or cfg.get("endpoint")
             access_key = access_key or cfg.get("access_key")
             secret_key = secret_key or cfg.get("secret_key")
