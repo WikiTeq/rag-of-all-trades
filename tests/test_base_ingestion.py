@@ -6,6 +6,7 @@ import pytest
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.schemas import BaseMetadataSchema
 
 
 class DummyIngestionJob(IngestionJob):
@@ -78,10 +79,10 @@ class TestIngestionJob:
 
     def test_get_extra_metadata_reserved_keys_not_overwritten(self, base_config):
         """Extra metadata must not overwrite reserved standard keys."""
-        RESERVED_METADATA_KEYS = IngestionJob.RESERVED_METADATA_KEYS
+        schema_fields = BaseMetadataSchema.model_fields
 
         job = DummyIngestionJob(base_config)
-        job.get_extra_metadata = Mock(return_value={k: "overwrite" for k in RESERVED_METADATA_KEYS})
+        job.get_extra_metadata = Mock(return_value={k: "overwrite" for k in schema_fields})
 
         item = IngestionItem(id="item-1", source_ref="src")
         job.metadata_tracker = Mock()
@@ -93,7 +94,7 @@ class TestIngestionJob:
 
         args, _ = job.vector_manager.insert_documents.call_args
         metadata = args[0][0].metadata
-        for key in RESERVED_METADATA_KEYS:
+        for key in schema_fields:
             assert metadata[key] != "overwrite", f"Reserved key {key} was overwritten"
         assert metadata["source"] == "dummy"
         assert metadata["key"] == "item-1"
