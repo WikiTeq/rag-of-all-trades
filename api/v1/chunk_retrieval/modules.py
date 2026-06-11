@@ -8,6 +8,7 @@ from llama_index.core.vector_stores.types import (
     VectorStore,
 )
 
+from api.v1.chunk_retrieval.schema import MetadataFilterItem
 from utils.llm_embedding import embed_model, llm
 
 Settings.llm = llm
@@ -31,7 +32,7 @@ class RAGQueryEngine:
         self.vector_store = vector_store
         self._index_cache = None  # Cache the index to avoid recreating it
 
-    def _build_filter_object(self, metadata: list | None) -> MetadataFilters | None:
+    def _build_filter_object(self, metadata: list[MetadataFilterItem] | None) -> MetadataFilters | None:
         if not metadata:
             return None
 
@@ -76,7 +77,7 @@ class RAGQueryEngine:
         self,
         query: str,
         top_k: int = 5,
-        metadata: list | None = None,
+        metadata: list[MetadataFilterItem] | None = None,
     ) -> list[NodeWithScore]:
         # Use cached index to avoid recreating on every query
         if self._index_cache is None:
