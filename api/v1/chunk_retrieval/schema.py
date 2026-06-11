@@ -1,12 +1,30 @@
-from typing import Any
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
+
+
+class ScalarMetadataFilter(BaseModel):
+    name: str
+    operator: Literal["EQ", "NE", "GT", "GTE", "LT", "LTE", "TEXT_MATCH"]
+    value: str | int | float
+
+
+class ListMetadataFilter(BaseModel):
+    name: str
+    operator: Literal["IN", "NIN"]
+    value: list[str | int | float]
+
+
+MetadataFilterItem = Annotated[
+    ScalarMetadataFilter | ListMetadataFilter,
+    Field(discriminator="operator"),
+]
 
 
 class QueryRequest(BaseModel):
     query: str
     top_k: int = 20
-    metadata_filters: dict[str, Any] | None = None
+    metadata_filters: list[MetadataFilterItem] | None = None
 
     @field_validator("query")
     @classmethod

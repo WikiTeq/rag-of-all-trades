@@ -1,5 +1,3 @@
-from typing import Any
-
 from llama_index.core import Settings, VectorStoreIndex
 from llama_index.core.schema import NodeWithScore
 from llama_index.core.vector_stores.types import (
@@ -15,26 +13,31 @@ from utils.llm_embedding import embed_model, llm
 Settings.llm = llm
 Settings.embed_model = embed_model
 
+_OPERATOR_MAP: dict[str, FilterOperator] = {
+    "EQ": FilterOperator.EQ,
+    "NE": FilterOperator.NE,
+    "GT": FilterOperator.GT,
+    "GTE": FilterOperator.GTE,
+    "LT": FilterOperator.LT,
+    "LTE": FilterOperator.LTE,
+    "IN": FilterOperator.IN,
+    "NIN": FilterOperator.NIN,
+    "TEXT_MATCH": FilterOperator.TEXT_MATCH,
+}
+
 
 class RAGQueryEngine:
     def __init__(self, vector_store: VectorStore):
         self.vector_store = vector_store
         self._index_cache = None  # Cache the index to avoid recreating it
 
-    # Convert metadata dict → LlamaIndex MetadataFilters
-    def _build_filter_object(self, metadata: dict[str, Any] | None) -> MetadataFilters | None:
+    def _build_filter_object(self, metadata: list | None) -> MetadataFilters | None:
         if not metadata:
             return None
 
-        filters: list[MetadataFilter] = []
-
-        for key, value in metadata.items():
-            if isinstance(value, list):
-                # multiple values -> IN operator
-                filters.append(MetadataFilter(key=key, value=value, operator=FilterOperator.IN))
-            else:
-                # single value -> EQ
-                filters.append(MetadataFilter(key=key, value=value, operator=FilterOperator.EQ))
+        filters: list[MetadataFilter] = [
+            MetadataFilter(key=item.name, value=item.value, operator=_OPERATOR_MAP[item.operator]) for item in metadata
+        ]
 
         return MetadataFilters(filters=filters, condition=FilterCondition.AND)
 
@@ -73,7 +76,7 @@ class RAGQueryEngine:
         self,
         query: str,
         top_k: int = 5,
-        metadata: dict[str, Any] | None = None,
+        metadata: list | None = None,
     ) -> list[NodeWithScore]:
         # Use cached index to avoid recreating on every query
         if self._index_cache is None:
