@@ -41,7 +41,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Notion
 * Dropbox
 * BookStack
-* Outlook
+* Outlook (Microsoft 365 / Entra ID mailboxes via Microsoft Graph)
 
 ## Embeddings support
 
