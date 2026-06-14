@@ -27,6 +27,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Jira
 * Web
 * Pipedrive
+* Outlook (Microsoft 365 / Entra ID mailboxes via Microsoft Graph)
 
 ## Embeddings support
 
