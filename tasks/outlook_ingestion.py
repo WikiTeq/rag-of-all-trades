@@ -23,7 +23,7 @@ class OutlookIngestionJob(IngestionJob):
 
     Uses the LlamaIndex OutlookEmailReader for authentication and email fetching.
     Requires an Azure app registration with Mail.Read application permission and
-    admin consent. Only supported for Microsoft 365 / OneDrive for Business accounts
+    admin consent. Only supported for Microsoft 365 / Entra ID work or school accounts
     (client credentials flow is not available for personal Microsoft accounts).
 
     Configuration (config.yaml):

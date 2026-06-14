@@ -39,6 +39,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * OneDrive (OneDrive for Business — App authentication)
 * Notion
 * Dropbox
+* Outlook (Microsoft 365 / Entra ID mailboxes via Microsoft Graph)
 
 ## Embeddings support
 
