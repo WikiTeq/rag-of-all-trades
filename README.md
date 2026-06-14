@@ -417,6 +417,7 @@ sources:
       user_email: "${OUTLOOK1_USER_EMAIL}"
       folder: "Inbox"           # optional, default Inbox
       num_mails: 100            # optional, default 10
+      html_to_text: true        # optional, default true; set to false to keep raw HTML email bodies
       schedules: "${OUTLOOK1_SCHEDULES}"
 ```
 

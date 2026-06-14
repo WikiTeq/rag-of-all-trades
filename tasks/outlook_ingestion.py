@@ -11,6 +11,7 @@ from llama_index.readers.microsoft_outlook_emails import OutlookEmailReader
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 from utils.http import RetrySession
+from utils.parse import parse_bool
 from utils.text import html_to_markdown
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ class OutlookIngestionJob(IngestionJob):
         if self.num_mails <= 0:
             raise ValueError("num_mails must be positive in Outlook connector config")
 
+        self.html_to_text: bool = parse_bool(cfg.get("html_to_text"), default=True)
         self._resolved_folder_id: str | None = None
 
         self._reader = OutlookEmailReader(
@@ -238,12 +240,25 @@ class OutlookIngestionJob(IngestionJob):
         subject = email.get("subject") or "(no subject)"
         sender = self._extract_sender(email)
         received = email.get("receivedDateTime", "")
-        body = html_to_markdown((email.get("body") or {}).get("content") or "")
+        body_obj = email.get("body") or {}
+        body = body_obj.get("content") or ""
+        content_type = body_obj.get("contentType", "text")
+        # Graph returns contentType as "html" or "text"; only convert HTML bodies
+        if content_type == "html" and self.html_to_text:
+            body = html_to_markdown(body)
 
         return f"# {subject}\n\n**From:** {sender}\n**Received:** {received}\n\n{body}"
 
     def get_item_name(self, item: IngestionItem) -> str:
         return f"outlook_{item.id.removeprefix('outlook:')}"[:255]
+
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        email = item.source_ref
+        msg_id = email.get("id")
+        received = email.get("receivedDateTime")
+        if msg_id and received:
+            return f"{msg_id}:{received}"
+        return None
 
     def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
         email = item.source_ref
@@ -253,6 +268,7 @@ class OutlookIngestionJob(IngestionJob):
             "subject": email.get("subject") or "",
             "sender": self._extract_sender(email),
             "received_at": email.get("receivedDateTime") or "",
+            "web_link": email.get("webLink") or "",
         }
 
     @staticmethod
