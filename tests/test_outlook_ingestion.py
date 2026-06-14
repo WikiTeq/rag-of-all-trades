@@ -231,6 +231,28 @@ class TestOutlookGetRawContent(unittest.TestCase):
         item = IngestionItem(id="outlook:id1", source_ref=email)
         self.assertIn("**From:**", _make_job().get_raw_content(item))
 
+    def test_html_body_is_converted_when_html_to_text_true(self):
+        email = _make_email(body_content="<p>Hello</p>")
+        email["body"]["contentType"] = "html"
+        item = IngestionItem(id="outlook:id1", source_ref=email)
+        content = _make_job(html_to_text="true").get_raw_content(item)
+        self.assertNotIn("<p>", content)
+        self.assertIn("Hello", content)
+
+    def test_html_body_is_kept_raw_when_html_to_text_false(self):
+        email = _make_email(body_content="<p>Hello</p>")
+        email["body"]["contentType"] = "html"
+        item = IngestionItem(id="outlook:id1", source_ref=email)
+        content = _make_job(html_to_text="false").get_raw_content(item)
+        self.assertIn("<p>Hello</p>", content)
+
+    def test_plain_text_body_is_not_converted(self):
+        email = _make_email(body_content="Plain text body.")
+        email["body"]["contentType"] = "text"
+        item = IngestionItem(id="outlook:id1", source_ref=email)
+        content = _make_job().get_raw_content(item)
+        self.assertIn("Plain text body.", content)
+
 
 class TestOutlookGetItemName(unittest.TestCase):
     def test_basic(self):
@@ -240,6 +262,26 @@ class TestOutlookGetItemName(unittest.TestCase):
     def test_truncated_to_255(self):
         item = IngestionItem(id="outlook:" + "x" * 300, source_ref={})
         self.assertEqual(len(_make_job().get_item_name(item)), 255)
+
+
+class TestOutlookGetItemChecksum(unittest.TestCase):
+    def test_returns_checksum_when_id_and_received_present(self):
+        email = _make_email("msg-42")
+        item = IngestionItem(id="outlook:msg-42", source_ref=email)
+        checksum = _make_job().get_item_checksum(item)
+        self.assertEqual(checksum, f"msg-42:{RECEIVED}")
+
+    def test_returns_none_when_id_missing(self):
+        email = _make_email()
+        del email["id"]
+        item = IngestionItem(id="outlook:x", source_ref=email)
+        self.assertIsNone(_make_job().get_item_checksum(item))
+
+    def test_returns_none_when_received_missing(self):
+        email = _make_email()
+        del email["receivedDateTime"]
+        item = IngestionItem(id="outlook:x", source_ref=email)
+        self.assertIsNone(_make_job().get_item_checksum(item))
 
 
 class TestOutlookGetExtraMetadata(unittest.TestCase):
@@ -253,6 +295,19 @@ class TestOutlookGetExtraMetadata(unittest.TestCase):
         self.assertEqual(meta["subject"], "Status Update")
         self.assertEqual(meta["sender"], "bob@example.com")
         self.assertEqual(meta["received_at"], RECEIVED)
+
+    def test_includes_web_link(self):
+        email = _make_email()
+        email["webLink"] = "https://outlook.office.com/mail/id/AAMk"
+        item = IngestionItem(id="outlook:id1", source_ref=email)
+        meta = _make_job().get_extra_metadata(item, "", {})
+        self.assertEqual(meta["web_link"], "https://outlook.office.com/mail/id/AAMk")
+
+    def test_web_link_defaults_to_empty_string(self):
+        email = _make_email()
+        item = IngestionItem(id="outlook:id1", source_ref=email)
+        meta = _make_job().get_extra_metadata(item, "", {})
+        self.assertEqual(meta["web_link"], "")
 
 
 class TestOutlookEmailReaderPrivateAPI(unittest.TestCase):
