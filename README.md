@@ -30,6 +30,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Pipedrive
 * Slack
 * IMAP
+* Outlook (Microsoft 365 / Entra ID mailboxes via Microsoft Graph)
 
 ## Embeddings support
 
