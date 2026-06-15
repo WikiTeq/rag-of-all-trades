@@ -1,46 +1,62 @@
 import unittest
 
+import yaml
 
-def _make_source(name="wiki", src_type="mediawiki", enabled=None):
-    source = {"type": src_type, "name": name, "config": {}, "schedule": 3600}
-    if enabled is not None:
-        source["enabled"] = enabled
-    return source
+from utils.parse import parse_bool
 
 
-def _run_registration(sources):
-    """Simulate the celery_app registration loop without importing the module."""
-    created = []
-    for source in sources:
-        if not source.get("enabled", True):
-            continue
-        created.append(source)
-    return created
+class TestParseBoolEnabled(unittest.TestCase):
+    def test_bool_true(self):
+        self.assertTrue(parse_bool(True, default=True))
+
+    def test_bool_false(self):
+        self.assertFalse(parse_bool(False, default=True))
+
+    def test_none_uses_default_true(self):
+        self.assertTrue(parse_bool(None, default=True))
+
+    def test_string_false_variants(self):
+        for val in ("false", "False", "FALSE", "0", "no", "off"):
+            self.assertFalse(parse_bool(val, default=True), f"Expected False for {val!r}")
+
+    def test_string_true_variants(self):
+        for val in ("true", "True", "TRUE", "1", "yes", "on"):
+            self.assertTrue(parse_bool(val, default=True), f"Expected True for {val!r}")
+
+    def test_yaml_unquoted_false(self):
+        source = yaml.safe_load("enabled: false")
+        self.assertFalse(parse_bool(source.get("enabled"), default=True))
+
+    def test_yaml_unquoted_true(self):
+        source = yaml.safe_load("enabled: true")
+        self.assertTrue(parse_bool(source.get("enabled"), default=True))
+
+    def test_yaml_absent_uses_default(self):
+        source = yaml.safe_load("name: wiki")
+        self.assertTrue(parse_bool(source.get("enabled"), default=True))
 
 
 class TestSourceRegistration(unittest.TestCase):
-    def test_enabled_true_registers_task(self):
-        source = _make_source(enabled=True)
-        registered = _run_registration([source])
-        self.assertEqual(registered, [source])
+    def _parse_sources(self, yaml_str):
+        sources = yaml.safe_load(yaml_str)["sources"]
+        return [{"enabled": parse_bool(s.get("enabled"), default=True), "name": s["name"]} for s in sources]
 
-    def test_enabled_absent_registers_task(self):
-        source = _make_source()
-        registered = _run_registration([source])
-        self.assertEqual(registered, [source])
+    def test_enabled_true_registers(self):
+        parsed = self._parse_sources("sources:\n  - name: wiki\n    enabled: true\n")
+        self.assertTrue(parsed[0]["enabled"])
 
-    def test_enabled_false_skips_task(self):
-        source = _make_source(enabled=False)
-        registered = _run_registration([source])
-        self.assertEqual(registered, [])
+    def test_enabled_false_skips(self):
+        parsed = self._parse_sources("sources:\n  - name: wiki\n    enabled: false\n")
+        self.assertFalse(parsed[0]["enabled"])
+
+    def test_enabled_absent_defaults_to_true(self):
+        parsed = self._parse_sources("sources:\n  - name: wiki\n")
+        self.assertTrue(parsed[0]["enabled"])
 
     def test_mixed_sources(self):
-        enabled_source = _make_source(name="wiki", enabled=True)
-        disabled_source = _make_source(name="jira", src_type="jira", enabled=False)
-        absent_source = _make_source(name="s3", src_type="s3")
-        registered = _run_registration([enabled_source, disabled_source, absent_source])
-        names = [s["name"] for s in registered]
-        self.assertIn("wiki", names)
-        self.assertIn("s3", names)
-        self.assertNotIn("jira", names)
-        self.assertEqual(len(registered), 2)
+        yaml_str = "sources:\n  - name: wiki\n    enabled: true\n  - name: jira\n    enabled: false\n  - name: s3\n"
+        parsed = self._parse_sources(yaml_str)
+        enabled_names = [s["name"] for s in parsed if s["enabled"]]
+        self.assertIn("wiki", enabled_names)
+        self.assertIn("s3", enabled_names)
+        self.assertNotIn("jira", enabled_names)
