@@ -2,12 +2,18 @@ import unittest
 from datetime import datetime
 from unittest.mock import Mock, patch
 
+from jira.client import ResultList
+
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.jira_ingestion import JiraIngestionJob
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _make_result_list(issues, next_page_token=None):
+    return ResultList(issues, _nextPageToken=next_page_token)
 
 
 def _make_config(
@@ -229,7 +235,7 @@ class TestJiraIngestionJob(unittest.TestCase):
     def test_list_items_yields_ingestion_items(self):
         issue1 = _make_issue(key="TEST-1")
         issue2 = _make_issue(key="TEST-2", updated="2024-07-01T00:00:00.000+0000")
-        self.mock_jira.search_issues.return_value = [issue1, issue2]
+        self.mock_jira.enhanced_search_issues.return_value = _make_result_list([issue1, issue2])
 
         job = self._make_job()
         items = list(job.list_items())
@@ -238,12 +244,11 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.assertEqual(items[0].id, "jira:TEST-1")
         self.assertEqual(items[1].id, "jira:TEST-2")
         self.assertIsInstance(items[0], IngestionItem)
-        # source_ref is the raw issue object
         self.assertIs(items[0].source_ref, issue1)
 
     def test_list_items_last_modified_parsed(self):
         issue = _make_issue(updated="2024-06-15T10:30:00.000+0000")
-        self.mock_jira.search_issues.return_value = [issue]
+        self.mock_jira.enhanced_search_issues.return_value = _make_result_list([issue])
 
         job = self._make_job()
         items = list(job.list_items())
@@ -254,33 +259,29 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.assertEqual(items[0].last_modified.day, 15)
 
     def test_list_items_respects_max_results(self):
-        # Return 5 issues but max_results=3
-        issues = [_make_issue(key=f"TEST-{i}") for i in range(5)]
-        self.mock_jira.search_issues.return_value = issues
+        batch = _make_result_list([_make_issue(key=f"TEST-{i}") for i in range(5)], next_page_token=None)
+        self.mock_jira.enhanced_search_issues.return_value = batch
 
         job = self._make_job(max_results=3)
         items = list(job.list_items())
 
         self.assertEqual(len(items), 3)
 
-    def test_list_items_paginates_until_exhausted(self):
-        # page_size = min(100, max_results=200) = 100
-        # batch1 must equal batch_limit (100) to trigger a second request
-        batch1 = [_make_issue(key=f"TEST-{i}") for i in range(100)]
-        # batch2 returns fewer than 100 → pagination stops
-        batch2 = [_make_issue(key="TEST-100")]
-        self.mock_jira.search_issues.side_effect = [batch1, batch2]
+    def test_list_items_fetches_beyond_100(self):
+        batch1 = _make_result_list([_make_issue(key=f"TEST-{i}") for i in range(100)], next_page_token="token1")
+        batch2 = _make_result_list([_make_issue(key=f"TEST-{i}") for i in range(100, 150)], next_page_token=None)
+        self.mock_jira.enhanced_search_issues.side_effect = [batch1, batch2]
 
-        job = self._make_job(max_results=200)
+        job = self._make_job(max_results=3000)
         items = list(job.list_items())
 
-        self.assertEqual(len(items), 101)
-        self.assertEqual(self.mock_jira.search_issues.call_count, 2)
-        second_call_kwargs = self.mock_jira.search_issues.call_args_list[1].kwargs
-        self.assertEqual(second_call_kwargs["startAt"], 100)
+        self.assertEqual(len(items), 150)
+        self.assertEqual(self.mock_jira.enhanced_search_issues.call_count, 2)
+        second_call_kwargs = self.mock_jira.enhanced_search_issues.call_args_list[1].kwargs
+        self.assertEqual(second_call_kwargs["nextPageToken"], "token1")
 
     def test_list_items_empty_result(self):
-        self.mock_jira.search_issues.return_value = []
+        self.mock_jira.enhanced_search_issues.return_value = _make_result_list([])
 
         job = self._make_job()
         items = list(job.list_items())
@@ -288,7 +289,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.assertEqual(items, [])
 
     def test_list_items_api_error_yields_nothing(self):
-        self.mock_jira.search_issues.side_effect = Exception("API error")
+        self.mock_jira.enhanced_search_issues.side_effect = Exception("API error")
 
         job = self._make_job()
         items = list(job.list_items())
