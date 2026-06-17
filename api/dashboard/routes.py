@@ -34,15 +34,14 @@ def quote_sql_identifier(identifier: str) -> str:
 
 def resolve_vector_table_name():
     configured_table_name = settings.POSTGRES.get("table_name", "embeddings")
-    candidates = [configured_table_name, "data_embeddings", "embeddings"]
+    vector_table_name = f"data_{configured_table_name}"
 
     with get_db_session() as db:
         inspector = inspect(db.bind)
-        for table_name in candidates:
-            if inspector.has_table(table_name, schema="public"):
-                return table_name
+        if inspector.has_table(vector_table_name, schema="public"):
+            return vector_table_name
 
-    raise ValueError("Could not find a vector table in schema 'public'")
+    raise ValueError(f"Could not find vector table '{vector_table_name}' in schema 'public'")
 
 
 def format_bytes(size_bytes: int) -> str:
@@ -150,7 +149,7 @@ def get_dashboard_stats():
             }
             for source in settings.SOURCES
         ],
-        "recent_ingestion_runs": get_recent_ingestion_runs(limit=10),
+        "recent_ingestion_runs": get_recent_ingestion_runs(),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
 
