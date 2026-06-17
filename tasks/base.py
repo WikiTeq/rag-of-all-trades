@@ -5,8 +5,8 @@ import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
-from datetime import UTC, datetime
-from typing import Dict, Any
+from datetime import UTC, datetime, timezone
+from typing import Any
 
 from llama_index.core import Document
 
