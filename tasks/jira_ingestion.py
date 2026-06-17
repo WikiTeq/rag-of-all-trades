@@ -109,23 +109,18 @@ class JiraIngestionJob(IngestionJob):
     # ------------------------------------------------------------------
 
     def list_items(self) -> Iterator[IngestionItem]:
-        """Query Jira with the configured JQL and yield one IngestionItem per issue.
-
-        Paginates automatically until max_results is reached or all matching
-        issues have been returned.
-        """
+        """Query Jira with the configured JQL and yield one IngestionItem per issue."""
         logger.info(f"[{self.source_name}] Listing issues with JQL: {self.jql!r}")
 
-        page_size = min(100, self.max_results)  # Jira Cloud caps at 100 per request
-        start_at = 0
+        next_page_token = None
         fetched = 0
 
         while fetched < self.max_results:
-            batch_limit = min(page_size, self.max_results - fetched)
+            batch_limit = min(100, self.max_results - fetched)
             try:
-                issues = self._jira.search_issues(
+                issues = self._jira.enhanced_search_issues(
                     self.jql,
-                    startAt=start_at,
+                    nextPageToken=next_page_token,
                     maxResults=batch_limit,
                     fields="summary,description,status,assignee,reporter,labels,project,priority,issuetype,updated,created,comment",
                 )
@@ -137,6 +132,8 @@ class JiraIngestionJob(IngestionJob):
                 break
 
             for issue in issues:
+                if fetched >= self.max_results:
+                    break
                 updated_at = parse_timestamp(getattr(issue.fields, "updated", None))
                 yield IngestionItem(
                     id=f"jira:{issue.key}",
@@ -144,14 +141,10 @@ class JiraIngestionJob(IngestionJob):
                     last_modified=updated_at,
                 )
                 fetched += 1
-                if fetched >= self.max_results:
-                    break
 
-            # Stop paginating if we got fewer results than requested
-            if len(issues) < batch_limit:
+            next_page_token = issues.nextPageToken
+            if not next_page_token:
                 break
-
-            start_at += len(issues)
 
         logger.info(f"[{self.source_name}] Found {fetched} issue(s)")
 
