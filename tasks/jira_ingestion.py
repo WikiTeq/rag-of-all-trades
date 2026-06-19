@@ -112,8 +112,17 @@ class JiraIngestionJob(IngestionJob):
         """Query Jira with the configured JQL and yield one IngestionItem per issue."""
         logger.info(f"[{self.source_name}] Listing issues with JQL: {self.jql!r}")
 
-        next_page_token = None
         fetched = 0
+        if self._jira._is_cloud:
+            fetched = yield from self._list_items_cloud(fetched)
+        else:
+            fetched = yield from self._list_items_server(fetched)
+
+        logger.info(f"[{self.source_name}] Found {fetched} issue(s)")
+
+    def _list_items_cloud(self, fetched: int) -> Iterator[IngestionItem]:
+        """Paginate using nextPageToken (Jira Cloud)."""
+        next_page_token = None
 
         while fetched < self.max_results:
             batch_limit = min(100, self.max_results - fetched)
@@ -146,7 +155,45 @@ class JiraIngestionJob(IngestionJob):
             if not next_page_token:
                 break
 
-        logger.info(f"[{self.source_name}] Found {fetched} issue(s)")
+        return fetched
+
+    def _list_items_server(self, fetched: int) -> Iterator[IngestionItem]:
+        """Paginate using startAt offset (Jira Server/Data Center)."""
+        start_at = 0
+
+        while fetched < self.max_results:
+            batch_limit = min(100, self.max_results - fetched)
+            try:
+                issues = self._jira.search_issues(
+                    self.jql,
+                    startAt=start_at,
+                    maxResults=batch_limit,
+                    fields="summary,description,status,assignee,reporter,labels,project,priority,issuetype,updated,created,comment",
+                )
+            except Exception as e:
+                logger.error(f"[{self.source_name}] Failed to search issues: {e}")
+                break
+
+            if not issues:
+                break
+
+            for issue in issues:
+                if fetched >= self.max_results:
+                    break
+                updated_at = parse_timestamp(getattr(issue.fields, "updated", None))
+                yield IngestionItem(
+                    id=f"jira:{issue.key}",
+                    source_ref=issue,
+                    last_modified=updated_at,
+                )
+                fetched += 1
+
+            if len(issues) < batch_limit:
+                break
+
+            start_at += len(issues)
+
+        return fetched
 
     def get_raw_content(self, item: IngestionItem) -> str:
         """Build Markdown-formatted content from a Jira issue.

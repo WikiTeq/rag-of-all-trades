@@ -104,6 +104,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.mock_md_class = self.markitdown_patcher.start()
 
         self.mock_jira = Mock()
+        self.mock_jira._is_cloud = True
         self.mock_jira_class.return_value = self.mock_jira
 
         self.mock_md = Mock()
@@ -295,6 +296,20 @@ class TestJiraIngestionJob(unittest.TestCase):
         items = list(job.list_items())
 
         self.assertEqual(items, [])
+
+    def test_list_items_server_dc_uses_start_at_pagination(self):
+        self.mock_jira._is_cloud = False
+        batch1 = [_make_issue(key=f"TEST-{i}") for i in range(100)]
+        batch2 = [_make_issue(key="TEST-100")]
+        self.mock_jira.search_issues.side_effect = [batch1, batch2]
+
+        job = self._make_job(max_results=200)
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 101)
+        self.assertEqual(self.mock_jira.search_issues.call_count, 2)
+        second_call_kwargs = self.mock_jira.search_issues.call_args_list[1].kwargs
+        self.assertEqual(second_call_kwargs["startAt"], 100)
 
     # ------------------------------------------------------------------
     # get_item_name
