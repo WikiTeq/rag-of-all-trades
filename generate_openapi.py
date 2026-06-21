@@ -7,9 +7,12 @@ Run this script whenever the API schemas change:
 The pre-commit hook runs this automatically when Python files are modified.
 """
 
+import os
 import sys
 import types
 import unittest.mock
+
+os.environ["MCP_ENABLE"] = "0"
 
 import yaml
 
