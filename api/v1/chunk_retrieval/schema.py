@@ -1,6 +1,15 @@
+import re
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+_SAFE_PATTERN = re.compile(r"^[0-9a-zA-Z.\-_]+$")
+
+
+def _validate_safe_string(v: str, field: str) -> str:
+    if not _SAFE_PATTERN.match(v):
+        raise ValueError(f"{field} contains invalid characters; allowed: 0-9 a-z A-Z . - _")
+    return v
 
 
 class ScalarMetadataFilter(BaseModel):
@@ -8,11 +17,37 @@ class ScalarMetadataFilter(BaseModel):
     operator: Literal["EQ", "NE", "GT", "GTE", "LT", "LTE", "TEXT_MATCH"]
     value: str | int | float
 
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        return _validate_safe_string(v, "name")
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def validate_value(cls, v: object) -> object:
+        if isinstance(v, str):
+            _validate_safe_string(v, "value")
+        return v
+
 
 class ListMetadataFilter(BaseModel):
     name: str
     operator: Literal["IN", "NIN"]
     value: list[str | int | float]
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        return _validate_safe_string(v, "name")
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def validate_value(cls, v: object) -> object:
+        if isinstance(v, list):
+            for item in v:
+                if isinstance(item, str):
+                    _validate_safe_string(item, "value item")
+        return v
 
 
 MetadataFilterItem = Annotated[

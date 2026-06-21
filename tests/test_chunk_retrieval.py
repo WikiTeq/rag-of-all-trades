@@ -59,6 +59,28 @@ class TestMetadataFilterItemSchema:
         with pytest.raises(ValidationError):
             _filter_adapter.validate_python({"name": "field", "operator": "INVALID", "value": "val"})
 
+    @pytest.mark.parametrize("name", ["field name", "field!", "field;drop", "field\x00"])
+    def test_invalid_name_raises(self, name):
+        with pytest.raises(ValidationError):
+            _filter_adapter.validate_python({"name": name, "operator": "EQ", "value": "val"})
+
+    @pytest.mark.parametrize("name", ["field", "field_name", "field-name", "field.name", "Field123"])
+    def test_valid_name_accepted(self, name):
+        item = _filter_adapter.validate_python({"name": name, "operator": "EQ", "value": "val"})
+        assert item.name == name
+
+    def test_invalid_scalar_str_value_raises(self):
+        with pytest.raises(ValidationError):
+            _filter_adapter.validate_python({"name": "field", "operator": "EQ", "value": "bad value!"})
+
+    def test_invalid_list_str_value_raises(self):
+        with pytest.raises(ValidationError):
+            _filter_adapter.validate_python({"name": "field", "operator": "IN", "value": ["ok", "bad value!"]})
+
+    def test_numeric_values_accepted(self):
+        item = _filter_adapter.validate_python({"name": "field", "operator": "GT", "value": 42})
+        assert item.value == 42
+
 
 class TestQueryRequestSchema:
     def test_metadata_filters_none_by_default(self):
