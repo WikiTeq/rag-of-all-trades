@@ -8,6 +8,7 @@ from fastmcp.server.auth import StaticTokenVerifier
 from llama_index.core.llms import ChatMessage, MessageRole
 
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
+from api.v1.chunk_retrieval.schema import MetadataFilterItem
 from api.v1.chunk_retrieval.schema import QueryRequest as ChunkQueryRequest
 from api.v1.rephrase_retrieval.schema import QueryRequest as RephraseQueryRequest
 from utils.api import format_chunks
@@ -20,14 +21,14 @@ async def retrieve_chunks_response(
     rag_engine: RAGQueryEngine,
     query: str,
     top_k: int = 20,
-    metadata_filters: dict[str, Any] | None = None,
+    metadata_filters: list[MetadataFilterItem] | None = None,
 ) -> dict[str, Any]:
     logger.info("MCP retrieve_chunks: top_k=%d has_filters=%s", top_k, bool(metadata_filters))
     nodes_with_score = await asyncio.to_thread(
         rag_engine.retrieve_top_k,
         query=query,
         top_k=top_k,
-        metadata=metadata_filters or {},
+        metadata=metadata_filters or [],
     )
     logger.info("MCP retrieve_chunks: num_results=%d", len(nodes_with_score))
     return {
