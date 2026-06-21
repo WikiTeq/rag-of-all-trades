@@ -7,7 +7,6 @@ from celery_singleton import Singleton
 from utils.config import settings
 from utils.db import engine
 from utils.logger import configure_logging
-from utils.parse import parse_bool
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -82,7 +81,7 @@ def create_task_for_source(source_config):
 # Register all sources
 try:
     for source in settings.SOURCES:
-        if not parse_bool(source.get("enabled"), default=True):
+        if not source["enabled"]:
             logger.info("Connector '%s' (%s) is disabled — skipping", source["name"], source["type"])
             continue
         create_task_for_source(source)
