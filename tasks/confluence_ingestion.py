@@ -31,6 +31,8 @@ class ConfluenceIngestionJob(IngestionJob):
         - ``api_token`` alone  — Bearer token (Server / Data Center PAT)
         - ``username`` + ``password``  — Basic auth (Server / Data Center)
         - ``username`` + ``api_token``  — Basic auth (Cloud: email + API token)
+        - ``oauth2``  — OAuth2 dict passed directly to ConfluenceReader
+        - ``cookies``  — session cookies dict passed directly to ConfluenceReader
 
     Discovery modes (exactly one required):
         - ``space_key``   — all pages in a space
@@ -45,6 +47,8 @@ class ConfluenceIngestionJob(IngestionJob):
         - config.username: Confluence username / email (optional)
         - config.password: Confluence password (mutually exclusive with api_token)
         - config.cloud: true for Cloud, false for Server/Data Center (default true)
+        - config.oauth2: OAuth2 credentials dict (mutually exclusive with token/password auth)
+        - config.cookies: Session cookies dict (optional, can combine with oauth2)
         - config.space_key: Load all pages from a space
         - config.page_ids: Comma-separated page IDs to load
         - config.page_label: Load all pages with this label
@@ -71,15 +75,22 @@ class ConfluenceIngestionJob(IngestionJob):
         self.api_token: str | None = (cfg.get("api_token") or "").strip() or None
         self.username: str | None = (cfg.get("username") or "").strip() or None
         self.password: str | None = (cfg.get("password") or "").strip() or None
-
-        if not self.api_token and not self.password:
-            raise ValueError("Confluence connector config requires either api_token or username+password")
-        if self.api_token and self.password:
-            raise ValueError("api_token and password are mutually exclusive in Confluence connector config")
-        if self.password and not self.username:
-            raise ValueError("username is required when using password authentication")
-
         self.cloud: bool = parse_bool(cfg.get("cloud"), default=True)
+        self.oauth2: dict | None = cfg.get("oauth2") or None
+        self.cookies: dict | None = cfg.get("cookies") or None
+
+        if not self.oauth2 and not self.cookies:
+            _AUTH_ERR = (
+                "Confluence connector config requires username+api_token (Cloud), "
+                "username+password (Server/DC), or api_token alone (Server/DC PAT only)"
+            )
+            auth_ok = (
+                (self.username and self.api_token and not self.password)
+                or (self.username and self.password and not self.api_token)
+                or (self.api_token and not self.username and not self.password and not self.cloud)
+            )
+            if not auth_ok:
+                raise ValueError(_AUTH_ERR)
 
         active_modes = [m for m in _DISCOVERY_MODES if cfg.get(m)]
         if len(active_modes) != 1:
@@ -128,7 +139,9 @@ class ConfluenceIngestionJob(IngestionJob):
             if not page_id:
                 logger.warning(f"[{self.source_name}] Skipping document with no page_id: {doc.metadata}")
                 continue
-            last_modified = self._fetch_last_modified(page_id)
+            last_modified, space_key = self._fetch_page_info(page_id)
+            if space_key and not doc.metadata.get("space_key"):
+                doc.metadata["space_key"] = space_key
             yield IngestionItem(
                 id=f"confluence:{page_id}",
                 source_ref=doc,
@@ -165,23 +178,26 @@ class ConfluenceIngestionJob(IngestionJob):
             "space_key": doc.metadata.get("space_key", "") or "",
         }
 
-    def _fetch_last_modified(self, page_id: str) -> datetime:
-        """Fetch the last-modified timestamp for a page via the Confluence REST API.
+    def _fetch_page_info(self, page_id: str) -> tuple[datetime, str | None]:
+        """Fetch last-modified timestamp and space_key for a page via the Confluence REST API.
 
         Uses the already-authenticated client inside the reader so no extra credentials
         are needed. Falls back to the current UTC time if the call fails or the field
-        is absent (ConfluenceReader does not include version info in its expand params).
+        is absent (ConfluenceReader does not include version/space info in its expand params).
         """
         try:
-            page = self._reader.confluence.get_page_by_id(page_id, expand="version")
+            page = self._reader.confluence.get_page_by_id(page_id, expand="version,space")
             when_str = page.get("version", {}).get("when")
+            space_key = page.get("space", {}).get("key") or None
+            last_modified = datetime.now(UTC)
             if when_str:
                 ts = parse_timestamp(when_str)
                 if ts:
-                    return ts
+                    last_modified = ts
+            return last_modified, space_key
         except (OSError, ValueError, KeyError, AttributeError) as e:
-            logger.warning(f"[{self.source_name}] Could not fetch version.when for page {page_id}: {e}")
-        return datetime.now(UTC)
+            logger.warning(f"[{self.source_name}] Could not fetch page info for page {page_id}: {e}")
+        return datetime.now(UTC), None
 
     def _build_reader(self) -> ConfluenceReader:
         """Construct an authenticated ConfluenceReader.
@@ -194,6 +210,19 @@ class ConfluenceIngestionJob(IngestionJob):
         the username (basic auth). When ``username`` is provided alongside
         ``api_token``, we pass the token as ``password`` to trigger basic auth.
         """
+        if self.oauth2:
+            return ConfluenceReader(
+                base_url=self.base_url,
+                cloud=self.cloud,
+                oauth2=self.oauth2,
+                cookies=self.cookies,
+            )
+        if self.cookies:
+            return ConfluenceReader(
+                base_url=self.base_url,
+                cloud=self.cloud,
+                cookies=self.cookies,
+            )
         if self.username:
             # Basic auth: Cloud (email + api_token as password) or Server (user + password)
             password = self.password or self.api_token
