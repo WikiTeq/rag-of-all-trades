@@ -9,7 +9,7 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 def _make_config(
     base_url="https://example.atlassian.net/wiki",
     api_token="token123",
-    username=None,
+    username="user@example.com",
     password=None,
     cloud=True,
     space_key="ENG",
@@ -72,7 +72,10 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         self.mock_reader_class = self.reader_patcher.start()
         self.mock_reader = Mock()
         self.mock_reader_class.return_value = self.mock_reader
-        self.mock_reader.confluence.get_page_by_id.return_value = {"version": {"when": "2024-01-01T00:00:00.000Z"}}
+        self.mock_reader.confluence.get_page_by_id.return_value = {
+            "version": {"when": "2024-01-01T00:00:00.000Z"},
+            "space": {"key": "ENG"},
+        }
 
     def tearDown(self):
         self.reader_patcher.stop()
@@ -143,10 +146,10 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         )
 
     def test_reader_constructed_with_api_token_only_uses_bearer(self):
-        self._make_job(api_token="myPAT", username=None)
+        self._make_job(api_token="myPAT", username=None, cloud=False)
         self.mock_reader_class.assert_called_once_with(
             base_url="https://example.atlassian.net/wiki",
-            cloud=True,
+            cloud=False,
             api_token="myPAT",
         )
 
@@ -288,6 +291,55 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         job = self._make_job()
         metadata = job.get_extra_metadata(item=item, _content="", _metadata={})
         self.assertEqual(metadata["url"], "")
+
+    def test_reader_constructed_with_oauth2(self):
+        oauth2 = {"client_id": "id", "token": {"access_token": "tok"}}
+        ConfluenceIngestionJob(
+            {"name": "x", "config": {"base_url": "https://x.atlassian.net/wiki", "oauth2": oauth2, "space_key": "ENG"}}
+        )
+        self.mock_reader_class.assert_called_once_with(
+            base_url="https://x.atlassian.net/wiki",
+            cloud=True,
+            oauth2=oauth2,
+            cookies=None,
+        )
+
+    def test_reader_constructed_with_cookies(self):
+        cookies = {"JSESSIONID": "abc123"}
+        ConfluenceIngestionJob(
+            {
+                "name": "x",
+                "config": {"base_url": "https://x.atlassian.net/wiki", "cookies": cookies, "space_key": "ENG"},
+            }
+        )
+        self.mock_reader_class.assert_called_once_with(
+            base_url="https://x.atlassian.net/wiki",
+            cloud=True,
+            cookies=cookies,
+        )
+
+    def test_list_items_injects_space_key_from_api(self):
+        doc = _make_doc(page_id="55", title="P")
+        doc.metadata.pop("space_key", None)
+        self.mock_reader.load_data.return_value = [doc]
+        self.mock_reader.confluence.get_page_by_id.return_value = {
+            "version": {"when": "2024-06-01T00:00:00.000Z"},
+            "space": {"key": "PROJ"},
+        }
+        job = self._make_job()
+        items = list(job.list_items())
+        self.assertEqual(items[0].source_ref.metadata["space_key"], "PROJ")
+
+    def test_list_items_does_not_overwrite_existing_space_key(self):
+        doc = _make_doc(page_id="66", title="P", space_key="ORIG")
+        self.mock_reader.load_data.return_value = [doc]
+        self.mock_reader.confluence.get_page_by_id.return_value = {
+            "version": {"when": "2024-06-01T00:00:00.000Z"},
+            "space": {"key": "OTHER"},
+        }
+        job = self._make_job()
+        list(job.list_items())
+        self.assertEqual(doc.metadata["space_key"], "ORIG")
 
 
 if __name__ == "__main__":
