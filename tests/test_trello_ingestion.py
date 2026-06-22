@@ -345,6 +345,21 @@ class TestTrelloGetItemName(unittest.TestCase):
         self.assertLessEqual(len(job.get_item_name(item)), 255)
 
 
+class TestTrelloGetItemChecksum(unittest.TestCase):
+    def test_returns_id_and_timestamp(self):
+        job = _make_job()
+        card = _make_card(card_id="abc123", date_last_activity="2024-06-01T12:00:00.000Z")
+        item = IngestionItem(id="trello:card:abc123", source_ref=(_make_board(), card, None))
+        checksum = job.get_item_checksum(item)
+        self.assertEqual(checksum, "abc123:2024-06-01T12:00:00.000Z")
+
+    def test_returns_none_when_no_timestamp(self):
+        job = _make_job()
+        card = _make_card(date_last_activity=None)
+        item = IngestionItem(id="trello:card:x", source_ref=(_make_board(), card, None))
+        self.assertIsNone(job.get_item_checksum(item))
+
+
 class TestTrelloGetExtraMetadata(unittest.TestCase):
     def test_metadata_contains_required_fields(self):
         job = _make_job()
@@ -408,6 +423,14 @@ class TestTrelloHelpers(unittest.TestCase):
         card.fetch_actions.side_effect = Exception("API error")
         result = job._build_comments_section(card)
         self.assertEqual(result, "")
+
+    def test_build_comments_passes_action_limit(self):
+        job = _make_job(max_comments=5)
+        card = Mock()
+        card.id = "abc"
+        card.fetch_actions.return_value = []
+        job._build_comments_section(card)
+        card.fetch_actions.assert_called_once_with(action_filter="commentCard", action_limit=5)
 
     def test_build_comments_uses_username_fallback(self):
         job = _make_job()

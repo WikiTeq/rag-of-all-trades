@@ -64,11 +64,11 @@ class TrelloIngestionJob(IngestionJob):
 
         cfg = config.get("config", {})
 
-        self.api_key = cfg.get("api_key", "").strip()
+        self.api_key = str(cfg.get("api_key") or "").strip()
         if not self.api_key:
             raise ValueError("api_key is required in Trello connector config")
 
-        self.api_token = cfg.get("api_token", "").strip()
+        self.api_token = str(cfg.get("api_token") or "").strip()
         if not self.api_token:
             raise ValueError("api_token is required in Trello connector config")
 
@@ -167,6 +167,18 @@ class TrelloIngestionJob(IngestionJob):
         _, card, _ = item.source_ref
         return slugify(f"trello_card_{card.id}")
 
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        """Return a cheap checksum from card ID + last-activity timestamp.
+
+        Avoids fetching full card content (and comments) just to detect changes.
+        Falls back to content-based MD5 when dateLastActivity is absent.
+        """
+        _, card, _ = item.source_ref
+        ts = card.dateLastActivity
+        if ts:
+            return f"{card.id}:{ts}"
+        return None
+
     def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
         """Return Trello-specific metadata fields."""
         board, card, trello_list = item.source_ref
@@ -206,7 +218,7 @@ class TrelloIngestionJob(IngestionJob):
     def _build_comments_section(self, card) -> str:
         """Fetch and format the latest N comments for a card as Markdown."""
         try:
-            actions = card.fetch_actions(action_filter="commentCard")
+            actions = card.fetch_actions(action_filter="commentCard", action_limit=self.max_comments)
         except Exception as e:
             logger.warning(f"[{self.source_name}] Failed to fetch comments for card {card.id}: {e}")
             return ""
@@ -214,8 +226,7 @@ class TrelloIngestionJob(IngestionJob):
         if not actions:
             return ""
 
-        # Actions are returned newest-first from the Trello API
-        top = actions[: self.max_comments]
+        top = sorted(actions, key=lambda a: a.get("date", ""), reverse=True)[: self.max_comments]
         lines: list[str] = ["## Comments"]
         for action in top:
             member_creator = action.get("memberCreator", {})
