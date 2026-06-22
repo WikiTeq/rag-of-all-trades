@@ -405,6 +405,16 @@ class TestGitHubIngestionJob(unittest.TestCase):
         self.assertEqual(metadata["file_path"], "README.md")
         self.assertIn("github.com/myorg/myrepo/blob/main/README.md", metadata["url"])
         self.assertEqual(metadata["file_name"], "README.md")
+        self.assertEqual(metadata["branch"], "main")
+        self.assertEqual(metadata["commit_sha"], "")
+
+    def test_get_extra_metadata_file_includes_commit_sha_when_set(self):
+        doc = _make_file_doc(file_path="README.md")
+        item = IngestionItem(id="github:myorg/myrepo:README.md", source_ref=doc)
+        job = self._make_job(owner="myorg", repo="myrepo", branch="", commit_sha="abc123")
+        metadata = job.get_extra_metadata(item=item, _content="", _metadata={})
+        self.assertEqual(metadata["commit_sha"], "abc123")
+        self.assertEqual(metadata["branch"], "")
 
     # ------------------------------------------------------------------
     # get_extra_metadata — issues
@@ -420,6 +430,8 @@ class TestGitHubIngestionJob(unittest.TestCase):
         self.assertEqual(metadata["state"], "open")
         self.assertEqual(metadata["labels"], ["bug"])
         self.assertIn("github.com/myorg/myrepo/issues/42", metadata["url"])
+        self.assertEqual(metadata["branch"], "main")
+        self.assertEqual(metadata["commit_sha"], "")
 
     def test_get_extra_metadata_issue_optional_fields_included_when_present_omitted_when_absent(self):
         doc = _make_issue_doc(number="7", state="closed")

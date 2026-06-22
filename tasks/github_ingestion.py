@@ -291,6 +291,8 @@ class GitHubIngestionJob(IngestionJob):
         doc = item.source_ref
         doc_metadata = doc.metadata or {}
 
+        ref: dict[str, Any] = {"branch": self.branch or "", "commit_sha": self.commit_sha or ""}
+
         is_issue = ":issue:" in item.id
         if is_issue:
             url = doc_metadata.get("source", doc_metadata.get("url", ""))
@@ -300,6 +302,7 @@ class GitHubIngestionJob(IngestionJob):
                 "item_type": "issue",
                 "issue_number": doc.doc_id,
                 "url": url,
+                **ref,
             }
             for field in ("state", "labels", "assignee", "closed_at"):
                 if doc_metadata.get(field) is not None:
@@ -313,6 +316,7 @@ class GitHubIngestionJob(IngestionJob):
                 "file_path": doc_metadata.get("file_path", ""),
                 "file_name": doc_metadata.get("file_name", ""),
                 "url": doc_metadata.get("url", ""),
+                **ref,
             }
 
     # ------------------------------------------------------------------
