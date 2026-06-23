@@ -174,9 +174,9 @@ class TrelloIngestionJob(IngestionJob):
         Falls back to content-based MD5 when dateLastActivity is absent.
         """
         _, card, _ = item.source_ref
-        ts = card.dateLastActivity
+        ts = parse_timestamp(card.dateLastActivity)
         if ts:
-            return f"{card.id}:{ts}"
+            return f"{card.id}:{ts.isoformat()}"
         return None
 
     def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
