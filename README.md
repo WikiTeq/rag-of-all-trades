@@ -412,8 +412,8 @@ Supported auth (mutually exclusive):
 - `api_token` alone — Bearer token (Server / Data Center PAT, requires `cloud: false`)
 - `username` + `api_token` — basic auth (Cloud: email + API token)
 - `username` + `password` — basic auth (Server / Data Center)
-- `oauth2` — OAuth2 credentials dict passed directly to the reader
-- `cookies` — session cookies dict passed directly to the reader (can combine with `oauth2`)
+- `oauth2` — Atlassian OAuth 2.0 dict: `{client_id: "...", token: {access_token: "...", token_type: "..."}}`
+- `cookies` — browser session cookies dict (e.g. exported via `atlassian.utils.parse_cookie_file()`)
 
 ```yaml
 # config.yaml
