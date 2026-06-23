@@ -351,7 +351,7 @@ class TestTrelloGetItemChecksum(unittest.TestCase):
         card = _make_card(card_id="abc123", date_last_activity="2024-06-01T12:00:00.000Z")
         item = IngestionItem(id="trello:card:abc123", source_ref=(_make_board(), card, None))
         checksum = job.get_item_checksum(item)
-        self.assertEqual(checksum, "abc123:2024-06-01T12:00:00.000Z")
+        self.assertEqual(checksum, "abc123:2024-06-01T12:00:00+00:00")
 
     def test_returns_none_when_no_timestamp(self):
         job = _make_job()
