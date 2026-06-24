@@ -70,7 +70,7 @@ class RAGQueryEngine:
         return refs
 
     # Retrieve top K with optional metadata filter
-    @observe(name="Query")
+    @observe(name="Query", as_type="retriever")
     def retrieve_top_k(
         self,
         query: str,
