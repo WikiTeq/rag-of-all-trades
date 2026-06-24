@@ -1,4 +1,5 @@
 from tasks.base import IngestionJob
+from tasks.confluence_ingestion import ConfluenceIngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.jira_ingestion import JiraIngestionJob
 from tasks.mediawiki_ingestion import MediaWikiIngestionJob
@@ -32,3 +33,4 @@ IngestionJobFactory.register("serpapi", SerpAPIIngestionJob)
 IngestionJobFactory.register("directory", DirectoryIngestionJob)
 IngestionJobFactory.register("web", WebIngestionJob)
 IngestionJobFactory.register("pipedrive", PipedriveIngestionJob)
+IngestionJobFactory.register("confluence", ConfluenceIngestionJob)
