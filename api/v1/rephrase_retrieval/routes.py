@@ -3,12 +3,14 @@ import logging
 from functools import wraps
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from langfuse import observe
 from llama_index.core.llms import ChatMessage, MessageRole
 
 from api.dependencies import require_api_key
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
 from utils.config import settings
 from utils.llm_embedding import llm
+from utils.observability import langfuse_client
 
 from .schema import QueryRequest, QueryResponse, SourceReference
 
@@ -51,6 +53,7 @@ def limit(func):
 
 @router.post("", response_model=QueryResponse)
 @limit
+@observe(name="rephrase")
 async def query_endpoint(
     request: Request,
     payload: QueryRequest,
@@ -77,7 +80,13 @@ async def query_endpoint(
                 content=f"Original Query: {payload.query}\n\nContent:\n\n{chunks_text}",
             ),
         ]
+        langfuse_client.update_current_generation(
+            input=[{"role": m.role.value, "content": m.content} for m in messages],
+        )
         llm_response = await llm.achat(messages)
+        langfuse_client.update_current_generation(
+            output=llm_response.message.content,
+        )
 
         source_refs = RAGQueryEngine.build_references(nodes_with_score)
 
