@@ -42,7 +42,7 @@ celery_app.conf.beat_schedule = {}
 @worker_process_init.connect
 def init_worker(**kwargs):
     engine.dispose()
-    setup_observability(settings.OBSERVABILITY)
+    setup_observability()
 
 
 @worker_process_shutdown.connect

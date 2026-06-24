@@ -9,19 +9,14 @@ _instrumentor = LlamaIndexInstrumentor()
 langfuse_client = get_client()
 
 
-def setup_observability(config: dict) -> None:
-    """Configure Langfuse observability for LlamaIndex if enabled.
+def setup_observability() -> None:
+    """Configure Langfuse observability for LlamaIndex.
 
     Uses OpenInference instrumentation to capture LlamaIndex spans and
     export them to Langfuse via OpenTelemetry. Credentials are read from
     environment variables (LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY,
-    LANGFUSE_BASE_URL) set via config.yaml interpolation.
+    LANGFUSE_BASE_URL). Set LANGFUSE_TRACING_ENABLED=false to disable.
     """
-    tracing_enabled = config.get("tracing_enabled")
-    if str(tracing_enabled).lower() in ("false", "0", "none", ""):
-        logger.info("Observability disabled")
-        return
-
     _instrumentor.instrument()
 
     try:
