@@ -275,6 +275,7 @@ class TestConfluenceIngestionJob(unittest.TestCase):
     def test_get_document_metadata_contains_required_fields(self):
         page_url = "https://example.atlassian.net/wiki/spaces/ENG/pages/10"
         doc = _make_doc(page_id="10", title="My Page", url=page_url, space_key="ENG")
+        doc.metadata["status"] = "current"
         item = IngestionItem(id="confluence:10", source_ref=doc)
         job = self._make_job()
         metadata = job.get_extra_metadata(item=item, _content="", _metadata={})
@@ -282,6 +283,7 @@ class TestConfluenceIngestionJob(unittest.TestCase):
         self.assertEqual(metadata["page_id"], "10")
         self.assertEqual(metadata["space_key"], "ENG")
         self.assertEqual(metadata["url"], page_url)
+        self.assertEqual(metadata["status"], "current")
 
     def test_get_document_metadata_missing_url_falls_back_to_empty_string(self):
         doc = Mock()
