@@ -176,6 +176,7 @@ class ConfluenceIngestionJob(IngestionJob):
             "title": doc.metadata.get("title", "") or "",
             "page_id": doc.metadata.get("page_id") or doc.metadata.get("id", "") or "",
             "space_key": doc.metadata.get("space_key", "") or "",
+            "status": doc.metadata.get("status", "") or "",
         }
 
     def _fetch_page_info(self, page_id: str) -> tuple[datetime, str | None]:
