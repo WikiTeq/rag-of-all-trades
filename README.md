@@ -168,6 +168,8 @@ Set `LANGFUSE_BASE_URL=http://langfuse-web:3000` (the Docker service hostname) s
 
 To see traces immediately during development, set `LANGFUSE_FLUSH_AT=1` in `.env` (default is 15 events per batch).
 
+To prevent full document text from appearing in embedding spans (reduces trace size), set `OPENINFERENCE_HIDE_EMBEDDINGS_TEXT=true` in `.env`.
+
 ## Connectors
 
 The service supports multiple data sources, including multiple data sources of the same type, each with its own
