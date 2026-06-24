@@ -122,9 +122,6 @@ sources:
   #    # filter_mail_folders:
   #    #   - inbox
 
-observability:
-  tracing_enabled: ${LANGFUSE_TRACING_ENABLED}
-
 embedding:
   provider: openrouter
   model_config: sentence-transformers/all-mpnet-base-v2

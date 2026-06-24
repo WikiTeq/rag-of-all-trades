@@ -100,7 +100,7 @@ async def app_lifespan(app: FastAPI):
     app.state.rag_engine = RAGQueryEngine(app.state.vector_store)
     logger.info("Vector store and RAG engine initialized")
 
-    setup_observability(settings.OBSERVABILITY)
+    setup_observability()
 
     # Yield to FastAPI runtime
     yield

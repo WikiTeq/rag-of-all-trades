@@ -7,31 +7,38 @@ from utils.observability import setup_observability
 
 class TestSetupObservability(unittest.TestCase):
     def setUp(self):
-        utils.observability._instrumentor = MagicMock(is_instrumented_by_opentelemetry=False)
+        utils.observability._instrumentor = MagicMock()
 
-    @patch("utils.observability._instrumentor")
-    def test_setup_observability_disabled(self, mock_instrumentor):
-        setup_observability({"tracing_enabled": False})
+    def test_setup_observability_calls_instrument(self):
+        with patch("utils.observability.langfuse_client") as mock_client:
+            mock_client.auth_check.return_value = True
+            setup_observability()
 
-        mock_instrumentor.instrument.assert_not_called()
+        utils.observability._instrumentor.instrument.assert_called_once()
 
-    @patch("utils.observability._instrumentor")
-    def test_setup_observability_disabled_string(self, mock_instrumentor):
-        setup_observability({"tracing_enabled": "false"})
+    def test_setup_observability_auth_check_success(self):
+        with patch("utils.observability.langfuse_client") as mock_client:
+            mock_client.auth_check.return_value = True
+            with self.assertLogs("utils.observability", level="INFO") as cm:
+                setup_observability()
 
-        mock_instrumentor.instrument.assert_not_called()
+        self.assertTrue(any("authenticated" in line for line in cm.output))
 
-    @patch("utils.observability._instrumentor")
-    def test_setup_observability_enabled(self, mock_instrumentor):
-        setup_observability({"tracing_enabled": True})
+    def test_setup_observability_auth_check_failure(self):
+        with patch("utils.observability.langfuse_client") as mock_client:
+            mock_client.auth_check.return_value = False
+            with self.assertLogs("utils.observability", level="WARNING") as cm:
+                setup_observability()
 
-        mock_instrumentor.instrument.assert_called_once()
+        self.assertTrue(any("authentication failed" in line for line in cm.output))
 
-    @patch("utils.observability._instrumentor")
-    def test_setup_observability_missing_enabled_key(self, mock_instrumentor):
-        setup_observability({})
+    def test_setup_observability_auth_check_exception(self):
+        with patch("utils.observability.langfuse_client") as mock_client:
+            mock_client.auth_check.side_effect = Exception("unreachable")
+            with self.assertLogs("utils.observability", level="WARNING") as cm:
+                setup_observability()
 
-        mock_instrumentor.instrument.assert_not_called()
+        self.assertTrue(any("auth check failed" in line for line in cm.output))
 
 
 if __name__ == "__main__":

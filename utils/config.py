@@ -145,12 +145,6 @@ class Settings:
         return sources
 
     @property
-    def OBSERVABILITY(self) -> dict:
-        return {
-            "tracing_enabled": self.yaml.get("observability", {}).get("tracing_enabled", False),
-        }
-
-    @property
     def LLM(self):
         return {
             "api_key": self.env.OPENROUTER_API_KEY,
