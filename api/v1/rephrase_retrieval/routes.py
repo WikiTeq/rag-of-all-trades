@@ -80,6 +80,8 @@ async def query_endpoint(
                 content=f"Original Query: {payload.query}\n\nContent:\n\n{chunks_text}",
             ),
         ]
+        # llm.achat() is not parsed by OpenInference into a structured span,
+        # so we manually set input/output on the @observe span via Langfuse SDK.
         langfuse_client.update_current_generation(
             input=[{"role": m.role.value, "content": m.content} for m in messages],
         )
