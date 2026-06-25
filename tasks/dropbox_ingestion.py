@@ -88,12 +88,11 @@ class DropboxIngestionJob(IngestionJob):
                         continue
                     # Directory filter: match any ancestor folder name (not prefix)
                     parent = entry.path_lower.rsplit("/", 1)[0]
-                    if parent:
-                        parts = {p for p in parent.split("/") if p}
-                        if self.include_directories is not None and not (parts & self.include_directories):
-                            continue
-                        if self.exclude_directories is not None and parts & self.exclude_directories:
-                            continue
+                    parts = {p for p in parent.split("/") if p}
+                    if self.include_directories is not None and not (parts & self.include_directories):
+                        continue
+                    if self.exclude_directories is not None and parts & self.exclude_directories:
+                        continue
                     yield entry
 
             if not result.has_more:
@@ -128,18 +127,22 @@ class DropboxIngestionJob(IngestionJob):
                         lm = lm.replace(tzinfo=UTC)
                     last_modified = lm
 
-                yield IngestionItem(
+                item = IngestionItem(
                     id=entry.id,
                     source_ref=entry.path_display,
                     last_modified=last_modified,
                 )
+                item._metadata_cache["path_lower"] = entry.path_lower
+                item._metadata_cache["rev"] = entry.rev
+                item._metadata_cache["content_hash"] = entry.content_hash
+                yield item
 
     # ------------------------------------------------------------------
     # Content extraction
     # ------------------------------------------------------------------
 
     def get_raw_content(self, item: IngestionItem) -> str:
-        path: str = item.source_ref
+        path: str = item._metadata_cache.get("path_lower", item.source_ref)
         try:
             _, response = self.dbx.files_download(path)
             content_bytes: bytes = response.content
@@ -165,6 +168,12 @@ class DropboxIngestionJob(IngestionJob):
 
     def get_item_name(self, item: IngestionItem) -> str:
         return sanitize_ascii_key(item.source_ref).strip("_") or "dropbox_file"
+
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        rev = item._metadata_cache.get("rev")
+        if rev:
+            return str(rev)
+        return item._metadata_cache.get("content_hash")
 
     # ------------------------------------------------------------------
     # Metadata
