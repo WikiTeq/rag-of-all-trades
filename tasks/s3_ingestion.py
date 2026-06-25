@@ -19,7 +19,9 @@ class S3IngestionJob(IngestionJob):
 
         cfg = config.get("config", {})
 
-        self.bucket = cfg.get("bucket")
+        self.bucket = cfg.get("bucket", "").strip()
+        if not self.bucket:
+            raise ValueError("S3 connector requires 'bucket' in config")
 
         client_params = {
             "endpoint": cfg.get("endpoint"),
