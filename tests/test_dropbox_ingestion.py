@@ -36,6 +36,8 @@ def _make_file_entry(path_display, path_lower=None, file_id="id:abc123", client_
     entry.path_lower = path_lower or path_display.lower()
     entry.id = file_id
     entry.client_modified = client_modified or datetime(2024, 6, 1, tzinfo=UTC)
+    entry.rev = "rev_default"
+    entry.content_hash = "hash_default"
     return entry
 
 
@@ -304,17 +306,29 @@ class TestDropboxListItems(unittest.TestCase):
 
         self.mock_dbx.files_list_folder.assert_called_once_with("/Docs/Engineering", recursive=True)
 
-    def test_list_items_root_file_bypasses_directory_filter(self):
+    def test_list_items_root_file_excluded_by_directory_filter(self):
         entry = _make_file_entry("/file.md", path_lower="/file.md", file_id="id:root")
         self.mock_dbx.files_list_folder.return_value = self._make_result([entry])
 
         job = DropboxIngestionJob(_make_config({"paths": ["/"], "include_directories": "docs"}))
         items = list(job.list_items())
 
-        self.assertEqual(len(items), 1)
-        self.assertEqual(items[0].id, "id:root")
-        self.assertEqual(items[0].source_ref, "/file.md")
+        self.assertEqual(items, [])
         self.mock_dbx.files_list_folder.assert_called_once_with("", recursive=True)
+
+    def test_list_items_metadata_cache_populated(self):
+        entry = _make_file_entry("/Docs/file.md", file_id="id:1")
+        entry.rev = "abc123rev"
+        entry.content_hash = "deadbeef"
+        entry.path_lower = "/docs/file.md"
+        self.mock_dbx.files_list_folder.return_value = self._make_result([entry])
+
+        job = DropboxIngestionJob(_make_config())
+        items = list(job.list_items())
+
+        self.assertEqual(items[0]._metadata_cache["rev"], "abc123rev")
+        self.assertEqual(items[0]._metadata_cache["content_hash"], "deadbeef")
+        self.assertEqual(items[0]._metadata_cache["path_lower"], "/docs/file.md")
 
 
 class TestDropboxGetRawContent(unittest.TestCase):
@@ -330,13 +344,25 @@ class TestDropboxGetRawContent(unittest.TestCase):
         self.dropbox_patcher.stop()
         self.md_patcher.stop()
 
-    def _make_item(self, path="/Docs/file.md"):
-        return IngestionItem(id="id:1", source_ref=path)
+    def _make_item(self, path="/Docs/file.md", path_lower=None):
+        item = IngestionItem(id="id:1", source_ref=path)
+        if path_lower is not None:
+            item._metadata_cache["path_lower"] = path_lower
+        return item
 
     def _mock_download(self, content: bytes):
         response = Mock()
         response.content = content
         self.mock_dbx.files_download.return_value = (Mock(), response)
+
+    def test_downloads_via_path_lower(self):
+        self._mock_download(b"text")
+        self.mock_md.convert_stream.return_value = Mock(text_content="text")
+
+        job = DropboxIngestionJob(_make_config())
+        job.get_raw_content(self._make_item("/Docs/File.md", path_lower="/docs/file.md"))
+
+        self.mock_dbx.files_download.assert_called_once_with("/docs/file.md")
 
     def test_returns_markdown_converted_text(self):
         self._mock_download(b"raw bytes")
@@ -412,6 +438,32 @@ class TestDropboxGetItemName(unittest.TestCase):
         # A path that sanitizes to empty should return fallback
         name = self.job.get_item_name(self._item(""))
         self.assertEqual(name, "dropbox_file")
+
+
+class TestDropboxGetItemChecksum(unittest.TestCase):
+    def setUp(self):
+        with patch("tasks.dropbox_ingestion.Dropbox"), patch("tasks.dropbox_ingestion.MarkItDown"):
+            self.job = DropboxIngestionJob(_make_config())
+
+    def _item_with_cache(self, rev=None, content_hash=None):
+        item = IngestionItem(id="id:x", source_ref="/file.md")
+        if rev is not None:
+            item._metadata_cache["rev"] = rev
+        if content_hash is not None:
+            item._metadata_cache["content_hash"] = content_hash
+        return item
+
+    def test_returns_rev_when_present(self):
+        item = self._item_with_cache(rev="rev42", content_hash="hash99")
+        self.assertEqual(self.job.get_item_checksum(item), "rev42")
+
+    def test_falls_back_to_content_hash(self):
+        item = self._item_with_cache(content_hash="hash99")
+        self.assertEqual(self.job.get_item_checksum(item), "hash99")
+
+    def test_returns_none_when_empty_cache(self):
+        item = IngestionItem(id="id:x", source_ref="/file.md")
+        self.assertIsNone(self.job.get_item_checksum(item))
 
 
 class TestDropboxGetExtraMetadata(unittest.TestCase):
