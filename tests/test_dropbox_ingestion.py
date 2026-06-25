@@ -476,6 +476,12 @@ class TestDropboxGetExtraMetadata(unittest.TestCase):
         meta = self.job.get_extra_metadata(item, "", {})
         self.assertEqual(meta["file_path"], "/Engineering/notes.md")
 
+    def test_metadata_file_path_is_display_not_lower(self):
+        item = IngestionItem(id="id:3", source_ref="/Engineering/Notes.md")
+        item._metadata_cache["path_lower"] = "/engineering/notes.md"
+        meta = self.job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["file_path"], "/Engineering/Notes.md")
+
 
 if __name__ == "__main__":
     unittest.main()
