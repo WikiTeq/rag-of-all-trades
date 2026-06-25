@@ -570,10 +570,10 @@ class TestSlackIngestionJob(unittest.TestCase):
         self.mock_client.conversations_replies.assert_not_called()
 
     # ------------------------------------------------------------------
-    # _fetch_message_with_replies — thread concatenation
+    # _yield_thread_messages — individual reply items
     # ------------------------------------------------------------------
 
-    def test_fetch_message_with_replies_concatenates_thread(self):
+    def test_yield_thread_messages_yields_individual_items(self):
         self.mock_client.conversations_replies.return_value = _make_replies_result(
             [
                 _make_message("1700000001.000001", "parent msg"),
@@ -581,11 +581,13 @@ class TestSlackIngestionJob(unittest.TestCase):
             ]
         )
         job = self._make_job(channel_ids="C123")
-        text = job._fetch_message_with_replies("C123", "1700000001.000001")
-        self.assertIn("parent msg", text)
-        self.assertIn("reply 1", text)
+        items = list(job._yield_thread_messages("C123", "1700000001.000001"))
+        self.assertEqual(len(items), 2)
+        texts = [item.source_ref["text"] for item in items]
+        self.assertIn("parent msg", texts)
+        self.assertIn("reply 1", texts)
 
-    def test_fetch_message_with_replies_skips_messages_without_text(self):
+    def test_yield_thread_messages_skips_messages_without_text(self):
         self.mock_client.conversations_replies.return_value = _make_replies_result(
             [
                 _make_message("1700000001.000001", "parent msg"),
@@ -595,9 +597,40 @@ class TestSlackIngestionJob(unittest.TestCase):
             ]
         )
         job = self._make_job(channel_ids="C123")
-        text = job._fetch_message_with_replies("C123", "1700000001.000001")
-        self.assertIn("parent msg", text)
-        self.assertIn("reply with text", text)
+        items = list(job._yield_thread_messages("C123", "1700000001.000001"))
+        texts = [item.source_ref["text"] for item in items]
+        self.assertIn("parent msg", texts)
+        self.assertIn("reply with text", texts)
+        self.assertEqual(len(items), 2)
+
+    def test_yield_thread_messages_sets_thread_ts(self):
+        self.mock_client.conversations_replies.return_value = _make_replies_result(
+            [
+                _make_message("1700000001.000001", "parent"),
+                _make_message("1700000001.000002", "reply"),
+            ]
+        )
+        job = self._make_job(channel_ids="C123")
+        items = list(job._yield_thread_messages("C123", "1700000001.000001"))
+        for item in items:
+            self.assertEqual(item.source_ref["thread_ts"], "1700000001.000001")
+
+    def test_list_items_threaded_message_yields_individual_reply_items(self):
+        threaded_msg = {"ts": "1700000001.000001", "text": "root", "reply_count": 2}
+        self.mock_client.conversations_history.return_value = _make_history_result([threaded_msg])
+        self.mock_client.conversations_replies.return_value = _make_replies_result(
+            [
+                _make_message("1700000001.000001", "root msg"),
+                _make_message("1700000001.000002", "reply 1"),
+            ]
+        )
+        job = self._make_job(channel_ids="C123")
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 2)
+        self.mock_client.conversations_replies.assert_called_once()
+        for item in items:
+            self.assertEqual(item.source_ref["thread_ts"], "1700000001.000001")
 
     # ------------------------------------------------------------------
     # Integration: process_item

@@ -23,7 +23,7 @@ class SlackIngestionJob(IngestionJob):
     """Ingestion connector for Slack workspaces.
 
     Uses the Slack SDK WebClient directly for channel discovery and message
-    fetching. Each message (with its thread replies) becomes an individual
+    fetching. Each message and each thread reply becomes an individual
     IngestionItem, compatible with the base class contract.
 
     Configuration (config.yaml):
@@ -93,9 +93,9 @@ class SlackIngestionJob(IngestionJob):
     def list_items(self) -> Iterator[IngestionItem]:
         """Resolve channel IDs and yield one IngestionItem per message.
 
-        Each top-level message (with its thread replies concatenated) becomes
-        a separate IngestionItem so the base class can checksum, dedup, chunk,
-        and embed them individually.
+        Each message (including individual thread replies) becomes a separate
+        IngestionItem so the base class can checksum, dedup, chunk, and embed
+        them individually.
         """
         logger.info(f"[{self.source_name}] Discovering Slack channels")
 
@@ -107,7 +107,7 @@ class SlackIngestionJob(IngestionJob):
             yield from self._yield_messages(channel_id)
 
     def get_raw_content(self, item: IngestionItem) -> str:
-        """Return the text of a single Slack message (with thread replies)."""
+        """Return the text of a single Slack message or thread reply."""
         return item.source_ref.get("text", "") or ""
 
     def get_item_name(self, item: IngestionItem) -> str:
@@ -185,7 +185,7 @@ class SlackIngestionJob(IngestionJob):
     def _yield_messages(self, channel_id: str) -> Iterator[IngestionItem]:
         """Fetch all top-level messages from a channel and yield one IngestionItem each.
 
-        Thread replies are fetched for each message and concatenated into its text.
+        For threaded messages, replies are fetched and yielded as individual items.
         """
         client = self._client
         next_cursor = None
@@ -222,21 +222,21 @@ class SlackIngestionJob(IngestionJob):
                         continue
                     has_replies = int(message.get("reply_count", 0)) > 0
                     if has_replies:
-                        text = self._fetch_message_with_replies(channel_id, ts)
+                        yield from self._yield_thread_messages(channel_id, ts)
                     else:
                         text = self._resolve_mentions(message.get("text", "") or "")
-                    last_modified = datetime.fromtimestamp(float(ts), tz=UTC) if ts else None
-                    yield IngestionItem(
-                        id=f"slack:{self.source_name}:{channel_id}:{ts}",
-                        source_ref={
-                            "channel_id": channel_id,
-                            "message_ts": ts,
-                            "thread_ts": thread_ts if thread_ts else None,
-                            "user_id": message.get("user", ""),
-                            "text": text,
-                        },
-                        last_modified=last_modified,
-                    )
+                        last_modified = datetime.fromtimestamp(float(ts), tz=UTC) if ts else None
+                        yield IngestionItem(
+                            id=f"slack:{self.source_name}:{channel_id}:{ts}",
+                            source_ref={
+                                "channel_id": channel_id,
+                                "message_ts": ts,
+                                "thread_ts": None,
+                                "user_id": message.get("user", ""),
+                                "text": text,
+                            },
+                            last_modified=last_modified,
+                        )
 
                 # TODO: track latest ingested TS per channel and use it as oldest on subsequent
                 # runs to skip already-seen messages and reduce API calls (at the cost of missing edits)
@@ -257,11 +257,11 @@ class SlackIngestionJob(IngestionJob):
                     logger.error(f"[{self.source_name}] Error fetching messages from {channel_id}: {e}")
                     break
 
-    def _fetch_message_with_replies(self, channel_id: str, message_ts: str) -> str:
-        """Fetch a message and its thread replies, returning all text concatenated."""
+    def _yield_thread_messages(self, channel_id: str, thread_ts: str) -> Iterator[IngestionItem]:
+        """Fetch all messages in a thread and yield each as an individual IngestionItem."""
         client = self._client
-        texts: list[str] = []
         next_cursor = None
+        earliest_ts = str(self.earliest_date.timestamp()) if self.earliest_date else None
         latest_ts = (
             str((self.latest_date + timedelta(days=1) - timedelta(microseconds=1)).timestamp())
             if self.latest_date
@@ -272,18 +272,33 @@ class SlackIngestionJob(IngestionJob):
             try:
                 kwargs: dict[str, Any] = {
                     "channel": channel_id,
-                    "ts": message_ts,
+                    "ts": thread_ts,
                     "cursor": next_cursor,
                     "latest": latest_ts,
                 }
+                if earliest_ts:
+                    kwargs["oldest"] = earliest_ts
 
                 result = client.conversations_replies(**kwargs)
                 for m in result.get("messages", []):
                     if m.get("subtype"):
                         continue
+                    ts = m.get("ts", "")
                     text = m.get("text")
-                    if text:
-                        texts.append(self._resolve_mentions(text))
+                    if not text:
+                        continue
+                    last_modified = datetime.fromtimestamp(float(ts), tz=UTC) if ts else None
+                    yield IngestionItem(
+                        id=f"slack:{self.source_name}:{channel_id}:{ts}",
+                        source_ref={
+                            "channel_id": channel_id,
+                            "message_ts": ts,
+                            "thread_ts": thread_ts,
+                            "user_id": m.get("user", ""),
+                            "text": self._resolve_mentions(text),
+                        },
+                        last_modified=last_modified,
+                    )
 
                 if not result["has_more"]:
                     break
@@ -296,10 +311,8 @@ class SlackIngestionJob(IngestionJob):
                     logger.error(f"[{self.source_name}] Rate limited, sleeping {retry_after}s")
                     time.sleep(retry_after)
                 else:
-                    logger.error(f"[{self.source_name}] Error fetching replies for {message_ts}: {e}")
+                    logger.error(f"[{self.source_name}] Error fetching replies for {thread_ts}: {e}")
                     break
-
-        return "\n\n".join(texts)
 
     def _resolve_channel_ids(self) -> list[str]:
         """Return the list of channel IDs to ingest."""
