@@ -14,6 +14,7 @@ from api.v1.chunk_retrieval.modules import RAGQueryEngine
 from celery_app import celery_app
 from utils.config import settings
 from utils.logger import configure_logging
+from utils.observability import setup_observability
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -98,6 +99,8 @@ async def app_lifespan(app: FastAPI):
     # Initialize RAG engine
     app.state.rag_engine = RAGQueryEngine(app.state.vector_store)
     logger.info("Vector store and RAG engine initialized")
+
+    setup_observability()
 
     # Yield to FastAPI runtime
     yield

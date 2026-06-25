@@ -41,6 +41,10 @@ class EnvSettings(BaseSettings):
     ORT_DISABLE_GPU: int = 1
     ORT_DYLD_DISABLE_GPU: int = 1
 
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_BASE_URL: str = "https://cloud.langfuse.com"
+
     CORS_ORIGINS: list[str] = []
 
     ENABLE_RATE_LIMIT: bool = False

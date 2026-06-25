@@ -8,11 +8,13 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
+from langfuse import observe
 from llama_index.core import Document
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.helper_classes.metadata_tracker import MetadataTracker
 from tasks.helper_classes.vector_store import VectorStoreManager
+from utils.observability import langfuse_client
 
 logger = logging.getLogger(__name__)
 
@@ -272,6 +274,7 @@ class IngestionJob(ABC):
             logger.exception(f"Failed to process item {item}")
             return 0
 
+    @observe(name="Ingestion")
     def run(self):
         """Execute the complete ingestion job for this data source.
 
@@ -282,6 +285,8 @@ class IngestionJob(ABC):
         Returns:
             str: Summary message indicating total items processed, skipped, and any errors
         """
+        langfuse_client.update_current_span(name=f"Ingestion: {self.source_name}")
+
         total = 0
         skipped = 0
 
