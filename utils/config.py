@@ -110,7 +110,10 @@ class Settings:
             name = source.get("name", "unknown_source")
             config = source.get("config", {})
 
-            schedule_seconds = int(config.get("schedules", 3600))
+            try:
+                schedule_seconds = int(config.get("schedules") or 3600)
+            except (TypeError, ValueError):
+                schedule_seconds = 3600
             sources.append({"type": src_type, "name": name, "config": config, "schedule": schedule_seconds})
         return sources
 
