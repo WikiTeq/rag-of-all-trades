@@ -109,19 +109,60 @@ class JiraIngestionJob(IngestionJob):
     # ------------------------------------------------------------------
 
     def list_items(self) -> Iterator[IngestionItem]:
-        """Query Jira with the configured JQL and yield one IngestionItem per issue.
-
-        Paginates automatically until max_results is reached or all matching
-        issues have been returned.
-        """
+        """Query Jira with the configured JQL and yield one IngestionItem per issue."""
         logger.info(f"[{self.source_name}] Listing issues with JQL: {self.jql!r}")
 
-        page_size = min(100, self.max_results)  # Jira Cloud caps at 100 per request
-        start_at = 0
         fetched = 0
+        if self._jira._is_cloud:
+            fetched = yield from self._list_items_cloud(fetched)
+        else:
+            fetched = yield from self._list_items_server(fetched)
+
+        logger.info(f"[{self.source_name}] Found {fetched} issue(s)")
+
+    def _list_items_cloud(self, fetched: int) -> Iterator[IngestionItem]:
+        """Paginate using nextPageToken (Jira Cloud)."""
+        next_page_token = None
 
         while fetched < self.max_results:
-            batch_limit = min(page_size, self.max_results - fetched)
+            batch_limit = min(100, self.max_results - fetched)
+            try:
+                issues = self._jira.enhanced_search_issues(
+                    self.jql,
+                    nextPageToken=next_page_token,
+                    maxResults=batch_limit,
+                    fields="summary,description,status,assignee,reporter,labels,project,priority,issuetype,updated,created,comment",
+                )
+            except Exception as e:
+                logger.error(f"[{self.source_name}] Failed to search issues: {e}")
+                break
+
+            if not issues:
+                break
+
+            for issue in issues:
+                if fetched >= self.max_results:
+                    break
+                updated_at = parse_timestamp(getattr(issue.fields, "updated", None))
+                yield IngestionItem(
+                    id=f"jira:{issue.key}",
+                    source_ref=issue,
+                    last_modified=updated_at,
+                )
+                fetched += 1
+
+            next_page_token = issues.nextPageToken
+            if not next_page_token:
+                break
+
+        return fetched
+
+    def _list_items_server(self, fetched: int) -> Iterator[IngestionItem]:
+        """Paginate using startAt offset (Jira Server/Data Center)."""
+        start_at = 0
+
+        while fetched < self.max_results:
+            batch_limit = min(100, self.max_results - fetched)
             try:
                 issues = self._jira.search_issues(
                     self.jql,
@@ -137,6 +178,8 @@ class JiraIngestionJob(IngestionJob):
                 break
 
             for issue in issues:
+                if fetched >= self.max_results:
+                    break
                 updated_at = parse_timestamp(getattr(issue.fields, "updated", None))
                 yield IngestionItem(
                     id=f"jira:{issue.key}",
@@ -144,16 +187,13 @@ class JiraIngestionJob(IngestionJob):
                     last_modified=updated_at,
                 )
                 fetched += 1
-                if fetched >= self.max_results:
-                    break
 
-            # Stop paginating if we got fewer results than requested
             if len(issues) < batch_limit:
                 break
 
             start_at += len(issues)
 
-        logger.info(f"[{self.source_name}] Found {fetched} issue(s)")
+        return fetched
 
     def get_raw_content(self, item: IngestionItem) -> str:
         """Build Markdown-formatted content from a Jira issue.
