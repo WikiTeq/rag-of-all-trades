@@ -27,6 +27,8 @@ def _make_retriever(db=None) -> DocumentRetriever:
 def _make_app():
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
+    app.state.limiter = MagicMock()
+    app.state.limiter.limit.return_value = lambda f: f
     return app, _get_retriever
 
 
@@ -116,10 +118,10 @@ class TestDocumentRetrieverGetDocuments(unittest.TestCase):
 
 class TestDocumentRoutes(unittest.TestCase):
     def setUp(self):
-        app, self._get_retriever = _make_app()
-        self.app = app
         self._api_key_patch = patch("api.dependencies.settings.env.API_KEY", "")
         self._api_key_patch.start()
+        app, self._get_retriever = _make_app()
+        self.app = app
         self.client = TestClient(app, raise_server_exceptions=True)
 
     def _override(self, retriever):

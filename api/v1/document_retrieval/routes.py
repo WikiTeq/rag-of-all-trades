@@ -1,9 +1,11 @@
 import logging
 from collections.abc import Generator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.dependencies import require_api_key
+from api.v1.utils import limit
+from utils.config import settings
 from utils.db import SessionLocal
 
 from .modules import DocumentRetriever
@@ -22,7 +24,9 @@ def _get_retriever() -> Generator[DocumentRetriever, None, None]:
 
 
 @router.post("", response_model=DocumentOut, dependencies=[Depends(require_api_key)])
+@limit(settings.env.CHUNK_RATE_LIMIT)
 async def get_document(
+    request: Request,
     payload: DocumentRequest,
     retriever: DocumentRetriever = Depends(_get_retriever),
 ):
@@ -47,7 +51,9 @@ async def get_document(
 
 
 @router.post("s", response_model=list[DocumentOut], dependencies=[Depends(require_api_key)])
+@limit(settings.env.CHUNK_RATE_LIMIT)
 async def get_documents(
+    request: Request,
     payload: DocumentsRequest,
     retriever: DocumentRetriever = Depends(_get_retriever),
 ):
