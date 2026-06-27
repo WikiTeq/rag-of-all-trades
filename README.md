@@ -15,6 +15,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Ingestion from MediaWiki with Wiki-to-Markdown conversion via [html2text](https://github.com/Alir3z4/html2text)
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
+* BookStack ingestion of shelves, books, chapters, and pages via the REST API
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -27,6 +28,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Jira
 * Web
 * Pipedrive
+* BookStack
 
 ## Embeddings support
 
@@ -391,6 +393,33 @@ sources:
 
 PIPEDRIVE1_API_TOKEN=your-pipedrive-api-token
 PIPEDRIVE1_SCHEDULES=3600
+```
+
+### BookStack Connector
+
+Ingests shelves, books, chapters, and pages from a [BookStack](https://www.bookstackapp.com/) instance using the BookStack REST API.
+
+```yaml
+sources:
+  - type: "bookstack"
+    name: "bookstack1"
+    config:
+      base_url: "${BOOKSTACK1_BASE_URL}"
+      token_id: "${BOOKSTACK1_TOKEN_ID}"
+      token_secret: "${BOOKSTACK1_TOKEN_SECRET}"
+      item_types:              # optional, default: pages
+        - "shelves"
+        - "books"
+        - "chapters"
+        - "pages"
+      schedules: "${BOOKSTACK1_SCHEDULES}"
+```
+
+```dotenv
+BOOKSTACK1_BASE_URL=https://wiki.example.com
+BOOKSTACK1_TOKEN_ID=your-token-id-here
+BOOKSTACK1_TOKEN_SECRET=your-token-secret-here
+BOOKSTACK1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`

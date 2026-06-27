@@ -1,4 +1,5 @@
 from tasks.base import IngestionJob
+from tasks.bookstack_ingestion import BookStackIngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.jira_ingestion import JiraIngestionJob
 from tasks.mediawiki_ingestion import MediaWikiIngestionJob
@@ -25,6 +26,7 @@ class IngestionJobFactory:
         return job_class(config)
 
 
+IngestionJobFactory.register("bookstack", BookStackIngestionJob)
 IngestionJobFactory.register("s3", S3IngestionJob)
 IngestionJobFactory.register("mediawiki", MediaWikiIngestionJob)
 IngestionJobFactory.register("jira", JiraIngestionJob)

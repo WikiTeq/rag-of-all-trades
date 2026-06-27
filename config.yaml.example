@@ -122,6 +122,20 @@ sources:
   #    # filter_mail_folders:
   #    #   - inbox
 
+  #- type: "bookstack"
+  #  name: "bookstack1"
+  #  config:
+  #    base_url: "${BOOKSTACK1_BASE_URL}"
+  #    token_id: "${BOOKSTACK1_TOKEN_ID}"
+  #    token_secret: "${BOOKSTACK1_TOKEN_SECRET}"
+  #    item_types:              # optional, default: pages
+  #      - "shelves"
+  #      - "books"
+  #      - "chapters"
+  #      - "pages"
+  #    schedules: "${BOOKSTACK1_SCHEDULES}"
+  #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
+
 embedding:
   provider: openrouter
   model_config: sentence-transformers/all-mpnet-base-v2
