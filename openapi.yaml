@@ -31,7 +31,7 @@ paths:
       - Applications APIs
       summary: Query Endpoint
       description: Retrieve top-k chunks from vector store without LLM answer.
-      operationId: query_endpoint_api_v1_query__post
+      operationId: query_endpoint_api_v1_query_post
       requestBody:
         content:
           application/json:
@@ -51,13 +51,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
   /api/v1/rephrase:
     post:
       tags:
       - Applications APIs
       summary: Query Endpoint
-      description: Rephrase Node for by default 5 chunks using LLM.
-      operationId: query_endpoint_api_v1_rephrase__post
+      description: Rephrase top-k chunks using LLM.
+      operationId: query_endpoint_api_v1_rephrase_post
       requestBody:
         content:
           application/json:
@@ -77,6 +79,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+      security:
+      - HTTPBearer: []
 components:
   schemas:
     HTTPValidationError:
@@ -88,6 +92,46 @@ components:
           title: Detail
       type: object
       title: HTTPValidationError
+    SourceReference:
+      properties:
+        source_name:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Name
+        source_type:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Source Type
+        url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Url
+        score:
+          anyOf:
+          - type: number
+          - type: 'null'
+          title: Score
+        title:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Title
+        text:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Text
+        extras:
+          anyOf:
+          - additionalProperties: true
+            type: object
+          - type: 'null'
+          title: Extras
+      type: object
+      title: SourceReference
     ValidationError:
       properties:
         loc:
@@ -132,7 +176,7 @@ components:
       properties:
         references:
           items:
-            $ref: '#/components/schemas/api__v1__rephrase_retrieval__schema__SourceReference'
+            $ref: '#/components/schemas/SourceReference'
           type: array
           title: References
         raw:
@@ -151,6 +195,10 @@ components:
         query:
           type: string
           title: Query
+        top_k:
+          type: integer
+          title: Top K
+          default: 20
       type: object
       required:
       - query
@@ -162,7 +210,7 @@ components:
           title: Answer
         references:
           items:
-            $ref: '#/components/schemas/api__v1__rephrase_retrieval__schema__SourceReference'
+            $ref: '#/components/schemas/SourceReference'
           type: array
           title: References
       type: object
@@ -170,43 +218,7 @@ components:
       - answer
       - references
       title: QueryResponse
-    api__v1__rephrase_retrieval__schema__SourceReference:
-      properties:
-        source_name:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Source Name
-        source_type:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Source Type
-        url:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Url
-        score:
-          anyOf:
-          - type: number
-          - type: 'null'
-          title: Score
-        title:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Title
-        text:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Text
-        extras:
-          anyOf:
-          - additionalProperties: true
-            type: object
-          - type: 'null'
-          title: Extras
-      type: object
-      title: SourceReference
+  securitySchemes:
+    HTTPBearer:
+      type: http
+      scheme: bearer
