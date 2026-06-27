@@ -27,6 +27,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Jira
 * Web
 * Pipedrive
+* Outlook (Microsoft 365 / Entra ID mailboxes via Microsoft Graph)
 
 ## Embeddings support
 
@@ -391,6 +392,43 @@ sources:
 
 PIPEDRIVE1_API_TOKEN=your-pipedrive-api-token
 PIPEDRIVE1_SCHEDULES=3600
+```
+
+### Outlook Connector
+
+The Outlook connector ingests emails from a Microsoft 365 mailbox via the Microsoft Graph API.
+Uses the [LlamaIndex OutlookEmailReader](https://llamahub.ai/l/readers/llama-index-readers-microsoft-outlook-emails)
+for authentication and email fetching.
+
+> **Note:** Client credentials authentication (app-only flow) is only supported for
+> **Microsoft 365 / Entra ID work or school accounts**. Personal Microsoft accounts are not supported.
+> Requires an Azure app registration with `Mail.Read` application permission and admin consent.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "outlook"
+    name: "outlook1"
+    config:
+      client_id: "${OUTLOOK1_CLIENT_ID}"
+      client_secret: "${OUTLOOK1_CLIENT_SECRET}"
+      tenant_id: "${OUTLOOK1_TENANT_ID}"
+      user_email: "${OUTLOOK1_USER_EMAIL}"
+      folder: "Inbox"           # optional, default Inbox
+      num_mails: 100            # optional, default 10
+      html_to_text: true        # optional, default true; set to false to keep raw HTML email bodies
+      schedules: "${OUTLOOK1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+OUTLOOK1_CLIENT_ID=your-azure-app-client-id
+OUTLOOK1_CLIENT_SECRET=your-azure-app-client-secret
+OUTLOOK1_TENANT_ID=your-azure-tenant-id
+OUTLOOK1_USER_EMAIL=user@company.onmicrosoft.com
+OUTLOOK1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
