@@ -54,7 +54,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Create a `.env` file based on the `.env.example` file.
   * The defaults are good enough, you just need to put your OpenRouter key into `OPENROUTER_API_KEY`
 * If you use OpenAI or a different OpenAI-compatible endpoint, also update the `OPENROUTER_API_BASE` variable
-* By default, a single S3 connector is configured; specify your S3 bucket credentials in the `S3_ACCOUNT1_` variables
+* By default, a single S3 connector is configured; specify your S3 bucket credentials in the `S3_ACCOUNT1_` variables (one bucket per connector instance)
 * Create a `config.yaml` file based on the `config.yaml.example` file
   * The defaults are good enough with `openai/gpt-oss-120b:free` used for inference and `sentence-transformers/all-mpnet-base-v2` for embeddings.
   * If you would like to use different models, update the `embedding` and `inference` sections accordingly.
@@ -130,8 +130,9 @@ in the `.env` file.
 
 ### S3 Connector
 
-The S3 connector ingests documents from S3 buckets and converts them to Markdown format.
-The connector has the following configuration options:
+The S3 connector ingests documents from an S3 bucket and converts them to Markdown format.
+Each connector instance targets a single bucket. To ingest multiple buckets, define multiple
+connector instances.
 
 ```yaml
 # config.yaml
@@ -145,8 +146,8 @@ sources:
       secret_key: "${S3_ACCOUNT1_SECRET_KEY}" # s3 secret key
       region: "${S3_ACCOUNT1_REGION}" # s3 region
       use_ssl: "${S3_ACCOUNT1_USE_SSL}" # use ssl for s3 connection, can be True or False
-      buckets: "${S3_ACCOUNT1_BUCKETS}" # single entry or comma-separated list i.e. bucket1,bucket2
-      schedules: "${S3_ACCOUNT1_SCHEDULES}" # single entry or comma-separated list i.e. 3600,60
+      bucket: "${S3_ACCOUNT1_BUCKET}" # bucket name
+      schedules: "${S3_ACCOUNT1_SCHEDULES}" # ingestion interval in seconds i.e. 3600
 
   - type: "s3"
     name: "account2"
@@ -167,9 +168,9 @@ S3_ACCOUNT1_ACCESS_KEY=xxx
 S3_ACCOUNT1_SECRET_KEY=xxx
 S3_ACCOUNT1_REGION=us-east-1
 S3_ACCOUNT1_USE_SSL=True
-S3_ACCOUNT1_BUCKETS=bucket1,bucket2
-S3_ACCOUNT1_SCHEDULES=3600,60
-````
+S3_ACCOUNT1_BUCKET=my-bucket
+S3_ACCOUNT1_SCHEDULES=3600
+```
 
 ### Directory Connector
 

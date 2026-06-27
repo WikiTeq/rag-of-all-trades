@@ -23,16 +23,16 @@ class TestS3IngestionJob:
             patch("tasks.s3_ingestion.get_s3_client", return_value=(self.mock_s3, None)),
             patch("tasks.s3_ingestion.MarkItDown", return_value=self.mock_md),
         ):
-            self.config = {"name": "test", "config": {"buckets": ["bucket-a"]}}
+            self.config = {"name": "test", "config": {"bucket": "bucket-a"}}
             yield
 
     def test_source_type(self):
         job = S3IngestionJob(self.config)
         assert job.source_type == "s3"
 
-    def test_init_buckets_from_string(self):
-        job = S3IngestionJob({"name": "test", "config": {"buckets": " a, b, ,c "}})
-        assert job.buckets == ["a", "b", "c"]
+    def test_init_bucket(self):
+        job = S3IngestionJob({"name": "test", "config": {"bucket": "my-bucket"}})
+        assert job.bucket == "my-bucket"
 
     def test_get_item_name_sanitizes_key(self):
         job = S3IngestionJob(self.config)

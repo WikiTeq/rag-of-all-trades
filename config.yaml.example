@@ -7,7 +7,7 @@ sources:
       secret_key: "${S3_ACCOUNT1_SECRET_KEY}"
       region: "${S3_ACCOUNT1_REGION}"
       use_ssl: "${S3_ACCOUNT1_USE_SSL}"
-      buckets: "${S3_ACCOUNT1_BUCKETS}" # comma-separated string or list
+      bucket: "${S3_ACCOUNT1_BUCKET}"
       schedules: "${S3_ACCOUNT1_SCHEDULES}"
       #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
@@ -31,7 +31,7 @@ sources:
   #    secret_key: "${S3_ACCOUNT2_SECRET_KEY}"
   #    region: "${S3_ACCOUNT2_REGION}"
   #    use_ssl: "${S3_ACCOUNT2_USE_SSL}"
-  #    buckets: "${S3_ACCOUNT2_BUCKETS}"
+  #    bucket: "${S3_ACCOUNT2_BUCKET}"
   #    schedules: "${S3_ACCOUNT2_SCHEDULES}"
   #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
