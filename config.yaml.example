@@ -126,7 +126,7 @@ sources:
   #  name: "wikijs1"
   #  config:
   #    base_url: "${WIKIJS1_BASE_URL}"
-  #    api_token: "${WIKIJS1_API_TOKEN}"   # must have read:source scope
+  #    api_token: "${WIKIJS1_API_TOKEN}"   # must have read:pages and read:source scopes
   #    schedules: "${WIKIJS1_SCHEDULES}"
   #    #paths:                             # optional; ingest only pages under these path prefixes
   #    #  - "/engineering"
