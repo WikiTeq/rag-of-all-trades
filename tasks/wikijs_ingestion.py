@@ -81,7 +81,7 @@ class WikiJsIngestionJob(IngestionJob):
 
     Configuration (config.yaml):
         - config.base_url: Wiki.js instance base URL (required)
-        - config.api_token: API token with read:source scope (required)
+        - config.api_token: API token with read:pages and read:source scopes (required)
         - config.paths: path prefixes to ingest; if omitted, all pages are ingested
           (optional, comma-separated string or list)
         - config.tags: server-side tag filter (optional, comma-separated string or list)
