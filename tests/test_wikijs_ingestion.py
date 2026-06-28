@@ -16,14 +16,22 @@ def _make_config(**kwargs):
 
 
 def _make_page(
-    page_id=1, path="/test/page", title="Test Page", updated_at="2024-06-01T12:00:00.000Z", is_published=True
+    page_id=1,
+    path="/test/page",
+    title="Test Page",
+    updated_at="2024-06-01T12:00:00.000Z",
+    is_published=True,
+    locale="en",
+    tags=None,
 ):
     return {
         "id": page_id,
         "path": path,
+        "locale": locale,
         "title": title,
         "updatedAt": updated_at,
         "isPublished": is_published,
+        "tags": list(tags or []),
     }
 
 
@@ -239,15 +247,16 @@ class TestWikiJsIngestionJob(unittest.TestCase):
         self.assertEqual(content, "")
 
     def test_get_raw_content_caches_url_and_title(self):
-        page = _make_page(1, "/eng/setup", "Setup Guide")
+        page = _make_page(1, "/eng/setup", "Setup Guide", locale="en")
         item = IngestionItem(id="wikijs:1", source_ref=page)
-        self.mock_client.get_page.return_value = _make_page_detail(1, path="/eng/setup", title="Setup Guide")
+        detail = {**_make_page_detail(1, path="/eng/setup", title="Setup Guide"), "locale": "en"}
+        self.mock_client.get_page.return_value = detail
 
         job = self._make_job()
         job.get_raw_content(item)
 
         self.assertEqual(item._metadata_cache["title"], "Setup Guide")
-        self.assertIn("eng/setup", item._metadata_cache["url"])
+        self.assertIn("en/eng/setup", item._metadata_cache["url"])
 
     def test_get_item_name_uses_only_stable_id(self):
         page = _make_page(42, "/test", "My Page")
@@ -258,18 +267,21 @@ class TestWikiJsIngestionJob(unittest.TestCase):
         self.assertLessEqual(len(name), 255)
 
     def test_get_extra_metadata_fields(self):
-        page = _make_page(7, "/eng/guide", "Guide", "2024-06-01T12:00:00.000Z")
+        page = _make_page(7, "/eng/guide", "Guide", "2024-06-01T12:00:00.000Z", locale="fr", tags=["public", "docs"])
         item = IngestionItem(id="wikijs:7", source_ref=page)
-        object.__setattr__(item, "_metadata_cache", {"title": "Guide", "url": "https://wiki.example.com/eng/guide"})
+        object.__setattr__(item, "_metadata_cache", {"title": "Guide", "url": "https://wiki.example.com/fr/eng/guide"})
 
         job = self._make_job()
         extra = job.get_extra_metadata(item=item, content="", metadata={})
 
         self.assertEqual(extra["page_id"], "7")
         self.assertEqual(extra["path"], "/eng/guide")
+        self.assertEqual(extra["locale"], "fr")
         self.assertEqual(extra["title"], "Guide")
-        self.assertEqual(extra["url"], "https://wiki.example.com/eng/guide")
+        self.assertEqual(extra["url"], "https://wiki.example.com/fr/eng/guide")
         self.assertIn("2024", extra["updated_at"])
+        self.assertEqual(extra["tags"], "public,docs")
+        self.assertTrue(extra["is_published"])
 
 
 if __name__ == "__main__":

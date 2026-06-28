@@ -20,9 +20,11 @@ query PageList($tags: [String!], $locale: String) {
     list(tags: $tags, locale: $locale) {
       id
       path
+      locale
       title
       updatedAt
       isPublished
+      tags
     }
   }
 }
@@ -161,7 +163,8 @@ class WikiJsIngestionJob(IngestionJob):
 
         title = detail.get("title", "") or item.source_ref.get("title", "") or ""
         path = detail.get("path", "") or item.source_ref.get("path", "") or ""
-        url = f"{self._client.base_url}/{path.lstrip('/')}"
+        locale = detail.get("locale", "") or item.source_ref.get("locale", "") or "en"
+        url = f"{self._client.base_url}/{locale}/{path.lstrip('/')}"
 
         item._metadata_cache["title"] = title
         item._metadata_cache["url"] = url
@@ -193,10 +196,15 @@ class WikiJsIngestionJob(IngestionJob):
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         data = item.source_ref
+        raw_tags = data.get("tags") or []
+        tags = [t for t in raw_tags if isinstance(t, str) and t]
         return {
             "page_id": str(data.get("id", "")),
             "path": data.get("path", "") or "",
+            "locale": data.get("locale", "") or "",
             "title": item._metadata_cache.get("title", data.get("title", "") or ""),
             "url": item._metadata_cache.get("url", ""),
             "updated_at": str(data.get("updatedAt", "") or ""),
+            "tags": ",".join(tags),
+            "is_published": bool(data.get("isPublished", True)),
         }
