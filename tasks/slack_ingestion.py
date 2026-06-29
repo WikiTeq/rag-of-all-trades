@@ -215,11 +215,7 @@ class SlackIngestionJob(IngestionJob):
                     # Skip all system/bot messages (join, leave, file, thread_broadcast, etc.)
                     if message.get("subtype"):
                         continue
-                    # Skip thread replies appearing in channel history
                     ts = message.get("ts", "")
-                    thread_ts = message.get("thread_ts")
-                    if thread_ts and thread_ts != ts:
-                        continue
                     has_replies = int(message.get("reply_count", 0)) > 0
                     if has_replies:
                         yield from self._yield_thread_messages(channel_id, ts)
@@ -261,7 +257,6 @@ class SlackIngestionJob(IngestionJob):
         """Fetch all messages in a thread and yield each as an individual IngestionItem."""
         client = self._client
         next_cursor = None
-        earliest_ts = str(self.earliest_date.timestamp()) if self.earliest_date else None
         latest_ts = (
             str((self.latest_date + timedelta(days=1) - timedelta(microseconds=1)).timestamp())
             if self.latest_date
@@ -276,8 +271,6 @@ class SlackIngestionJob(IngestionJob):
                     "cursor": next_cursor,
                     "latest": latest_ts,
                 }
-                if earliest_ts:
-                    kwargs["oldest"] = earliest_ts
 
                 result = client.conversations_replies(**kwargs)
                 for m in result.get("messages", []):

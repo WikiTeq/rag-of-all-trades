@@ -543,24 +543,6 @@ class TestSlackIngestionJob(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].source_ref["message_ts"], "1700000001.000001")
 
-    def test_yield_messages_skips_thread_replies_in_channel(self):
-        job = self._make_job(channel_ids="C123")
-        self.mock_client.conversations_history.return_value = _make_history_result(
-            [
-                _make_message("1700000001.000001", "top-level msg"),
-                {
-                    "ts": "1700000001.000002",
-                    "text": "reply",
-                    "thread_ts": "1700000001.000001",  # different from ts → reply
-                },
-            ]
-        )
-        self.mock_client.conversations_replies.return_value = _make_replies_result(
-            [_make_message("1700000001.000001", "top-level msg")]
-        )
-        items = list(job.list_items())
-        self.assertEqual(len(items), 1)
-
     def test_yield_messages_skips_replies_api_call_when_no_replies(self):
         job = self._make_job(channel_ids="C123")
         self.mock_client.conversations_history.return_value = _make_history_result(
