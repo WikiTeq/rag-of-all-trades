@@ -75,11 +75,18 @@ def main() -> None:
             print(f"  {t['task_name']}  (source: {t['source_name']}, type: {t['source_type']})")
         return
 
+    failed = []
     for t in tasks:
-        celery_app.send_task(t["task_name"])
-        print(f"Triggered: {t['task_name']}  (source: {t['source_name']}, type: {t['source_type']})")
+        try:
+            celery_app.send_task(t["task_name"])
+            print(f"Triggered: {t['task_name']}  (source: {t['source_name']}, type: {t['source_type']})")
+        except Exception as e:
+            print(f"FAILED: {t['task_name']}  (source: {t['source_name']}, type: {t['source_type']}): {e}")
+            failed.append(t)
 
-    print(f"\n{len(tasks)} task(s) enqueued.")
+    print(f"\n{len(tasks) - len(failed)}/{len(tasks)} task(s) enqueued.")
+    if failed:
+        sys.exit(1)
 
 
 if __name__ == "__main__":
