@@ -6,6 +6,7 @@ from tasks.pipedrive_ingestion import PipedriveIngestionJob
 from tasks.s3_ingestion import S3IngestionJob
 from tasks.serpapi_ingestion import SerpAPIIngestionJob
 from tasks.web_ingestion import WebIngestionJob
+from tasks.wikijs_ingestion import WikiJsIngestionJob
 
 
 class IngestionJobFactory:
@@ -32,3 +33,4 @@ IngestionJobFactory.register("serpapi", SerpAPIIngestionJob)
 IngestionJobFactory.register("directory", DirectoryIngestionJob)
 IngestionJobFactory.register("web", WebIngestionJob)
 IngestionJobFactory.register("pipedrive", PipedriveIngestionJob)
+IngestionJobFactory.register("wikijs", WikiJsIngestionJob)
