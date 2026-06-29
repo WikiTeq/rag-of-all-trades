@@ -84,6 +84,7 @@ class SharePointIngestionJob(IngestionJob):
             sharepoint_host_name=self.sharepoint_host_name,
             sharepoint_relative_url=self.sharepoint_relative_url,
             sharepoint_type=self.sharepoint_type,
+            drive_name=self.drive_name,
         )
 
         logger.info(
@@ -101,7 +102,6 @@ class SharePointIngestionJob(IngestionJob):
                 "sharepoint_site_name": self.sharepoint_site_name,
                 "sharepoint_folder_path": self.sharepoint_folder_path,
                 "sharepoint_folder_id": self.sharepoint_folder_id,
-                "drive_name": self.drive_name,
             }.items()
             if v is not None
         }

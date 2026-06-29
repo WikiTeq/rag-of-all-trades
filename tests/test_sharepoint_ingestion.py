@@ -122,9 +122,11 @@ class TestSharePointIngestionListItems(unittest.TestCase):
             )
             list(job.list_items())
 
-        call_kwargs = MockReader.return_value.load_data.call_args[1]
-        self.assertEqual(call_kwargs["sharepoint_folder_path"], "Reports")
-        self.assertEqual(call_kwargs["drive_name"], "MyDrive")
+        constructor_kwargs = MockReader.call_args[1]
+        self.assertEqual(constructor_kwargs["drive_name"], "MyDrive")
+        load_kwargs = MockReader.return_value.load_data.call_args[1]
+        self.assertEqual(load_kwargs["sharepoint_folder_path"], "Reports")
+        self.assertNotIn("drive_name", load_kwargs)
 
     def test_recursive_not_passed_for_page_type(self):
         with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
