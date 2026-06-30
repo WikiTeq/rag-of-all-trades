@@ -449,6 +449,7 @@ The following parameters are supported by all connector types:
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
+| `enabled` | bool | `true` | Set to `false` to skip this connector entirely — no Celery task or Beat schedule is registered. |
 | `schedules` | string | — | Cron expression or interval (in seconds) defining how often the connector runs. |
 | `request_delay` | float | `0` | Delay in seconds between processing each item. Useful for rate-limiting requests to external APIs. |
 
@@ -459,6 +460,7 @@ sources: # holds the list of sources to ingest from (Connectors)
 
   - type: # type of the connector (s3, directory, mediawiki, serpapi, jira, etc.)
     name: # arbitrary name for the connector, will be stored in metadata
+    enabled: true  # optional; set to false to skip this connector entirely
     config:
       # connector specific configuration
       schedules: "${S3_ACCOUNT1_SCHEDULES}"

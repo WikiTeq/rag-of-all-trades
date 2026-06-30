@@ -1,6 +1,7 @@
 sources:
   - type: "s3"
     name: "account1"
+    #enabled: true  # optional; omit or set true to enable, false to skip entirely
     config:
       endpoint: "${S3_ACCOUNT1_ENDPOINT}"
       access_key: "${S3_ACCOUNT1_ACCESS_KEY}"
@@ -13,6 +14,7 @@ sources:
 
   #- type: "directory"
   #  name: "local_docs"
+  #  #enabled: true  # optional; omit or set true to enable, false to skip entirely
   #  config:
   #    path: "${DIRECTORY1_PATH}"
   #    recursive: true
@@ -25,6 +27,7 @@ sources:
 
   #- type: "s3"
   #  name: "account2"
+  #  #enabled: true  # optional; omit or set true to enable, false to skip entirely
   #  config:
   #    endpoint: "${S3_ACCOUNT2_ENDPOINT}"
   #    access_key: "${S3_ACCOUNT2_ACCESS_KEY}"
@@ -37,6 +40,7 @@ sources:
 
   #- type: "mediawiki"
   #  name: "wiki1"
+  #  #enabled: true  # optional; omit or set true to enable, false to skip entirely
   #  config:
   #    host: "${MEDIAWIKI1_HOST}"
   #    path: "/w/"          # optional, default /w/
@@ -50,6 +54,7 @@ sources:
 
   #- type: "serpapi"
   #  name: "serp_ingestion"
+  #  #enabled: true  # optional; omit or set true to enable, false to skip entirely
   #  config:
   #    api_key: "${SERPAPI_KEY}"
   #    queries: "${SERPAPI_QUERIES}"
@@ -58,6 +63,7 @@ sources:
 
   #- type: "web"
   #  name: "web1"
+  #  #enabled: true  # optional; omit or set true to enable, false to skip entirely
   #  config:
   #    # urls mode: scrape a fixed list of URLs (mutually exclusive with sitemap_url)
   #    urls:
@@ -68,6 +74,7 @@ sources:
 
   #- type: "web"
   #  name: "web2"
+  #  #enabled: true  # optional; omit or set true to enable, false to skip entirely
   #  config:
   #    # sitemap mode: discover URLs from a sitemap (mutually exclusive with urls)
   #    sitemap_url: https://example.com/sitemap.xml
@@ -88,6 +95,7 @@ sources:
 
   #- type: "jira"
   #  name: "jira1"
+  #  #enabled: true  # optional; omit or set true to enable, false to skip entirely
   #  config:
   #    server_url: "${JIRA1_SERVER_URL}"
   #    # auth_type: "basic" requires email + api_token (Jira Cloud)
@@ -105,6 +113,7 @@ sources:
 
   #- type: "pipedrive"
   #  name: "pipedrive1"
+  #  #enabled: true  # optional; omit or set true to enable, false to skip entirely
   #  config:
   #    api_token: "${PIPEDRIVE1_API_TOKEN}"
   #    schedules: "${PIPEDRIVE1_SCHEDULES}"

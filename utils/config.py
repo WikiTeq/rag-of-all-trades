@@ -5,6 +5,8 @@ import yaml
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from utils.parse import parse_bool
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = BASE_DIR / ".env"
 YAML_PATH = BASE_DIR / "config.yaml"
@@ -119,6 +121,8 @@ class Settings:
             if isinstance(schedules, str):
                 schedules = [s.strip() for s in schedules.split(",") if s.strip()]
 
+            enabled = parse_bool(source.get("enabled"), default=True)
+
             if buckets:
                 for i, bucket in enumerate(buckets):
                     try:
@@ -133,11 +137,14 @@ class Settings:
                             "name": f"{name}_{bucket}",
                             "config": {**config, "buckets": [bucket], "bucket_override": bucket},
                             "schedule": schedule_seconds,
+                            "enabled": enabled,
                         }
                     )
             else:
                 schedule_seconds = int(schedules[0]) if schedules else 3600
-                sources.append({"type": src_type, "name": name, "config": config, "schedule": schedule_seconds})
+                sources.append(
+                    {"type": src_type, "name": name, "config": config, "schedule": schedule_seconds, "enabled": enabled}
+                )
         return sources
 
     @property
