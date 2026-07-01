@@ -17,15 +17,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from celery_app import celery_app
+from utils.celery_utils import ingestion_task_name
 from utils.config import settings
-
-
-def _task_name_for_source(source_config: dict) -> str:
-    """Mirror celery_app.py's task name construction."""
-    bucket_override = source_config["config"].get("bucket_override")
-    if bucket_override:
-        return f"{source_config['type']}_ingest_{source_config['name']}_{bucket_override}"
-    return f"{source_config['type']}_ingest_{source_config['name']}"
 
 
 def get_tasks(source_filter: str | None) -> list[dict]:
@@ -34,7 +27,7 @@ def get_tasks(source_filter: str | None) -> list[dict]:
     for source in settings.SOURCES:
         if source_filter and source["name"] != source_filter:
             continue
-        task_name = _task_name_for_source(source)
+        task_name = ingestion_task_name(source)
         if task_name not in celery_app.conf.beat_schedule:
             continue
         tasks.append(

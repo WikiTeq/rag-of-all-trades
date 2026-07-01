@@ -4,6 +4,7 @@ from celery import Celery
 from celery.signals import worker_process_init, worker_process_shutdown
 from celery_singleton import Singleton
 
+from utils.celery_utils import ingestion_task_name
 from utils.config import settings
 from utils.db import engine
 from utils.logger import configure_logging
@@ -50,14 +51,7 @@ def shutdown_worker(**kwargs):
 
 def create_task_for_source(source_config):
     """Register a Celery task and Beat schedule for one source (S3, MediaWiki, etc.)."""
-    source_name = source_config["name"]
-    # S3 uses bucket_override when one account has multiple buckets; other sources leave it None
-    config_override = source_config["config"].get("bucket_override")
-
-    if config_override:
-        task_name = f"{source_config['type']}_ingest_{source_name}_{config_override}"
-    else:
-        task_name = f"{source_config['type']}_ingest_{source_name}"
+    task_name = ingestion_task_name(source_config)
 
     @celery_app.task(name=task_name, base=Singleton, ignore_result=True, bind=True)
     def run_source(self, pipeline_config=source_config):
