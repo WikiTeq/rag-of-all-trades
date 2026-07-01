@@ -73,7 +73,7 @@ def main() -> None:
         try:
             celery_app.send_task(t["task_name"])
             print(f"Triggered: {t['task_name']}  (source: {t['source_name']}, type: {t['source_type']})")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — broker errors vary; catch-all is intentional
             print(f"FAILED: {t['task_name']}  (source: {t['source_name']}, type: {t['source_type']}): {e}")
             failed.append(t)
 
