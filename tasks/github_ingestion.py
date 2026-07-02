@@ -82,8 +82,8 @@ class GitHubIngestionJob(IngestionJob):
         # Auth validation
         # ------------------------------------------------------------------
         personal_token = (cfg.get("personal_token") or "").strip()
-        app_id = (cfg.get("github_app_id") or "").strip()
-        app_installation_id = (cfg.get("github_app_installation_id") or "").strip()
+        app_id = (str(cfg.get("github_app_id") or "")).strip()
+        app_installation_id = (str(cfg.get("github_app_installation_id") or "")).strip()
         app_private_key = (cfg.get("github_app_private_key") or "").strip()
 
         has_pat = bool(personal_token)
@@ -196,6 +196,8 @@ class GitHubIngestionJob(IngestionJob):
             )
 
         self.concurrent_requests: int = int(cfg.get("concurrent_requests") or 5)
+        if self.concurrent_requests < 1:
+            raise ValueError("concurrent_requests must be a positive integer in GitHub connector config")
 
         self._repo_reader = GithubRepositoryReader(
             github_client=self._github_client,
@@ -233,7 +235,7 @@ class GitHubIngestionJob(IngestionJob):
                 docs = self._repo_reader.load_data(branch=self.branch)
             else:
                 docs = self._repo_reader.load_data(commit_sha=self.commit_sha)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 — GithubRepositoryReader raises untyped transport errors
             logger.error(f"[{self.source_name}] Failed to load repository files: {e}")
             docs = []
 
@@ -255,7 +257,7 @@ class GitHubIngestionJob(IngestionJob):
                     state=GitHubRepositoryIssuesReader.IssueState.ALL,
                     labelFilters=label_filters if label_filters else None,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — GitHubRepositoryIssuesReader raises untyped transport errors
                 logger.error(f"[{self.source_name}] Failed to load issues: {e}")
                 issues = []
 
