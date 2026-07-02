@@ -11,13 +11,15 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 # Helpers
 # ---------------------------------------------------------------------------
 
+_TEST_TOKEN = "test-personal-access-token"  # neutral placeholder, not a real token shape
+
 
 def _make_config(
     owner="myorg",
     repo="myrepo",
     branch="main",
     commit_sha="",
-    personal_token="ghp_test_token",
+    personal_token=_TEST_TOKEN,
     github_app_id="",
     github_app_installation_id="",
     github_app_private_key="",
