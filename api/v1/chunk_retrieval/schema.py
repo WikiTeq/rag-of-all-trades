@@ -3,12 +3,19 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-_SAFE_PATTERN = re.compile(r"^[0-9a-zA-Z.\-_]+$")
+_SAFE_NAME_PATTERN = re.compile(r"^[0-9a-zA-Z.\-_ ]+$")
+_SAFE_VALUE_PATTERN = re.compile(r"^[0-9a-zA-Z.\-_;,:?!\[\]=@() ]+$")
 
 
-def _validate_safe_string(v: str, field: str) -> str:
-    if not _SAFE_PATTERN.match(v):
-        raise ValueError(f"{field} contains invalid characters; allowed: 0-9 a-z A-Z . - _")
+def _validate_name(v: str) -> str:
+    if not _SAFE_NAME_PATTERN.match(v):
+        raise ValueError("name contains invalid characters; allowed: 0-9 a-z A-Z . - _ space")
+    return v
+
+
+def _validate_value(v: str) -> str:
+    if not _SAFE_VALUE_PATTERN.match(v):
+        raise ValueError("value contains invalid characters")
     return v
 
 
@@ -20,13 +27,13 @@ class ScalarMetadataFilter(BaseModel):
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
-        return _validate_safe_string(v, "name")
+        return _validate_name(v)
 
     @field_validator("value", mode="before")
     @classmethod
     def validate_value(cls, v: object) -> object:
         if isinstance(v, str):
-            _validate_safe_string(v, "value")
+            _validate_value(v)
         return v
 
 
@@ -38,7 +45,7 @@ class ListMetadataFilter(BaseModel):
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
-        return _validate_safe_string(v, "name")
+        return _validate_name(v)
 
     @field_validator("value", mode="before")
     @classmethod
@@ -46,7 +53,7 @@ class ListMetadataFilter(BaseModel):
         if isinstance(v, list):
             for item in v:
                 if isinstance(item, str):
-                    _validate_safe_string(item, "value item")
+                    _validate_value(item)
         return v
 
 

@@ -59,23 +59,32 @@ class TestMetadataFilterItemSchema:
         with pytest.raises(ValidationError):
             _filter_adapter.validate_python({"name": "field", "operator": "INVALID", "value": "val"})
 
-    @pytest.mark.parametrize("name", ["field name", "field!", "field;drop", "field\x00"])
+    @pytest.mark.parametrize("name", ["field!", "field;drop", "field\x00", "field#bad"])
     def test_invalid_name_raises(self, name):
         with pytest.raises(ValidationError):
             _filter_adapter.validate_python({"name": name, "operator": "EQ", "value": "val"})
 
-    @pytest.mark.parametrize("name", ["field", "field_name", "field-name", "field.name", "Field123"])
+    @pytest.mark.parametrize("name", ["field", "field_name", "field-name", "field.name", "Field123", "field name"])
     def test_valid_name_accepted(self, name):
         item = _filter_adapter.validate_python({"name": name, "operator": "EQ", "value": "val"})
         assert item.name == name
 
-    def test_invalid_scalar_str_value_raises(self):
+    @pytest.mark.parametrize("value", ["bad\x00value", "field#bad", "val~nope"])
+    def test_invalid_scalar_str_value_raises(self, value):
         with pytest.raises(ValidationError):
-            _filter_adapter.validate_python({"name": "field", "operator": "EQ", "value": "bad value!"})
+            _filter_adapter.validate_python({"name": "field", "operator": "EQ", "value": value})
 
-    def test_invalid_list_str_value_raises(self):
+    @pytest.mark.parametrize("value", ["bad\x00value", "field#bad"])
+    def test_invalid_list_str_value_raises(self, value):
         with pytest.raises(ValidationError):
-            _filter_adapter.validate_python({"name": "field", "operator": "IN", "value": ["ok", "bad value!"]})
+            _filter_adapter.validate_python({"name": "field", "operator": "IN", "value": ["ok", value]})
+
+    @pytest.mark.parametrize(
+        "value", ["hello world", "key=value", "tag:foo", "list[0]", "foo@bar", "a,b;c", "what?", "yes!"]
+    )
+    def test_valid_special_char_value_accepted(self, value):
+        item = _filter_adapter.validate_python({"name": "field", "operator": "EQ", "value": value})
+        assert item.value == value
 
     def test_numeric_values_accepted(self):
         item = _filter_adapter.validate_python({"name": "field", "operator": "GT", "value": 42})
