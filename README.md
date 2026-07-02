@@ -478,7 +478,11 @@ sources:
 ```dotenv
 # .env
 
-GITHUB1_PERSONAL_TOKEN=your-github-personal-access-token
+GITHUB1_PERSONAL_TOKEN=your-personal-access-token
+# GitHub App auth (alternative to personal token):
+#GITHUB1_APP_ID=
+#GITHUB1_APP_INSTALLATION_ID=
+#GITHUB1_APP_PRIVATE_KEY=
 GITHUB1_OWNER=your-org-or-username
 GITHUB1_REPO=your-repo-name
 GITHUB1_SCHEDULES=3600
