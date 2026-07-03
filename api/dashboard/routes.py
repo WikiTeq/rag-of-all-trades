@@ -95,6 +95,7 @@ def serialize_ingestion_run(run: IngestionRun) -> dict:
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         "duration_ms": duration_ms,
         "duration_human": format_duration_ms(duration_ms),
+        "error_message": run.error_message,
     }
 
 
