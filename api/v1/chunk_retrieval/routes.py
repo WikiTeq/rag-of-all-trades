@@ -54,7 +54,7 @@ async def query_endpoint(
     """
     try:
         # Retrieve top-k nodes directly from vector store
-        metadata_filters = payload.metadata_filters or {}
+        metadata_filters = payload.metadata_filters or []
 
         nodes_with_score = rag_engine.retrieve_top_k(
             query=payload.query, top_k=payload.top_k, metadata=metadata_filters
