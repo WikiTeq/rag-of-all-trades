@@ -30,6 +30,8 @@ def graphql_request(
 
     Raises:
         requests.HTTPError: on non-2xx HTTP responses.
+        requests.RequestException: when `session` is provided and its retries are
+            exhausted on a network error.
         GraphQLError: when the response contains a GraphQL-level errors field.
     """
     payload = {"query": query, "variables": variables or {}}
