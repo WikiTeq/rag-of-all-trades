@@ -127,8 +127,15 @@ def get_dashboard_stats():
 
     with get_db_session() as db:
         vector_items_count = db.execute(
-            text(f"SELECT COUNT(*) FROM {schema_sql}.{table_sql}")
-        ).scalar_one()
+            text(
+                """
+                SELECT COALESCE(c.reltuples::bigint, 0)
+                FROM pg_class c
+                WHERE c.oid = to_regclass(:relation_name)
+                """
+            ),
+            {"relation_name": f"public.{vector_table_name}"},
+        ).scalar_one() or 0
         vector_db_size_bytes = db.execute(
             text("SELECT pg_total_relation_size(to_regclass(:relation_name))"),
             {"relation_name": f"public.{vector_table_name}"},
