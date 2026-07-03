@@ -5,7 +5,7 @@ import time
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from llama_index.core import Document
@@ -286,7 +286,7 @@ class IngestionJob(ABC):
         """
         total = 0
         skipped = 0
-        started_at = datetime.now(timezone.utc)
+        started_at = datetime.now(UTC)
         started_at_monotonic = time.perf_counter()
         run_id = self.run_tracker.create_run(
             connector_name=self.source_name or "unknown",
@@ -314,7 +314,7 @@ class IngestionJob(ABC):
                 status="success",
                 items_ingested=total,
                 items_skipped=skipped,
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
                 duration_ms=max(0, int((time.perf_counter() - started_at_monotonic) * 1000)),
             )
             return result_msg
@@ -327,7 +327,7 @@ class IngestionJob(ABC):
                 status="error",
                 items_ingested=total,
                 items_skipped=skipped,
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
                 duration_ms=max(0, int((time.perf_counter() - started_at_monotonic) * 1000)),
                 error_message=str(e),
             )
