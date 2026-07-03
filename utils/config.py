@@ -47,8 +47,8 @@ class EnvSettings(BaseSettings):
     CHUNK_RATE_LIMIT: str = "30/minute"
     REPHRASE_RATE_LIMIT: str = "30/minute"
     ENABLE_DASHBOARD: bool = False
-    DASHBOARD_USER: str = "admin"
-    DASHBOARD_PASS: str = "admin"
+    DASHBOARD_USER: str = ""
+    DASHBOARD_PASS: str = ""
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod

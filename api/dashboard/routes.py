@@ -155,8 +155,17 @@ def get_dashboard_stats():
 
 
 def verify_dashboard_auth(credentials: HTTPBasicCredentials = Depends(dashboard_security)):
-    correct_username = secrets.compare_digest(credentials.username, settings.env.DASHBOARD_USER)
-    correct_password = secrets.compare_digest(credentials.password, settings.env.DASHBOARD_PASS)
+    username = settings.env.DASHBOARD_USER
+    password = settings.env.DASHBOARD_PASS
+    if not username or not password:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    correct_username = secrets.compare_digest(credentials.username, username)
+    correct_password = secrets.compare_digest(credentials.password, password)
 
     if not (correct_username and correct_password):
         raise HTTPException(
