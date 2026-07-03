@@ -7,7 +7,7 @@ from utils.db import Base
 class IngestionRun(Base):
     __tablename__ = "ingestion_runs"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     connector_name = Column(String, nullable=False, index=True)
     connector_type = Column(String, nullable=False, index=True)
     status = Column(String, nullable=False, index=True)

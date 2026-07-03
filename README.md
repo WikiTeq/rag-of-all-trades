@@ -645,7 +645,7 @@ curl -X 'GET' \
 
 ### /dashboard
 
-This endpoint serves a small live dashboard (auto-refresh every 5 seconds) with:
+This endpoint serves a small live dashboard (auto-refresh every 30 seconds) with:
 * Number of vector items
 * Total vector table size
 * Number of currently running Celery jobs
