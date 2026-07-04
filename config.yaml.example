@@ -144,6 +144,7 @@ sources:
 
   #- type: "fireflies"
   #  name: "fireflies1"
+  #  #enabled: true  # optional; omit or set true to enable, false to skip entirely
   #  config:
   #    api_key: "${FIREFLIES_API_KEY}"
   #    filter_keyword: ""            # optional, filter transcripts by title keyword
