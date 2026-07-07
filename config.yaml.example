@@ -151,6 +151,7 @@ sources:
   #    password: "${IMAP1_PASSWORD}" # app-specific password for Gmail
   #    mailboxes: "INBOX,Sent"       # optional, comma-separated; omit to ingest all mailboxes
   #    schedules: "${IMAP1_SCHEDULES}"
+  #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
 embedding:
   provider: openrouter

@@ -117,12 +117,33 @@ class IMAPIngestionJob(IngestionJob):
 
         self.mailboxes = parse_list(cfg.get("mailboxes", ""))
 
+        # Shared connection + currently selected mailbox, reused across list_items()
+        # and get_raw_content() for the duration of a single run().
+        self._run_conn: imaplib.IMAP4_SSL | None = None
+        self._selected_mailbox: str | None = None
+
         logger.info(f"Initialized IMAP connector for {self.host}:{self.port} user={self.username}")
 
     def _connect(self) -> imaplib.IMAP4_SSL:
         conn = imaplib.IMAP4_SSL(self.host, self.port)
         conn.login(self.username, self.password)
         return conn
+
+    def _get_run_conn(self) -> imaplib.IMAP4_SSL:
+        """Return the connection shared for this run, opening one if needed."""
+        if self._run_conn is None:
+            self._run_conn = self._connect()
+            self._selected_mailbox = None
+        return self._run_conn
+
+    def _ensure_mailbox_selected(self, mailbox: str) -> bool:
+        conn = self._get_run_conn()
+        if self._selected_mailbox == mailbox:
+            return True
+        if not self._select_mailbox(conn, mailbox):
+            return False
+        self._selected_mailbox = mailbox
+        return True
 
     def _discover_mailboxes(self, conn: imaplib.IMAP4_SSL) -> list[str]:
         typ, data = conn.list()
@@ -157,25 +178,27 @@ class IMAPIngestionJob(IngestionJob):
             return []
         return data[0].split()
 
-    def _fetch_headers_batch(self, conn: imaplib.IMAP4_SSL, uids: list[bytes]) -> dict[bytes, Message]:
-        """Fetch headers-only for all UIDs in one IMAP roundtrip."""
-        if not uids:
-            return {}
-        uid_set = b",".join(uids)
-        typ, data = conn.uid("fetch", uid_set, "(RFC822.HEADER)")
-        if typ != "OK" or not data:
-            return {}
+    _FETCH_BATCH_SIZE = 100
 
+    def _fetch_headers_batch(self, conn: imaplib.IMAP4_SSL, uids: list[bytes]) -> dict[bytes, Message]:
+        """Fetch headers-only for all UIDs, chunked to avoid oversized IMAP commands."""
         result: dict[bytes, Message] = {}
-        for part in data:
-            if not isinstance(part, tuple) or len(part) < 2:
+        for i in range(0, len(uids), self._FETCH_BATCH_SIZE):
+            chunk = uids[i : i + self._FETCH_BATCH_SIZE]
+            uid_set = b",".join(chunk)
+            typ, data = conn.uid("fetch", uid_set, "(RFC822.HEADER)")
+            if typ != "OK" or not data:
                 continue
-            meta = part[0].decode("utf-8", errors="replace") if isinstance(part[0], bytes) else part[0]
-            uid_match = re.search(r"UID (\d+)", meta)
-            if not uid_match:
-                continue
-            uid = uid_match.group(1).encode()
-            result[uid] = message_from_bytes(part[1])
+
+            for part in data:
+                if not isinstance(part, tuple) or len(part) < 2:
+                    continue
+                meta = part[0].decode("utf-8", errors="replace") if isinstance(part[0], bytes) else part[0]
+                uid_match = re.search(r"UID (\d+)", meta)
+                if not uid_match:
+                    continue
+                uid = uid_match.group(1).encode()
+                result[uid] = message_from_bytes(part[1])
         return result
 
     def _fetch_full_message(self, conn: imaplib.IMAP4_SSL, uid: bytes) -> Message | None:
@@ -189,13 +212,15 @@ class IMAPIngestionJob(IngestionJob):
         return None
 
     def list_items(self) -> Iterable[IngestionItem]:
-        conn = self._connect()
+        conn = self._get_run_conn()
         try:
             mailboxes = self.mailboxes if self.mailboxes else self._discover_mailboxes(conn)
             logger.info(f"[{self.source_name}] Ingesting mailboxes: {mailboxes}")
 
+            seen_message_ids: set[str] = set()
+
             for mailbox in mailboxes:
-                if not self._select_mailbox(conn, mailbox):
+                if not self._ensure_mailbox_selected(mailbox):
                     continue
 
                 uids = self._fetch_all_uids(conn)
@@ -216,6 +241,9 @@ class IMAPIngestionJob(IngestionJob):
                     last_modified = _parse_date(date_str)
 
                     if message_id:
+                        if message_id in seen_message_ids:
+                            continue
+                        seen_message_ids.add(message_id)
                         item_id = f"imap:{self.source_name}:{message_id}"
                     else:
                         item_id = f"imap:{self.source_name}:{mailbox}:{uid.decode()}"
@@ -233,6 +261,8 @@ class IMAPIngestionJob(IngestionJob):
                 conn.logout()
             except Exception:
                 pass
+            self._run_conn = None
+            self._selected_mailbox = None
 
     def get_item_checksum(self, item: IngestionItem) -> str | None:
         return item._metadata_cache.get("_checksum_key")
@@ -243,16 +273,22 @@ class IMAPIngestionJob(IngestionJob):
 
         msg: Message | None = item._metadata_cache.get("_msg")
         if msg is None:
-            conn = self._connect()
+            # Reuse the connection shared with list_items() for this run when available
+            # (avoids reconnecting per message); fall back to a private one otherwise.
+            reused = self._run_conn is not None
+            conn = self._get_run_conn()
             try:
-                if not self._select_mailbox(conn, mailbox):
+                if not self._ensure_mailbox_selected(mailbox):
                     return ""
                 msg = self._fetch_full_message(conn, uid)
             finally:
-                try:
-                    conn.logout()
-                except Exception:
-                    pass
+                if not reused:
+                    try:
+                        conn.logout()
+                    except Exception:
+                        pass
+                    self._run_conn = None
+                    self._selected_mailbox = None
 
         if msg is None:
             logger.warning(f"[{self.source_name}] Could not fetch message for item {item.id!r}, skipping")

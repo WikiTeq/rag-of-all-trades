@@ -95,8 +95,13 @@ class TestIMAPListItems(unittest.TestCase):
 
     def test_list_items_with_configured_mailboxes(self):
         job = _make_job(mailboxes="INBOX")
-        raw = _make_raw_email()
-        conn, headers = self._make_conn_and_headers([b"1", b"2"], raw)
+        conn = MagicMock(spec=imaplib.IMAP4_SSL)
+        conn.select.return_value = ("OK", [b"1"])
+        conn.uid.return_value = ("OK", [b"1 2"])
+        headers = {
+            b"1": email.message_from_bytes(_make_raw_email(message_id="<one@example.com>")),
+            b"2": email.message_from_bytes(_make_raw_email(message_id="<two@example.com>")),
+        }
 
         with patch.object(job, "_connect", return_value=conn):
             with patch.object(job, "_fetch_headers_batch", return_value=headers):
@@ -114,10 +119,10 @@ class TestIMAPListItems(unittest.TestCase):
             with patch.object(job, "_fetch_headers_batch", return_value=headers):
                 items = list(job.list_items())
 
-        ids = [i.id for i in items]
-        # Both mailboxes produce same Message-ID → same item id
-        self.assertEqual(ids[0], ids[1])
-        self.assertIn("<same@example.com>", ids[0])
+        # Both mailboxes contain the same Message-ID; list_items() must dedup
+        # across mailboxes and yield it only once.
+        self.assertEqual(len(items), 1)
+        self.assertIn("<same@example.com>", items[0].id)
 
     def test_list_items_fallback_id_when_no_message_id(self):
         job = _make_job(mailboxes="INBOX")
@@ -188,6 +193,100 @@ class TestIMAPGetRawContent(unittest.TestCase):
                 content = job.get_raw_content(item)
         self.assertEqual(content, "")
 
+    def test_reuses_connection_from_list_items_run(self):
+        """get_raw_content() must not open a new IMAP session per item while a
+        run (list_items() generator) is still active — it should reuse the
+        same connection instead of reconnecting per message."""
+        job = _make_job(mailboxes="INBOX")
+        raw1 = _make_raw_email(message_id="<one@example.com>")
+        raw2 = _make_raw_email(message_id="<two@example.com>")
+        conn = MagicMock(spec=imaplib.IMAP4_SSL)
+        conn.select.return_value = ("OK", [b"1"])
+        conn.uid.return_value = ("OK", [b"1 2"])
+        headers = {
+            b"1": email.message_from_bytes(raw1),
+            b"2": email.message_from_bytes(raw2),
+        }
+
+        with patch.object(job, "_connect", return_value=conn) as mock_connect:
+            with patch.object(job, "_fetch_headers_batch", return_value=headers):
+                with patch.object(
+                    job,
+                    "_fetch_full_message",
+                    side_effect=[email.message_from_bytes(raw1), email.message_from_bytes(raw2)],
+                ):
+                    gen = job.list_items()
+                    item1 = next(gen)
+                    job.get_raw_content(item1)
+                    item2 = next(gen)
+                    job.get_raw_content(item2)
+                    with self.assertRaises(StopIteration):
+                        next(gen)
+
+        mock_connect.assert_called_once()
+        conn.logout.assert_called_once()
+
+    def test_reuses_connection_across_mailbox_switch(self):
+        """get_raw_content() must re-select the mailbox on the shared connection
+        when the item it's fetching belongs to a different mailbox than the one
+        currently selected — this happens when list_items() has moved on to a
+        second mailbox between yields, and get_raw_content() is called for an
+        item from a different mailbox than the current selection."""
+        job = _make_job(mailboxes="INBOX,Sent")
+        raw_inbox = _make_raw_email(subject="Inbox Subject", message_id="<inbox@example.com>")
+        raw_sent = _make_raw_email(subject="Sent Subject", message_id="<sent@example.com>")
+
+        conn = MagicMock(spec=imaplib.IMAP4_SSL)
+        conn.select.return_value = ("OK", [b"1"])
+
+        def fake_uid(command, *args, **kwargs):
+            if command == "search":
+                return ("OK", [b"1"])
+            return ("OK", [])
+
+        conn.uid.side_effect = fake_uid
+
+        headers_by_mailbox = {
+            "INBOX": {b"1": email.message_from_bytes(raw_inbox)},
+            "Sent": {b"1": email.message_from_bytes(raw_sent)},
+        }
+
+        def fake_fetch_headers_batch(conn, uids):
+            return headers_by_mailbox[job._selected_mailbox]
+
+        full_messages_by_mailbox = {
+            "INBOX": email.message_from_bytes(raw_inbox),
+            "Sent": email.message_from_bytes(raw_sent),
+        }
+
+        def fake_fetch_full_message(conn, uid):
+            return full_messages_by_mailbox[job._selected_mailbox]
+
+        with patch.object(job, "_connect", return_value=conn) as mock_connect:
+            with patch.object(job, "_fetch_headers_batch", side_effect=fake_fetch_headers_batch):
+                with patch.object(job, "_fetch_full_message", side_effect=fake_fetch_full_message):
+                    gen = job.list_items()
+                    item_inbox = next(gen)  # yielded while INBOX is selected
+                    item_sent = next(gen)  # list_items() has moved on to Sent by now
+
+                    self.assertEqual(item_inbox.source_ref["mailbox"], "INBOX")
+                    self.assertEqual(item_sent.source_ref["mailbox"], "Sent")
+
+                    # Fetch out of yield order: Sent (currently selected) then INBOX
+                    # (a different mailbox than what's currently selected on conn).
+                    content_sent = job.get_raw_content(item_sent)
+                    content_inbox = job.get_raw_content(item_inbox)
+
+                    with self.assertRaises(StopIteration):
+                        next(gen)
+
+        self.assertIn("Sent Subject", content_sent)
+        self.assertIn("Inbox Subject", content_inbox)
+        # Only one IMAP4_SSL session for the whole run, despite fetching from
+        # two different mailboxes via get_raw_content().
+        mock_connect.assert_called_once()
+        conn.logout.assert_called_once()
+
 
 class TestIMAPGetItemName(unittest.TestCase):
     def test_safe_name_from_id(self):
@@ -232,6 +331,32 @@ class TestIMAPGetExtraMetadata(unittest.TestCase):
         meta = job.get_extra_metadata(item, "", {})
         reserved = {"source", "key", "checksum", "version", "format", "source_name", "file_name", "last_modified"}
         self.assertTrue(reserved.isdisjoint(meta.keys()))
+
+
+class TestIMAPFetchHeadersBatch(unittest.TestCase):
+    def test_batches_uids_in_chunks(self):
+        job = _make_job(mailboxes="INBOX")
+        raw = _make_raw_email()
+        uids = [str(i).encode() for i in range(1, 251)]  # 250 uids -> 3 batches of 100
+        chunk_sizes = []
+
+        def fake_uid(*args, **kwargs):
+            chunk = args[1].split(b",")
+            chunk_sizes.append(len(chunk))
+            data = []
+            for uid in chunk:
+                data.append((f"1 (UID {uid.decode()} RFC822.HEADER {{10}}".encode(), raw))
+            return "OK", data
+
+        conn = MagicMock(spec=imaplib.IMAP4_SSL)
+        conn.uid.side_effect = fake_uid
+
+        result = job._fetch_headers_batch(conn, uids)
+
+        self.assertEqual(conn.uid.call_count, 3)
+        self.assertEqual(len(result), 250)
+        self.assertTrue(all(size <= job._FETCH_BATCH_SIZE for size in chunk_sizes))
+        self.assertEqual(chunk_sizes, [100, 100, 50])
 
 
 class TestIMAPHelpers(unittest.TestCase):
