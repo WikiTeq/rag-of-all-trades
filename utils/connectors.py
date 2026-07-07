@@ -42,10 +42,16 @@ CONNECTOR_SAFE_FIELDS: dict[str, list[str]] = {
 
 
 def build_connector_list() -> list[dict]:
-    """Build a list of enabled connectors with non-sensitive config fields only."""
+    """Build a list of enabled connectors with non-sensitive config fields only.
+
+    Reads the raw `sources` list from config.yaml rather than settings.SOURCES,
+    which is the ingestion-job view and can differ from what's defined in
+    config.yaml. This endpoint must reflect connectors as defined in
+    config.yaml, 1:1.
+    """
     connectors = []
-    for source in settings.SOURCES:
-        if not source.get("enabled", True):
+    for source in settings.yaml.get("sources", []):
+        if source.get("enabled") is False:
             continue
 
         src_type = source.get("type")

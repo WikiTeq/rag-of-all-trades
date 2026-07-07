@@ -5,12 +5,11 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api.v1.connectors.routes import router as connectors_router
-from utils.config import Settings
 from utils.connectors import build_connector_list
 
 
 def _patch_sources(sources):
-    return patch.object(Settings, "SOURCES", property(lambda self: sources))
+    return patch("utils.connectors.settings.yaml", {"sources": sources})
 
 
 class BuildConnectorListTests(unittest.TestCase):
