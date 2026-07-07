@@ -460,7 +460,7 @@ sources:
       port: 993                     # optional, default 993 (IMAPS)
       username: "${IMAP1_USERNAME}"
       password: "${IMAP1_PASSWORD}" # app-specific password for Gmail
-      mailboxes: "INBOX,Sent"       # optional, comma-separated; omit to ingest all mailboxes
+      mailboxes: "${IMAP1_MAILBOXES}" # optional, comma-separated; remove this line (not just the env var) to ingest all mailboxes
       schedules: "${IMAP1_SCHEDULES}"
 ```
 
@@ -470,6 +470,7 @@ sources:
 IMAP1_HOST=imap.gmail.com
 IMAP1_USERNAME=your-email@gmail.com
 IMAP1_PASSWORD=your-app-specific-password
+IMAP1_MAILBOXES=INBOX,Sent
 IMAP1_SCHEDULES=3600
 ```
 
