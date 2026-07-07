@@ -52,6 +52,12 @@ class TestIMAPIngestionInit(unittest.TestCase):
         self.assertEqual(job.username, "user@example.com")
         self.assertEqual(job.mailboxes, [])
 
+    def test_init_log_does_not_leak_username(self):
+        with self.assertLogs("tasks.imap_ingestion", level="INFO") as log_ctx:
+            _make_job()
+        init_messages = "\n".join(log_ctx.output)
+        self.assertNotIn("user@example.com", init_messages)
+
     def test_mailboxes_parsed_from_string(self):
         job = _make_job(mailboxes="INBOX,Sent")
         self.assertEqual(job.mailboxes, ["INBOX", "Sent"])
@@ -81,6 +87,12 @@ class TestIMAPIngestionInit(unittest.TestCase):
     def test_missing_password_raises(self):
         with self.assertRaises(ValueError):
             IMAPIngestionJob({"name": "x", "config": {"host": "h", "username": "u"}})
+
+    def test_connect_uses_bounded_timeout(self):
+        job = _make_job()
+        with patch("tasks.imap_ingestion.imaplib.IMAP4_SSL") as mock_imap_ssl:
+            job._connect()
+        mock_imap_ssl.assert_called_once_with(job.host, job.port, timeout=job._CONNECT_TIMEOUT)
 
 
 class TestIMAPListItems(unittest.TestCase):
@@ -192,6 +204,11 @@ class TestIMAPGetRawContent(unittest.TestCase):
             with patch.object(job, "_fetch_full_message", return_value=None):
                 content = job.get_raw_content(item)
         self.assertEqual(content, "")
+        # The session opened for this call is not reused across a list_items()
+        # run, so it must be torn down and cleared even on a failed fetch.
+        mock_conn.logout.assert_called_once()
+        self.assertIsNone(job._run_conn)
+        self.assertIsNone(job._selected_mailbox)
 
     def test_reuses_connection_from_list_items_run(self):
         """get_raw_content() must not open a new IMAP session per item while a
@@ -371,10 +388,22 @@ class TestIMAPHelpers(unittest.TestCase):
         result = _decode_header_value("=?utf-8?b?SGVsbG8gV29ybGQ=?=")
         self.assertEqual(result, "Hello World")
 
+    def test_decode_header_value_unknown_charset_falls_back_to_utf8(self):
+        # =?bogus-charset?B?SGVsbG8=?= decodes to b"Hello" under an unregistered
+        # codec name; decode_header() doesn't validate the charset itself, so
+        # the LookupError only surfaces on .decode() and must be handled there.
+        result = _decode_header_value("=?bogus-charset?B?SGVsbG8=?=")
+        self.assertEqual(result, "Hello")
+
     def test_extract_body_plain(self):
         msg = MIMEText("Plain text body", "plain")
         result = _extract_body(email.message_from_bytes(msg.as_bytes()))
         self.assertEqual(result, "Plain text body")
+
+    def test_extract_body_unknown_charset_falls_back_to_utf8(self):
+        raw = b"Content-Type: text/plain; charset=bogus-charset-xyz\n\nHello World"
+        result = _extract_body(email.message_from_bytes(raw))
+        self.assertEqual(result, "Hello World")
 
     def test_extract_body_html_stripped(self):
         msg = MIMEText("<p>HTML body</p>", "html")

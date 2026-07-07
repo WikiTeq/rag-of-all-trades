@@ -25,7 +25,10 @@ def _decode_header_value(raw: str | bytes | None) -> str:
     parts = []
     for fragment, charset in decode_header(raw):
         if isinstance(fragment, bytes):
-            parts.append(fragment.decode(charset or "utf-8", errors="replace"))
+            try:
+                parts.append(fragment.decode(charset or "utf-8", errors="replace"))
+            except LookupError:
+                parts.append(fragment.decode("utf-8", errors="replace"))
         else:
             parts.append(fragment)
     return "".join(parts)
@@ -41,6 +44,13 @@ def _parse_date(date_str: str) -> datetime | None:
         return None
 
 
+def _decode_payload(payload: bytes, charset: str) -> str:
+    try:
+        return payload.decode(charset, errors="replace")
+    except LookupError:
+        return payload.decode("utf-8", errors="replace")
+
+
 def _extract_body(msg: Message) -> str:
     plain: list[str] = []
     html: list[str] = []
@@ -54,7 +64,7 @@ def _extract_body(msg: Message) -> str:
             payload = part.get_payload(decode=True)
             if payload is None:
                 continue
-            text = payload.decode(charset, errors="replace")
+            text = _decode_payload(payload, charset)
             if ct == "text/plain":
                 plain.append(text)
             elif ct == "text/html":
@@ -64,7 +74,7 @@ def _extract_body(msg: Message) -> str:
         charset = msg.get_content_charset() or "utf-8"
         payload = msg.get_payload(decode=True)
         if payload:
-            text = payload.decode(charset, errors="replace")
+            text = _decode_payload(payload, charset)
             if ct == "text/html":
                 html.append(text)
             else:
@@ -122,10 +132,12 @@ class IMAPIngestionJob(IngestionJob):
         self._run_conn: imaplib.IMAP4_SSL | None = None
         self._selected_mailbox: str | None = None
 
-        logger.info(f"Initialized IMAP connector for {self.host}:{self.port} user={self.username}")
+        logger.info(f"Initialized IMAP connector for {self.host}:{self.port}")
+
+    _CONNECT_TIMEOUT = 30
 
     def _connect(self) -> imaplib.IMAP4_SSL:
-        conn = imaplib.IMAP4_SSL(self.host, self.port)
+        conn = imaplib.IMAP4_SSL(self.host, self.port, timeout=self._CONNECT_TIMEOUT)
         conn.login(self.username, self.password)
         return conn
 
@@ -260,7 +272,7 @@ class IMAPIngestionJob(IngestionJob):
             try:
                 conn.logout()
             except Exception:
-                pass
+                logger.debug(f"[{self.source_name}] IMAP logout failed", exc_info=True)
             self._run_conn = None
             self._selected_mailbox = None
 
@@ -286,7 +298,7 @@ class IMAPIngestionJob(IngestionJob):
                     try:
                         conn.logout()
                     except Exception:
-                        pass
+                        logger.debug(f"[{self.source_name}] IMAP logout failed", exc_info=True)
                     self._run_conn = None
                     self._selected_mailbox = None
 
