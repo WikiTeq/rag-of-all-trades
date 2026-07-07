@@ -8,15 +8,24 @@ COMMON_SAFE_FIELDS: list[str] = ["request_delay"]
 # intentionally omitted (e.g. access_key, secret_key, api_token, password).
 CONNECTOR_SAFE_FIELDS: dict[str, list[str]] = {
     "s3": ["buckets", "region", "use_ssl", "endpoint"],
-    "mediawiki": ["host", "path", "scheme", "api_url", "namespaces", "filter_redirects"],
-    "jira": ["server_url", "jql", "auth_type", "max_results", "load_comments"],
+    "mediawiki": ["host", "path", "scheme", "api_url", "namespaces", "filter_redirects", "page_limit"],
+    "jira": ["server_url", "jql", "auth_type", "max_results", "load_comments", "max_comments"],
     "serpapi": ["queries"],
-    "directory": ["path", "recursive", "required_exts"],
+    "directory": [
+        "path",
+        "recursive",
+        "required_exts",
+        "exclude_hidden",
+        "exclude_empty",
+        "num_files_limit",
+        "encoding",
+    ],
     "web": ["urls", "sitemap_url", "include_prefix", "html_to_text"],
     "slack": ["channel_ids", "channel_patterns", "channel_types", "earliest_date", "latest_date"],
     "pipedrive": [
         "load_types",
         "max_items",
+        "max_retries",
         "filter_deals_updated_since",
         "filter_activities_updated_since",
         "filter_deals_stages_ids",
@@ -28,15 +37,6 @@ CONNECTOR_SAFE_FIELDS: dict[str, list[str]] = {
         "filter_products_filter_id",
         "filter_projects_filter_id",
         "filter_leads_filter_id",
-    ],
-    "fireflies": [
-        "filter_keyword",
-        "filter_fromDate",
-        "filter_toDate",
-        "filter_hostEmail",
-        "filter_organizers",
-        "filter_channel_id",
-        "max_items",
     ],
 }
 
