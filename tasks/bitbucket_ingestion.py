@@ -91,6 +91,28 @@ class BitbucketClient:
             logger.error(f"Bitbucket API error fetching {path!r} from {workspace}/{repo}@{branch}: {e}")
             return ""
 
+    def get_default_branch(self, workspace: str, repo: str) -> str:
+        """Return the repository's configured default branch (``mainbranch.name``).
+
+        Raises RuntimeError if the repository lookup fails or the response
+        has no ``mainbranch.name`` — callers should treat this as a hard
+        config error rather than silently falling back to a guessed branch.
+        """
+        enc_ws = quote(workspace, safe="")
+        enc_repo = quote(repo, safe="")
+        url = f"{self.API_BASE}/repositories/{enc_ws}/{enc_repo}"
+        try:
+            resp = self._session.get(url, headers=self._headers)
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as e:
+            raise RuntimeError(f"Bitbucket API error resolving default branch for {workspace}/{repo}: {e}") from e
+
+        name = (data.get("mainbranch") or {}).get("name")
+        if not name:
+            raise RuntimeError(f"Bitbucket repository {workspace}/{repo} has no mainbranch.name in its response")
+        return name
+
 
 class BitbucketIngestionJob(IngestionJob):
     """Ingestion connector for Bitbucket Cloud repositories.
@@ -105,7 +127,9 @@ class BitbucketIngestionJob(IngestionJob):
         - config.api_token: Bitbucket API token (required)
         - config.workspace: Workspace slug (required)
         - config.repo: Repository slug (required)
-        - config.branch: Branch or ref to ingest (optional, default "master")
+        - config.branch: Branch or ref to ingest (optional; when omitted, the
+          repository's actual default branch is resolved via the Bitbucket
+          API at init time — no hardcoded fallback)
         - config.include_extensions: Comma-separated file extensions to include,
           e.g. "md,txt" (optional; mutually exclusive with exclude_extensions)
         - config.exclude_extensions: Comma-separated file extensions to exclude
@@ -142,7 +166,7 @@ class BitbucketIngestionJob(IngestionJob):
         if not self.repo:
             raise ValueError("repo is required in Bitbucket connector config")
 
-        self.branch = cfg.get("branch", "master").strip() or "master"
+        configured_branch = cfg.get("branch", "").strip()
 
         include_ext = cfg.get("include_extensions", "")
         exclude_ext = cfg.get("exclude_extensions", "")
@@ -168,6 +192,16 @@ class BitbucketIngestionJob(IngestionJob):
         self.exclude_directories: set[str] = set(parse_list(exclude_dir, lower=True))
 
         self._client = BitbucketClient(self.username, self.api_token)
+
+        if configured_branch:
+            self.branch = configured_branch
+        else:
+            try:
+                self.branch = self._client.get_default_branch(self.workspace, self.repo)
+            except RuntimeError as e:
+                raise ValueError(
+                    f"branch was not set in Bitbucket connector config and default-branch detection failed: {e}"
+                ) from e
 
         logger.info(
             f"Initialized Bitbucket connector for {self.workspace}/{self.repo} "
