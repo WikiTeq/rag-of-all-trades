@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, Mock, patch
 
 from tasks.bitbucket_ingestion import BitbucketClient, BitbucketIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from utils.parse import parse_list, parse_timestamp
+from utils.parse import parse_list
 
 DUMMY_TOKEN = "dummy-api-token-for-tests"  # noqa: S105
 
@@ -150,6 +150,49 @@ class TestBitbucketClient(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.client.get_default_branch("ws", "repo")
 
+    def test_get_file_commit_hash_returns_hash_from_filehistory(self):
+        self.mock_get.return_value = _api_response([{"path": "docs/guide.md", "commit": {"hash": "abc123def456"}}])
+        result = self.client.get_file_commit_hash("ws", "repo", "main", "docs/guide.md")
+        self.assertEqual(result, "abc123def456")
+
+    def test_get_file_commit_hash_returns_none_on_request_exception(self):
+        self.mock_get.side_effect = Exception("timeout")
+        result = self.client.get_file_commit_hash("ws", "repo", "main", "docs/guide.md")
+        self.assertIsNone(result)
+
+    def test_get_file_commit_hash_returns_none_when_values_empty(self):
+        self.mock_get.return_value = _api_response([])
+        result = self.client.get_file_commit_hash("ws", "repo", "main", "docs/guide.md")
+        self.assertIsNone(result)
+
+    def test_get_file_commit_hash_uses_filehistory_url(self):
+        self.mock_get.return_value = _api_response([{"path": "docs/guide.md", "commit": {"hash": "abc123"}}])
+        self.client.get_file_commit_hash("myws", "myrepo", "develop", "docs/guide.md")
+        url = self.mock_get.call_args.args[0]
+        self.assertIn("myws/myrepo/filehistory/develop/docs/guide.md", url)
+
+    def test_get_commit_date_returns_date_field(self):
+        resp = Mock()
+        resp.raise_for_status = Mock()
+        resp.json.return_value = {"date": "2024-06-15T10:30:00+00:00"}
+        self.mock_get.return_value = resp
+        result = self.client.get_commit_date("ws", "repo", "abc123")
+        self.assertEqual(result, "2024-06-15T10:30:00+00:00")
+
+    def test_get_commit_date_returns_none_on_request_exception(self):
+        self.mock_get.side_effect = Exception("timeout")
+        result = self.client.get_commit_date("ws", "repo", "abc123")
+        self.assertIsNone(result)
+
+    def test_get_commit_date_uses_commit_resource_url(self):
+        resp = Mock()
+        resp.raise_for_status = Mock()
+        resp.json.return_value = {"date": "2024-06-15T10:30:00+00:00"}
+        self.mock_get.return_value = resp
+        self.client.get_commit_date("myws", "myrepo", "abc123def")
+        url = self.mock_get.call_args.args[0]
+        self.assertIn("myws/myrepo/commit/abc123def", url)
+
 
 def _make_config(
     username="user",
@@ -178,8 +221,11 @@ def _make_config(
     }
 
 
-def _file_entry(path, date="2024-06-01T12:00:00+00:00"):
-    return {"type": "commit_file", "path": path, "commit": {"date": date}}
+def _file_entry(path, date="2024-06-01T12:00:00+00:00", attributes=None):
+    entry = {"type": "commit_file", "path": path, "commit": {"date": date}}
+    if attributes is not None:
+        entry["attributes"] = attributes
+    return entry
 
 
 class TestBitbucketIngestionJob(unittest.TestCase):
@@ -188,6 +234,10 @@ class TestBitbucketIngestionJob(unittest.TestCase):
         self.mock_client_class = self.client_patcher.start()
         self.mock_client = MagicMock()
         self.mock_client_class.return_value = self.mock_client
+        # Default: no commit hash available, so list_items() skips the
+        # last_modified lookup entirely — matches today's simplest case.
+        # Tests that specifically exercise the hash/date path override this.
+        self.mock_client.get_file_commit_hash.return_value = None
 
     def tearDown(self):
         self.client_patcher.stop()
@@ -267,17 +317,72 @@ class TestBitbucketIngestionJob(unittest.TestCase):
         items = list(self._make_job().list_items())
         self.assertEqual(items[0].id, "bitbucket:myworkspace/myrepo/master/docs/index.md")
 
-    def test_list_items_last_modified_parsed(self):
-        self.mock_client.list_files.return_value = [_file_entry("README.md", date="2024-06-15T10:30:00+00:00")]
+    def test_list_items_last_modified_none_when_commit_hash_unavailable(self):
+        # get_file_commit_hash defaults to None in setUp() — no hash means no date lookup.
+        self.mock_client.list_files.return_value = [_file_entry("README.md")]
         items = list(self._make_job().list_items())
+        self.assertIsNone(items[0].last_modified)
+        self.mock_client.get_commit_date.assert_not_called()
+
+    def test_list_items_last_modified_resolved_via_commit_hash_and_date(self):
+        self.mock_client.list_files.return_value = [_file_entry("README.md")]
+        self.mock_client.get_file_commit_hash.return_value = "abc123"
+        self.mock_client.get_commit_date.return_value = "2024-06-15T10:30:00+00:00"
+        items = list(self._make_job().list_items())
+
         self.assertIsNotNone(items[0].last_modified)
         self.assertEqual(items[0].last_modified.year, 2024)
-        self.assertEqual(items[0].last_modified.month, 6)
+        self.mock_client.get_commit_date.assert_called_once_with("myworkspace", "myrepo", "abc123")
+
+    def test_list_items_last_modified_none_when_date_lookup_fails(self):
+        self.mock_client.list_files.return_value = [_file_entry("README.md")]
+        self.mock_client.get_file_commit_hash.return_value = "abc123"
+        self.mock_client.get_commit_date.return_value = None
+        items = list(self._make_job().list_items())
+        self.assertIsNone(items[0].last_modified)
+
+    def test_list_items_caches_commit_hash_for_get_item_checksum(self):
+        self.mock_client.list_files.return_value = [_file_entry("README.md")]
+        self.mock_client.get_file_commit_hash.return_value = "abc123"
+        self.mock_client.get_commit_date.return_value = "2024-06-15T10:30:00+00:00"
+        job = self._make_job()
+        items = list(job.list_items())
+
+        self.mock_client.get_file_commit_hash.reset_mock()
+        checksum = job.get_item_checksum(items[0])
+
+        self.assertEqual(checksum, "abc123")
+        self.mock_client.get_file_commit_hash.assert_not_called()
 
     def test_list_items_calls_client_with_correct_args(self):
         self.mock_client.list_files.return_value = []
         list(self._make_job(workspace="ws", repo="repo", branch="develop").list_items())
-        self.mock_client.list_files.assert_called_once_with("ws", "repo", "develop")
+        self.mock_client.list_files.assert_called_once_with("ws", "repo", "develop", exclude_directories=None)
+
+    def test_include_directories_crawls_each_prefix_directly(self):
+        self.mock_client.list_files.return_value = []
+        list(self._make_job(include_directories="docs,src").list_items())
+        self.assertEqual(self.mock_client.list_files.call_count, 2)
+        called_paths = {call.args[3] for call in self.mock_client.list_files.call_args_list}
+        self.assertEqual(called_paths, {"docs", "src"})
+
+    def test_exclude_directories_passed_through_for_pruning(self):
+        self.mock_client.list_files.return_value = []
+        list(self._make_job(exclude_directories="tests,vendor").list_items())
+        self.mock_client.list_files.assert_called_once_with(
+            "myworkspace", "myrepo", "master", exclude_directories={"tests", "vendor"}
+        )
+
+    def test_include_directories_dedupes_overlapping_prefixes(self):
+        # docs/api/v1/index.md would be listed once via the "docs" crawl and again
+        # via the nested "docs/api" crawl; list_items() must yield it only once.
+        self.mock_client.list_files.side_effect = [
+            [_file_entry("docs/guide.md"), _file_entry("docs/api/v1/index.md")],
+            [_file_entry("docs/api/v1/index.md")],
+        ]
+        items = list(self._make_job(include_directories="docs,docs/api").list_items())
+        paths = sorted(item.source_ref for item in items)
+        self.assertEqual(paths, ["docs/api/v1/index.md", "docs/guide.md"])
 
     def test_list_items_empty_result(self):
         self.mock_client.list_files.return_value = []
@@ -286,6 +391,25 @@ class TestBitbucketIngestionJob(unittest.TestCase):
     # ------------------------------------------------------------------
     # Filtering
     # ------------------------------------------------------------------
+
+    def test_binary_attribute_skips_file(self):
+        self.mock_client.list_files.return_value = [
+            _file_entry("README.md"),
+            _file_entry("logo.png", attributes=["binary"]),
+        ]
+        items = list(self._make_job().list_items())
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].source_ref, "README.md")
+
+    def test_missing_attributes_field_does_not_skip_file(self):
+        self.mock_client.list_files.return_value = [_file_entry("README.md")]
+        items = list(self._make_job().list_items())
+        self.assertEqual(len(items), 1)
+
+    def test_non_binary_attributes_do_not_skip_file(self):
+        self.mock_client.list_files.return_value = [_file_entry("README.md", attributes=["link"])]
+        items = list(self._make_job().list_items())
+        self.assertEqual(len(items), 1)
 
     def test_include_extensions_filters_out_non_matching(self):
         self.mock_client.list_files.return_value = [
@@ -346,6 +470,24 @@ class TestBitbucketIngestionJob(unittest.TestCase):
         self.mock_client.list_files.return_value = [_file_entry("README.md")]
         items = list(self._make_job(include_directories="docs").list_items())
         self.assertEqual(len(items), 0)
+
+    # ------------------------------------------------------------------
+    # get_item_checksum
+    # ------------------------------------------------------------------
+
+    def test_get_item_checksum_falls_back_to_fresh_lookup_when_uncached(self):
+        # Bare IngestionItem (not built via list_items()) has an empty _metadata_cache.
+        self.mock_client.get_file_commit_hash.return_value = "abc123def456"
+        item = IngestionItem(id="bitbucket:ws/repo/master/README.md", source_ref="README.md")
+        result = self._make_job().get_item_checksum(item)
+
+        self.mock_client.get_file_commit_hash.assert_called_once_with("myworkspace", "myrepo", "master", "README.md")
+        self.assertEqual(result, "abc123def456")
+
+    def test_get_item_checksum_returns_none_on_client_failure(self):
+        self.mock_client.get_file_commit_hash.return_value = None
+        item = IngestionItem(id="bitbucket:ws/repo/master/README.md", source_ref="README.md")
+        self.assertIsNone(self._make_job().get_item_checksum(item))
 
     # ------------------------------------------------------------------
     # get_raw_content
@@ -432,21 +574,6 @@ class TestBitbucketIngestionJob(unittest.TestCase):
 
     def test_parse_list_empty_string_returns_empty(self):
         self.assertEqual(parse_list(""), [])
-
-    # ------------------------------------------------------------------
-    # parse_timestamp (replaces _parse_timestamp)
-    # ------------------------------------------------------------------
-
-    def test_parse_timestamp_valid(self):
-        result = parse_timestamp("2024-06-15T10:30:00+00:00")
-        self.assertIsNotNone(result)
-        self.assertEqual(result.year, 2024)
-
-    def test_parse_timestamp_none_returns_none(self):
-        self.assertIsNone(parse_timestamp(None))
-
-    def test_parse_timestamp_invalid_returns_none(self):
-        self.assertIsNone(parse_timestamp("not-a-date"))
 
 
 if __name__ == "__main__":
