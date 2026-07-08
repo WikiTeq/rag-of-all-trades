@@ -362,6 +362,16 @@ class TestBitbucketIngestionJob(unittest.TestCase):
         self.assertEqual(meta["file_extension"], "")
         self.assertEqual(meta["title"], "Makefile")
 
+    def test_get_extra_metadata_url_percent_encodes_special_characters(self):
+        item = IngestionItem(
+            id="bitbucket:myworkspace/myrepo/master/docs/release notes #1.md",
+            source_ref="docs/release notes #1.md",
+        )
+        meta = self._make_job(branch="feature/foo").get_extra_metadata(item=item, content="", metadata={})
+        self.assertIn("docs/release%20notes%20%231.md", meta["url"])
+        self.assertIn("feature%2Ffoo", meta["url"])
+        self.assertNotIn(" ", meta["url"])
+
     # ------------------------------------------------------------------
     # parse_list (replaces _parse_csv)
     # ------------------------------------------------------------------
