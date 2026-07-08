@@ -61,6 +61,24 @@ class TestBitbucketClient(unittest.TestCase):
         self.assertIn("docs/guide.md", paths)
         self.assertEqual(self.mock_get.call_count, 2)
 
+    def test_list_files_prunes_excluded_subdirectory_without_http_call(self):
+        root = _api_response(
+            [
+                {"type": "commit_file", "path": "README.md"},
+                {"type": "commit_directory", "path": "docs"},
+                {"type": "commit_directory", "path": "vendor"},
+            ]
+        )
+        docs = _api_response([{"type": "commit_file", "path": "docs/guide.md"}])
+        self.mock_get.side_effect = [root, docs]
+
+        entries = list(self.client.list_files("ws", "repo", "main", exclude_directories={"vendor"}))
+
+        paths = {e["path"] for e in entries}
+        self.assertEqual(paths, {"README.md", "docs/guide.md"})
+        # Only root + docs listed; vendor/ never triggers an HTTP call.
+        self.assertEqual(self.mock_get.call_count, 2)
+
     def test_list_files_paginates_via_next_url(self):
         page1 = _api_response(
             [{"type": "commit_file", "path": "a.md"}],
