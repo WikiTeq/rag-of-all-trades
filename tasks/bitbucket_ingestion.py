@@ -19,6 +19,16 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+def _dir_excluded(dir_path: str, exclude_directories: set[str]) -> bool:
+    """Return True if ``dir_path`` is at or under one of the excluded prefixes.
+
+    Mirrors the directory prefix-matching rule in ``utils.filters.path_accepted``
+    so crawl-time pruning agrees with the file-level filter.
+    """
+    norm = dir_path.replace("\\", "/")
+    return any(norm.startswith(d.rstrip("/") + "/") or norm == d for d in exclude_directories)
+
+
 def _encoded_src_path(workspace: str, repo: str, branch: str, path: str = "") -> str:
     """Return the percent-encoded ``{workspace}/{repo}/src/{branch}/{path}`` segment.
 
@@ -49,11 +59,23 @@ class BitbucketClient:
     def _src_url(self, workspace: str, repo: str, branch: str, path: str = "") -> str:
         return f"{self.API_BASE}/repositories/{_encoded_src_path(workspace, repo, branch, path)}"
 
-    def list_files(self, workspace: str, repo: str, branch: str, path: str = "") -> Iterator[dict[str, Any]]:
+    def list_files(
+        self,
+        workspace: str,
+        repo: str,
+        branch: str,
+        path: str = "",
+        *,
+        exclude_directories: set[str] | None = None,
+    ) -> Iterator[dict[str, Any]]:
         """Yield all ``commit_file`` entries from the repository, recursively.
 
         Paginates each directory listing via the ``next`` cursor and recurses
-        into ``commit_directory`` entries.
+        into ``commit_directory`` entries. When ``exclude_directories`` is
+        given, recursion is pruned for any subdirectory whose path matches
+        one of the given prefixes (same prefix-matching rule as
+        ``utils.filters.path_accepted``), avoiding HTTP calls for excluded
+        subtrees entirely.
         """
         url = self._src_url(workspace, repo, branch, path)
         params: dict[str, Any] = {"pagelen": 100}
@@ -75,8 +97,13 @@ class BitbucketClient:
                     yield entry
                 elif entry_type == "commit_directory":
                     dir_path = entry.get("path", "")
-                    if dir_path:
-                        yield from self.list_files(workspace, repo, branch, dir_path)
+                    if not dir_path:
+                        continue
+                    if exclude_directories and _dir_excluded(dir_path, exclude_directories):
+                        continue
+                    yield from self.list_files(
+                        workspace, repo, branch, dir_path, exclude_directories=exclude_directories
+                    )
 
             url = data.get("next", "")
 
