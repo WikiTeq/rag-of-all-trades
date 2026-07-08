@@ -111,6 +111,27 @@ class TestBitbucketClient(unittest.TestCase):
         result = self.client.get_file_content("ws", "repo", "main", "secret.md")
         self.assertEqual(result, "")
 
+    def test_get_default_branch_returns_mainbranch_name(self):
+        resp = Mock()
+        resp.raise_for_status = Mock()
+        resp.json.return_value = {"mainbranch": {"name": "main"}}
+        self.mock_get.return_value = resp
+        result = self.client.get_default_branch("ws", "repo")
+        self.assertEqual(result, "main")
+
+    def test_get_default_branch_raises_on_request_exception(self):
+        self.mock_get.side_effect = Exception("timeout")
+        with self.assertRaises(RuntimeError):
+            self.client.get_default_branch("ws", "repo")
+
+    def test_get_default_branch_raises_when_mainbranch_missing(self):
+        resp = Mock()
+        resp.raise_for_status = Mock()
+        resp.json.return_value = {}
+        self.mock_get.return_value = resp
+        with self.assertRaises(RuntimeError):
+            self.client.get_default_branch("ws", "repo")
+
 
 def _make_config(
     username="user",
@@ -183,9 +204,21 @@ class TestBitbucketIngestionJob(unittest.TestCase):
         with self.assertRaises(ValueError):
             BitbucketIngestionJob(_make_config(repo=""))
 
-    def test_default_branch_is_master(self):
+    def test_configured_branch_skips_default_branch_lookup(self):
+        job = BitbucketIngestionJob(_make_config(branch="develop"))
+        self.assertEqual(job.branch, "develop")
+        self.mock_client.get_default_branch.assert_not_called()
+
+    def test_empty_branch_resolves_default_branch_via_client(self):
+        self.mock_client.get_default_branch.return_value = "main"
         job = BitbucketIngestionJob(_make_config(branch=""))
-        self.assertEqual(job.branch, "master")
+        self.assertEqual(job.branch, "main")
+        self.mock_client.get_default_branch.assert_called_once_with("myworkspace", "myrepo")
+
+    def test_empty_branch_raises_when_default_branch_lookup_fails(self):
+        self.mock_client.get_default_branch.side_effect = RuntimeError("API error")
+        with self.assertRaises(ValueError):
+            BitbucketIngestionJob(_make_config(branch=""))
 
     def test_include_and_exclude_extensions_mutually_exclusive(self):
         with self.assertRaises(ValueError):
