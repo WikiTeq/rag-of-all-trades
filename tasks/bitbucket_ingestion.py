@@ -19,6 +19,20 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
+def _encoded_src_path(workspace: str, repo: str, branch: str, path: str = "") -> str:
+    """Return the percent-encoded ``{workspace}/{repo}/src/{branch}/{path}`` segment.
+
+    Shared by the API client (``BitbucketClient._src_url``) and the
+    browser-facing citation URL (``BitbucketIngestionJob.get_extra_metadata``)
+    so both stay percent-encoded consistently and can't drift apart.
+    """
+    enc_ws = quote(workspace, safe="")
+    enc_repo = quote(repo, safe="")
+    enc_branch = quote(branch, safe="")
+    enc_path = quote(path, safe="/")
+    return f"{enc_ws}/{enc_repo}/src/{enc_branch}/{enc_path}"
+
+
 class BitbucketClient:
     """Thin HTTP client for the Bitbucket REST API v2.0.
 
@@ -33,11 +47,7 @@ class BitbucketClient:
         self._session = RetrySession()
 
     def _src_url(self, workspace: str, repo: str, branch: str, path: str = "") -> str:
-        enc_ws = quote(workspace, safe="")
-        enc_repo = quote(repo, safe="")
-        enc_branch = quote(branch, safe="")
-        enc_path = quote(path, safe="/")
-        return f"{self.API_BASE}/repositories/{enc_ws}/{enc_repo}/src/{enc_branch}/{enc_path}"
+        return f"{self.API_BASE}/repositories/{_encoded_src_path(workspace, repo, branch, path)}"
 
     def list_files(self, workspace: str, repo: str, branch: str, path: str = "") -> Iterator[dict[str, Any]]:
         """Yield all ``commit_file`` entries from the repository, recursively.
@@ -220,7 +230,7 @@ class BitbucketIngestionJob(IngestionJob):
         path: str = item.source_ref
         ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
         file_name = path.rsplit("/", 1)[-1] if "/" in path else path
-        url = f"https://bitbucket.org/{self.workspace}/{self.repo}/src/{self.branch}/{path}"
+        url = f"https://bitbucket.org/{_encoded_src_path(self.workspace, self.repo, self.branch, path)}"
         return {
             "url": url,
             "title": file_name,
