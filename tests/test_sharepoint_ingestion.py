@@ -103,6 +103,24 @@ class TestSharePointIngestionInit(unittest.TestCase):
         self.assertEqual(constructor_kwargs["drive_name"], "MyDrive")
         self.assertNotIn("drive_name", constructor_kwargs.get("load_kwargs", {}))
 
+    def test_missing_site_name_and_site_id_raises(self):
+        with self.assertRaises(ValueError):
+            SharePointIngestionJob(
+                {
+                    "name": "sp1",
+                    "config": {
+                        "client_id": "c",
+                        "client_secret": "s",
+                        "tenant_id": "t",
+                    },
+                }
+            )
+
+    def test_site_id_alone_is_sufficient(self):
+        job = _make_job(sharepoint_site_name="", sharepoint_site_id="abc-123")
+        self.assertEqual(job.sharepoint_site_id, "abc-123")
+        self.assertIsNone(job.sharepoint_site_name)
+
 
 class TestSharePointIngestionListItemsDrive(unittest.TestCase):
     def test_yields_one_item_per_resource(self):
