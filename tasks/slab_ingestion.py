@@ -40,24 +40,16 @@ _QUERY_SEARCH_POSTS = """
 """
 
 _QUERY_GET_TOPIC = """
-    query GetTopicPosts($topicId: ID!, $first: Int!, $after: String) {
+    query GetTopicPosts($topicId: ID!) {
         topic(id: $topicId) {
             id
             name
             parent { id name }
             ancestors { id name }
-            posts(first: $first, after: $after) {
-                edges {
-                    node {
-                        id
-                        title
-                        updatedAt
-                    }
-                }
-                pageInfo {
-                    endCursor
-                    hasNextPage
-                }
+            posts {
+                id
+                title
+                updatedAt
             }
         }
     }
@@ -135,7 +127,9 @@ class SlabIngestionJob(IngestionJob):
         - config.topic_ids: comma-separated topic IDs to filter (optional)
         - config.max_retries: max GraphQL retry attempts on failure (optional, default 3)
         - config.retry_delay: seconds between retries (optional, default 2)
-        - config.search_batch_size: posts per search/topic page (optional, default 100)
+        - config.search_batch_size: posts per page when listing all posts via search
+          (optional, default 100); not used when topic_ids is configured, since
+          Slab's topic.posts field returns the full list unpaginated
     """
 
     @property
@@ -258,46 +252,30 @@ class SlabIngestionJob(IngestionJob):
     def _list_by_topics(self) -> Iterator[IngestionItem]:
         total = 0
         for topic_id in self.topic_ids:
-            cursor: str | None = None
-            topic_meta: dict | None = None
+            data = self._client.execute(_QUERY_GET_TOPIC, {"topicId": topic_id})
+            topic = (data or {}).get("topic") or {}
 
-            while True:
-                data = self._client.execute(
-                    _QUERY_GET_TOPIC,
-                    {"topicId": topic_id, "first": self.search_batch_size, "after": cursor},
-                )
-                topic = (data or {}).get("topic") or {}
+            topic_meta = {
+                "id": topic.get("id", ""),
+                "name": topic.get("name", ""),
+                "parent_id": (topic.get("parent") or {}).get("id", ""),
+                "parent_name": (topic.get("parent") or {}).get("name", ""),
+                "ancestors": [
+                    {"id": a.get("id", ""), "name": a.get("name", "")} for a in (topic.get("ancestors") or [])
+                ],
+            }
 
-                if topic_meta is None:
-                    topic_meta = {
-                        "id": topic.get("id", ""),
-                        "name": topic.get("name", ""),
-                        "parent_id": (topic.get("parent") or {}).get("id", ""),
-                        "parent_name": (topic.get("parent") or {}).get("name", ""),
-                        "ancestors": [
-                            {"id": a.get("id", ""), "name": a.get("name", "")} for a in (topic.get("ancestors") or [])
-                        ],
-                    }
-
-                posts_conn = topic.get("posts") or {}
-                page_info = posts_conn.get("pageInfo", {})
-
-                for edge in posts_conn.get("edges", []):
-                    stub = edge.get("node") or {}
-                    post_id = stub.get("id")
-                    if not post_id:
-                        continue
-                    post_data = self._client.execute(_QUERY_GET_POST, {"postId": post_id})
-                    post = (post_data or {}).get("post") or {}
-                    if not post.get("id"):
-                        continue
-                    post["_topic_meta"] = topic_meta
-                    yield self._make_item(post)
-                    total += 1
-
-                if not page_info.get("hasNextPage"):
-                    break
-                cursor = page_info.get("endCursor")
+            for stub in topic.get("posts") or []:
+                post_id = stub.get("id")
+                if not post_id:
+                    continue
+                post_data = self._client.execute(_QUERY_GET_POST, {"postId": post_id})
+                post = (post_data or {}).get("post") or {}
+                if not post.get("id"):
+                    continue
+                post["_topic_meta"] = topic_meta
+                yield self._make_item(post)
+                total += 1
 
         logger.info(f"[{self.source_name}] Found {total} post(s) from {len(self.topic_ids)} topic(s)")
 

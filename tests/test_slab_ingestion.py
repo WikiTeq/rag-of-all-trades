@@ -26,18 +26,14 @@ def _make_job(api_token=None, topic_ids=None):
         return SlabIngestionJob(config)
 
 
-def _topic_page(stubs, has_next=False, cursor=None, topic_id="topic1", topic_name="Engineering"):
-    edges = [{"node": s} for s in stubs]
+def _topic_page(stubs, topic_id="topic1", topic_name="Engineering"):
     return {
         "topic": {
             "id": topic_id,
             "name": topic_name,
             "parent": None,
             "ancestors": [],
-            "posts": {
-                "edges": edges,
-                "pageInfo": {"hasNextPage": has_next, "endCursor": cursor},
-            },
+            "posts": stubs,
         }
     }
 
@@ -139,16 +135,19 @@ class TestSlabListItemsByTopics(unittest.TestCase):
         self.assertEqual(topic_meta["id"], "topic1")
         self.assertEqual(topic_meta["name"], "Engineering")
 
-    def test_list_by_topic_paginated(self):
+    def test_list_by_topic_multiple_posts(self):
+        # Slab's topic.posts field returns the full list unpaginated (no
+        # edges/pageInfo, no first/after args) — confirmed via live schema
+        # introspection. Each post stub is still fetched individually since
+        # topic.posts only returns id/title/updatedAt, not content.
         job = _make_job(topic_ids=["topic1"])
         stub1 = {"id": "p1", "title": "Post 1", "updatedAt": None}
         stub2 = {"id": "p2", "title": "Post 2", "updatedAt": None}
         full1 = {"id": "p1", "title": "Post 1", "content": "", "updatedAt": None}
         full2 = {"id": "p2", "title": "Post 2", "content": "", "updatedAt": None}
         responses = [
-            _topic_page([stub1], has_next=True, cursor="cur1"),
+            _topic_page([stub1, stub2]),
             {"post": full1},
-            _topic_page([stub2], has_next=False),
             {"post": full2},
         ]
         with patch.object(job._client, "execute", side_effect=responses):
@@ -162,6 +161,24 @@ class TestSlabListItemsByTopics(unittest.TestCase):
         with patch.object(job._client, "execute", side_effect=responses):
             items = list(job.list_items())
         self.assertEqual(items, [])
+
+    def test_list_by_multiple_topics(self):
+        job = _make_job(topic_ids=["topic1", "topic2"])
+        stub1 = {"id": "p1", "title": "Post 1", "updatedAt": None}
+        stub2 = {"id": "p2", "title": "Post 2", "updatedAt": None}
+        full1 = {"id": "p1", "title": "Post 1", "content": "", "updatedAt": None}
+        full2 = {"id": "p2", "title": "Post 2", "content": "", "updatedAt": None}
+        responses = [
+            _topic_page([stub1], topic_id="topic1", topic_name="Engineering"),
+            {"post": full1},
+            _topic_page([stub2], topic_id="topic2", topic_name="Onboarding"),
+            {"post": full2},
+        ]
+        with patch.object(job._client, "execute", side_effect=responses):
+            items = list(job.list_items())
+        self.assertEqual([i.id for i in items], ["p1", "p2"])
+        self.assertEqual(items[0].source_ref["_topic_meta"]["name"], "Engineering")
+        self.assertEqual(items[1].source_ref["_topic_meta"]["name"], "Onboarding")
 
 
 class TestSlabGetRawContent(unittest.TestCase):
