@@ -15,7 +15,6 @@ from utils.text import slugify
 logger = logging.getLogger(__name__)
 
 SLAB_GRAPHQL_URL = "https://api.slab.com/v1/graphql"
-SLAB_POST_URL = "https://slab.com/posts/{post_id}"
 
 _QUERY_SEARCH_POSTS = """
     query SearchPosts($first: Int!, $after: String) {
@@ -71,6 +70,14 @@ _QUERY_GET_POST = """
             title
             content
             updatedAt
+        }
+    }
+"""
+
+_QUERY_ORG_HOST = """
+    query GetOrgHost {
+        organization {
+            host
         }
     }
 """
@@ -164,6 +171,7 @@ class SlabIngestionJob(IngestionJob):
             retry_delay=retry_delay,
             source_name=self.source_name,
         )
+        self._org_host: str | None = None
 
         logger.info(f"[{self.source_name}] Initialized Slab connector (topic_ids={self.topic_ids or 'all'})")
 
@@ -195,7 +203,7 @@ class SlabIngestionJob(IngestionJob):
         post = item.source_ref
         topic = post.get("_topic_meta") or {}
         return {
-            "url": SLAB_POST_URL.format(post_id=item.id),
+            "url": f"https://{self._get_org_host()}/posts/{item.id}",
             "title": post.get("title") or "",
             "topic_id": topic.get("id", ""),
             "topic_name": topic.get("name", ""),
@@ -203,6 +211,21 @@ class SlabIngestionJob(IngestionJob):
             "topic_parent_name": topic.get("parent_name", ""),
             "topic_ancestors": topic.get("ancestors", []),
         }
+
+    def _get_org_host(self) -> str:
+        """Return the organization's Slab host (e.g. my-team.slab.com), fetched once and cached.
+
+        Post URLs are only reachable under the organization's own subdomain, not
+        the bare slab.com domain, so this must be resolved via the API rather
+        than hardcoded.
+        """
+        if self._org_host is None:
+            data = self._client.execute(_QUERY_ORG_HOST)
+            host = ((data or {}).get("organization") or {}).get("host")
+            if not host:
+                raise RuntimeError(f"[{self.source_name}] Slab API did not return an organization host")
+            self._org_host = host
+        return self._org_host
 
     # ------------------------------------------------------------------
     # Internal helpers

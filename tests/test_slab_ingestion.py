@@ -224,18 +224,29 @@ class TestSlabGetItemName(unittest.TestCase):
 
 
 class TestSlabGetExtraMetadata(unittest.TestCase):
-    def test_url_contains_post_id(self):
+    _ORG_HOST_RESPONSE = {"organization": {"host": "my-team.slab.com"}}
+
+    def test_url_uses_org_host(self):
         job = _make_job()
         item = IngestionItem(id="abc123", source_ref={"title": "Post"})
-        meta = job.get_extra_metadata(item, "", {})
-        self.assertIn("abc123", meta["url"])
-        self.assertIn("slab.com", meta["url"])
+        with patch.object(job._client, "execute", return_value=self._ORG_HOST_RESPONSE):
+            meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["url"], "https://my-team.slab.com/posts/abc123")
+
+    def test_org_host_fetched_once_and_cached(self):
+        job = _make_job()
+        item = IngestionItem(id="abc123", source_ref={"title": "Post"})
+        with patch.object(job._client, "execute", return_value=self._ORG_HOST_RESPONSE) as mock_execute:
+            job.get_extra_metadata(item, "", {})
+            job.get_extra_metadata(item, "", {})
+        mock_execute.assert_called_once()
 
     def test_metadata_with_topic(self):
         job = _make_job()
         topic_meta = {"id": "t1", "name": "Engineering", "parent_id": "", "parent_name": "", "ancestors": []}
         item = IngestionItem(id="abc123", source_ref={"title": "My Post", "_topic_meta": topic_meta})
-        meta = job.get_extra_metadata(item, "", {})
+        with patch.object(job._client, "execute", return_value=self._ORG_HOST_RESPONSE):
+            meta = job.get_extra_metadata(item, "", {})
         self.assertIn("abc123", meta["url"])
         self.assertEqual(meta["title"], "My Post")
         self.assertEqual(meta["topic_id"], "t1")
@@ -245,7 +256,8 @@ class TestSlabGetExtraMetadata(unittest.TestCase):
     def test_metadata_no_topic(self):
         job = _make_job()
         item = IngestionItem(id="abc123", source_ref={"title": "Post"})
-        meta = job.get_extra_metadata(item, "", {})
+        with patch.object(job._client, "execute", return_value=self._ORG_HOST_RESPONSE):
+            meta = job.get_extra_metadata(item, "", {})
         self.assertIn("abc123", meta["url"])
         self.assertEqual(meta["topic_id"], "")
         self.assertEqual(meta["topic_name"], "")
@@ -261,10 +273,18 @@ class TestSlabGetExtraMetadata(unittest.TestCase):
             "ancestors": [{"id": "t1", "name": "Engineering"}],
         }
         item = IngestionItem(id="abc123", source_ref={"title": "Post", "_topic_meta": topic_meta})
-        meta = job.get_extra_metadata(item, "", {})
+        with patch.object(job._client, "execute", return_value=self._ORG_HOST_RESPONSE):
+            meta = job.get_extra_metadata(item, "", {})
         self.assertEqual(meta["topic_parent_id"], "t1")
         self.assertEqual(meta["topic_parent_name"], "Engineering")
         self.assertEqual(meta["topic_ancestors"], [{"id": "t1", "name": "Engineering"}])
+
+    def test_org_host_missing_raises(self):
+        job = _make_job()
+        item = IngestionItem(id="abc123", source_ref={"title": "Post"})
+        with patch.object(job._client, "execute", return_value={"organization": {}}):
+            with self.assertRaises(RuntimeError):
+                job.get_extra_metadata(item, "", {})
 
 
 class TestSlabGraphqlRetry(unittest.TestCase):
