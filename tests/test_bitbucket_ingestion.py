@@ -438,6 +438,15 @@ class TestBitbucketIngestionJob(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].source_ref, "docs/guide.md")
 
+    def test_include_directories_preserves_case(self):
+        self.mock_client.list_files.return_value = [
+            _file_entry("Docs/guide.md"),
+            _file_entry("docs/guide.md"),
+        ]
+        items = list(self._make_job(include_directories="Docs").list_items())
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].source_ref, "Docs/guide.md")
+
     def test_exclude_directories_filters_out_matching(self):
         self.mock_client.list_files.return_value = [
             _file_entry("docs/guide.md"),
