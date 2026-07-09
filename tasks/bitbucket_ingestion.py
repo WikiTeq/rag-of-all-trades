@@ -268,8 +268,8 @@ class BitbucketIngestionJob(IngestionJob):
         self.exclude_extensions: set[str] = {
             f".{e}" if not e.startswith(".") else e for e in parse_list(exclude_ext, lower=True)
         }
-        self.include_directories: set[str] = set(parse_list(include_dir, lower=True))
-        self.exclude_directories: set[str] = set(parse_list(exclude_dir, lower=True))
+        self.include_directories: set[str] = set(parse_list(include_dir))
+        self.exclude_directories: set[str] = set(parse_list(exclude_dir))
 
         self._client = BitbucketClient(self.username, self.api_token)
 
