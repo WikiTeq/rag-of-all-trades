@@ -7,6 +7,7 @@ import requests as req_mod
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.slab_ingestion import SlabIngestionJob
+from utils.graphql import GraphQLError
 
 
 def _make_job_with_cfg(cfg: dict):
@@ -311,7 +312,7 @@ class TestSlabGraphqlRetry(unittest.TestCase):
         with patch("utils.graphql.requests.post") as mock_post, patch("tasks.slab_ingestion.time.sleep"):
             mock_post.return_value.raise_for_status = lambda: None
             mock_post.return_value.json.return_value = error_response
-            with self.assertRaises(Exception):
+            with self.assertRaises(GraphQLError):
                 job._client.execute("{ test }")
             self.assertEqual(mock_post.call_count, 1)
 
