@@ -84,6 +84,13 @@ class SharePointIngestionJob(IngestionJob):
 
         self.recursive = parse_bool(cfg.get("recursive", True), default=True)
 
+        logger.info(
+            f"Initialized SharePoint connector: site={self.sharepoint_site_name!r}, "
+            f"type={sharepoint_type_raw!r}, recursive={self.recursive}"
+        )
+
+    def list_items(self) -> Iterator[IngestionItem]:
+        """Discover SharePoint items and yield one IngestionItem per document/page."""
         self._reader = SharePointReader(
             client_id=self.client_id,
             client_secret=self.client_secret,
@@ -95,16 +102,15 @@ class SharePointIngestionJob(IngestionJob):
             sharepoint_type=self.sharepoint_type,
             drive_name=self.drive_name,
         )
-
-        logger.info(
-            f"Initialized SharePoint connector: site={self.sharepoint_site_name!r}, "
-            f"type={sharepoint_type_raw!r}, recursive={self.recursive}"
-        )
-
-    def list_items(self) -> Iterator[IngestionItem]:
-        """Discover SharePoint items and yield one IngestionItem per document/page."""
         logger.info(f"[{self.source_name}] Loading SharePoint content")
         if self.sharepoint_type == SharePointType.DRIVE:
+            if not self.sharepoint_site_name and self.sharepoint_site_id:
+                logger.warning(
+                    "[%s] DRIVE mode with sharepoint_site_id only: the LlamaIndex reader's "
+                    "load_resource() does not support site_id-based lookup and will fail when "
+                    "downloading files. Set sharepoint_site_name to avoid this.",
+                    self.source_name,
+                )
             yield from self._list_drive_items()
         else:
             yield from self._list_page_items()
@@ -114,6 +120,7 @@ class SharePointIngestionJob(IngestionJob):
             k: v
             for k, v in {
                 "sharepoint_site_name": self.sharepoint_site_name,
+                "sharepoint_site_id": self.sharepoint_site_id,
                 "sharepoint_folder_path": self.sharepoint_folder_path,
                 "sharepoint_folder_id": self.sharepoint_folder_id,
             }.items()
@@ -128,6 +135,14 @@ class SharePointIngestionJob(IngestionJob):
             resource_id = str(path)
             try:
                 info = self._reader.get_resource_info(resource_id)
+                file_path = info["file_path"]
+            except KeyError:
+                logger.warning(
+                    "[%s] Resource info for %r missing file_path; skipping",
+                    self.source_name,
+                    resource_id,
+                )
+                continue
             except Exception:
                 logger.exception(
                     "[%s] Failed to get resource info for %r; skipping",
@@ -145,7 +160,7 @@ class SharePointIngestionJob(IngestionJob):
                 )
                 last_modified = datetime.now(UTC)
 
-            item_id = f"sharepoint:{self.source_name}:{info['file_path']}"
+            item_id = f"sharepoint:{self.source_name}:{file_path}"
             yield IngestionItem(id=item_id, source_ref=info, last_modified=last_modified)
 
     def _list_page_items(self) -> Iterator[IngestionItem]:
@@ -153,6 +168,7 @@ class SharePointIngestionJob(IngestionJob):
             k: v
             for k, v in {
                 "sharepoint_site_name": self.sharepoint_site_name,
+                "sharepoint_site_id": self.sharepoint_site_id,
             }.items()
             if v is not None
         }
@@ -172,16 +188,15 @@ class SharePointIngestionJob(IngestionJob):
             )
             parsed = parse_timestamp(raw_ts)
             if parsed is None:
-                log = logger.warning if self.sharepoint_type == SharePointType.DRIVE else logger.debug
                 if raw_ts is not None:
-                    log(
+                    logger.debug(
                         "[%s] Could not parse last_modified %r for %s; falling back to now()",
                         self.source_name,
                         raw_ts,
                         stable_id,
                     )
                 else:
-                    log(
+                    logger.debug(
                         "[%s] No last_modified metadata for %s; falling back to now()",
                         self.source_name,
                         stable_id,
@@ -195,7 +210,7 @@ class SharePointIngestionJob(IngestionJob):
         """Return document text; for file mode, downloads one file at a time."""
         if self.sharepoint_type == SharePointType.DRIVE:
             docs = self._reader.load_resource(item.source_ref["file_path"])
-            return docs[0].text if docs else ""
+            return (docs[0].text or "") if docs else ""
         return item.source_ref.text or ""
 
     def get_item_name(self, item: IngestionItem) -> str:

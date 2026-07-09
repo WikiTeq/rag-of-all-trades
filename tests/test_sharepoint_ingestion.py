@@ -98,7 +98,9 @@ class TestSharePointIngestionInit(unittest.TestCase):
 
     def test_drive_name_passed_to_constructor(self):
         with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
-            _make_job(drive_name="MyDrive")
+            MockReader.return_value.list_resources.return_value = []
+            job = _make_job(drive_name="MyDrive")
+            list(job.list_items())
         constructor_kwargs = MockReader.call_args[1]
         self.assertEqual(constructor_kwargs["drive_name"], "MyDrive")
         self.assertNotIn("drive_name", constructor_kwargs.get("load_kwargs", {}))
@@ -229,6 +231,32 @@ class TestSharePointIngestionListItemsDrive(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertIn("good.pdf", items[0].id)
 
+    def test_missing_file_path_in_info_skips_item(self):
+        with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
+            MockReader.return_value.list_resources.return_value = [
+                Path("MySite/no-path.pdf"),
+                Path("MySite/good.pdf"),
+            ]
+            MockReader.return_value.get_resource_info.side_effect = [
+                {"modified_at": "2024-06-01T12:00:00+00:00"},
+                _make_info("MySite/good.pdf"),
+            ]
+            job = _make_job()
+            items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        self.assertIn("good.pdf", items[0].id)
+
+    def test_site_id_passed_to_list_resources(self):
+        with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
+            MockReader.return_value.list_resources.return_value = []
+            job = _make_job(sharepoint_site_name="", sharepoint_site_id="abc-123")
+            list(job.list_items())
+
+        call_kwargs = MockReader.return_value.list_resources.call_args[1]
+        self.assertEqual(call_kwargs["sharepoint_site_id"], "abc-123")
+        self.assertNotIn("sharepoint_site_name", call_kwargs)
+
 
 class TestSharePointIngestionListItemsPage(unittest.TestCase):
     def test_yields_one_item_per_page(self):
@@ -257,6 +285,16 @@ class TestSharePointIngestionListItemsPage(unittest.TestCase):
 
         call_kwargs = MockReader.return_value.load_data.call_args[1]
         self.assertNotIn("recursive", call_kwargs)
+
+    def test_site_id_passed_to_load_data(self):
+        with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
+            MockReader.return_value.load_data.return_value = []
+            job = _make_job(sharepoint_type="page", sharepoint_site_name="", sharepoint_site_id="abc-123")
+            list(job.list_items())
+
+        call_kwargs = MockReader.return_value.load_data.call_args[1]
+        self.assertEqual(call_kwargs["sharepoint_site_id"], "abc-123")
+        self.assertNotIn("sharepoint_site_name", call_kwargs)
 
     def test_last_modified_from_camel_case_key(self):
         doc = Document(
@@ -293,6 +331,7 @@ class TestSharePointIngestionGetRawContent(unittest.TestCase):
         with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
             MockReader.return_value.load_resource.return_value = [doc]
             job = _make_job()
+            job._reader = MockReader.return_value
             result = job.get_raw_content(item)
 
         MockReader.return_value.load_resource.assert_called_once_with("MySite/Docs/report.pdf")
@@ -304,6 +343,19 @@ class TestSharePointIngestionGetRawContent(unittest.TestCase):
         with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
             MockReader.return_value.load_resource.return_value = []
             job = _make_job()
+            job._reader = MockReader.return_value
+            result = job.get_raw_content(item)
+
+        self.assertEqual(result, "")
+
+    def test_drive_returns_empty_string_for_none_text(self):
+        doc = Document(text=None, metadata={})
+        info = _make_info()
+        item = IngestionItem(id="sharepoint:sp1:MySite/Docs/report.pdf", source_ref=info)
+        with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
+            MockReader.return_value.load_resource.return_value = [doc]
+            job = _make_job()
+            job._reader = MockReader.return_value
             result = job.get_raw_content(item)
 
         self.assertEqual(result, "")
