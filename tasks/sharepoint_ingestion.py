@@ -32,8 +32,8 @@ class SharePointIngestionJob(IngestionJob):
         - config.client_id: Azure app client ID (required)
         - config.client_secret: Azure app client secret (required)
         - config.tenant_id: Azure tenant ID (required)
-        - config.sharepoint_site_name: SharePoint site name (optional)
-        - config.sharepoint_site_id: SharePoint site ID (optional; alternative to site_name)
+        - config.sharepoint_site_name: SharePoint site name (required unless sharepoint_site_id is set)
+        - config.sharepoint_site_id: SharePoint site ID (required unless sharepoint_site_name is set)
         - config.sharepoint_host_name: SharePoint host, e.g. contoso.sharepoint.com (optional, passed through to reader)
         - config.sharepoint_relative_url: Relative URL of the site, e.g. /sites/MySite (optional, passed through to reader)
         - config.sharepoint_folder_path: Folder path within the drive (optional)
@@ -66,6 +66,10 @@ class SharePointIngestionJob(IngestionJob):
 
         self.sharepoint_site_name: str | None = cfg.get("sharepoint_site_name", "").strip() or None
         self.sharepoint_site_id: str | None = cfg.get("sharepoint_site_id", "").strip() or None
+        if not self.sharepoint_site_name and not self.sharepoint_site_id:
+            raise ValueError(
+                "SharePoint connector requires either sharepoint_site_name or sharepoint_site_id in config"
+            )
         self.sharepoint_host_name: str | None = cfg.get("sharepoint_host_name", "").strip() or None
         self.sharepoint_relative_url: str | None = cfg.get("sharepoint_relative_url", "").strip() or None
         self.sharepoint_folder_path: str | None = cfg.get("sharepoint_folder_path", "").strip() or None
