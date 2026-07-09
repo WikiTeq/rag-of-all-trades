@@ -253,6 +253,19 @@ class TestSharePointIngestionListItemsPage(unittest.TestCase):
         self.assertIsNotNone(items[0].last_modified)
         self.assertIsNotNone(items[0].last_modified.tzinfo)
 
+    def test_missing_last_modified_uses_debug_not_warning(self):
+        doc = Document(text="x", metadata={"file_path": "page.aspx"})
+        with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
+            MockReader.return_value.load_data.return_value = [doc]
+            with self.assertLogs("tasks.sharepoint_ingestion", level="DEBUG") as cm:
+                job = _make_job(sharepoint_type="page")
+                list(job.list_items())
+
+        debug_msgs = [m for m in cm.output if m.startswith("DEBUG:")]
+        warning_msgs = [m for m in cm.output if "last_modified" in m and m.startswith("WARNING:")]
+        self.assertTrue(any("last_modified" in m for m in debug_msgs))
+        self.assertEqual(warning_msgs, [])
+
 
 class TestSharePointIngestionGetRawContent(unittest.TestCase):
     def test_drive_calls_load_resource(self):

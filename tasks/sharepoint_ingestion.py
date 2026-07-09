@@ -168,15 +168,16 @@ class SharePointIngestionJob(IngestionJob):
             )
             parsed = parse_timestamp(raw_ts)
             if parsed is None:
+                log = logger.warning if self.sharepoint_type == SharePointType.DRIVE else logger.debug
                 if raw_ts is not None:
-                    logger.warning(
+                    log(
                         "[%s] Could not parse last_modified %r for %s; falling back to now()",
                         self.source_name,
                         raw_ts,
                         stable_id,
                     )
                 else:
-                    logger.warning(
+                    log(
                         "[%s] No last_modified metadata for %s; falling back to now()",
                         self.source_name,
                         stable_id,
