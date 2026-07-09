@@ -1,6 +1,7 @@
 import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from llama_index.readers.microsoft_sharepoint import SharePointReader, SharePointType
@@ -23,14 +24,18 @@ class SharePointIngestionJob(IngestionJob):
       - ``file`` (default): load files from a SharePoint drive / folder
       - ``page``: load SharePoint site pages
 
+    For file mode, files are discovered without downloading (``list_resources`` +
+    ``get_resource_info``) and downloaded one at a time during ingestion
+    (``load_resource``), avoiding the bulk-download bottleneck of ``load_data``.
+
     Configuration (config.yaml):
         - config.client_id: Azure app client ID (required)
         - config.client_secret: Azure app client secret (required)
         - config.tenant_id: Azure tenant ID (required)
         - config.sharepoint_site_name: SharePoint site name (optional)
         - config.sharepoint_site_id: SharePoint site ID (optional; alternative to site_name)
-        - config.sharepoint_host_name: SharePoint host, e.g. contoso.sharepoint.com (optional)
-        - config.sharepoint_relative_url: Relative URL of the site, e.g. /sites/MySite (optional)
+        - config.sharepoint_host_name: SharePoint host, e.g. contoso.sharepoint.com (optional, passed through to reader)
+        - config.sharepoint_relative_url: Relative URL of the site, e.g. /sites/MySite (optional, passed through to reader)
         - config.sharepoint_folder_path: Folder path within the drive (optional)
         - config.sharepoint_folder_id: Folder ID within the drive (optional)
         - config.drive_name: Name of the document library / drive (optional)
@@ -93,10 +98,15 @@ class SharePointIngestionJob(IngestionJob):
         )
 
     def list_items(self) -> Iterator[IngestionItem]:
-        """Load all SharePoint documents/pages and yield one IngestionItem per document."""
+        """Discover SharePoint items and yield one IngestionItem per document/page."""
         logger.info(f"[{self.source_name}] Loading SharePoint content")
+        if self.sharepoint_type == SharePointType.DRIVE:
+            yield from self._list_drive_items()
+        else:
+            yield from self._list_page_items()
 
-        load_kwargs: dict[str, Any] = {
+    def _list_drive_items(self) -> Iterator[IngestionItem]:
+        list_kwargs: dict[str, Any] = {
             k: v
             for k, v in {
                 "sharepoint_site_name": self.sharepoint_site_name,
@@ -105,11 +115,46 @@ class SharePointIngestionJob(IngestionJob):
             }.items()
             if v is not None
         }
-        if self.sharepoint_type == SharePointType.DRIVE:
-            load_kwargs["recursive"] = self.recursive
+        list_kwargs["recursive"] = self.recursive
+
+        paths = self._reader.list_resources(**list_kwargs)
+        logger.info(f"[{self.source_name}] Found {len(paths)} resource(s) in SharePoint drive")
+
+        for path in paths:
+            resource_id = str(path)
+            try:
+                info = self._reader.get_resource_info(resource_id)
+            except Exception:
+                logger.exception(
+                    "[%s] Failed to get resource info for %r; skipping",
+                    self.source_name,
+                    resource_id,
+                )
+                continue
+
+            last_modified = parse_timestamp(info.get("modified_at"))
+            if last_modified is None:
+                logger.warning(
+                    "[%s] Missing modified_at for %r; using now()",
+                    self.source_name,
+                    resource_id,
+                )
+                last_modified = datetime.now(UTC)
+
+            item_id = f"sharepoint:{self.source_name}:{info['file_path']}"
+            yield IngestionItem(id=item_id, source_ref=info, last_modified=last_modified)
+
+    def _list_page_items(self) -> Iterator[IngestionItem]:
+        load_kwargs: dict[str, Any] = {
+            k: v
+            for k, v in {
+                "sharepoint_site_name": self.sharepoint_site_name,
+            }.items()
+            if v is not None
+        }
 
         docs = self._reader.load_data(**load_kwargs)
-        logger.info(f"[{self.source_name}] Loaded {len(docs)} document(s) from SharePoint")
+        logger.info(f"[{self.source_name}] Loaded {len(docs)} page(s) from SharePoint")
 
         for doc in docs:
             stable_id = (
@@ -139,24 +184,35 @@ class SharePointIngestionJob(IngestionJob):
                 last_modified = datetime.now(UTC)
             else:
                 last_modified = parsed.astimezone(UTC)
-            yield IngestionItem(
-                id=item_id,
-                source_ref=doc,
-                last_modified=last_modified,
-            )
+            yield IngestionItem(id=item_id, source_ref=doc, last_modified=last_modified)
 
     def get_raw_content(self, item: IngestionItem) -> str:
-        """Return the document text already fetched by the reader."""
+        """Return document text; for file mode, downloads one file at a time."""
+        if self.sharepoint_type == SharePointType.DRIVE:
+            docs = self._reader.load_resource(item.source_ref["file_path"])
+            return docs[0].text if docs else ""
         return item.source_ref.text or ""
 
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe unique name for this item."""
+        if self.sharepoint_type == SharePointType.DRIVE:
+            return slugify(f"{self.source_name}_{item.source_ref['file_path']}")
         doc = item.source_ref
         file_path = doc.metadata.get("file_path") or doc.metadata.get("file_name") or doc.id_
         return slugify(f"{self.source_name}_{file_path}")
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return SharePoint-specific metadata fields."""
+        if self.sharepoint_type == SharePointType.DRIVE:
+            info = item.source_ref
+            file_path = info.get("file_path", "")
+            file_name = Path(file_path).name if file_path else ""
+            return {
+                "file_path": file_path,
+                "file_name": file_name,
+                "url": info.get("url", ""),
+                "title": file_name,
+            }
         doc = item.source_ref
         return {
             "file_path": doc.metadata.get("file_path", ""),
