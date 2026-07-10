@@ -1,6 +1,7 @@
 import imaplib
 import logging
 import re
+import ssl
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from email import message_from_bytes
@@ -11,10 +12,14 @@ from typing import Any
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from utils.parse import parse_list
+from utils.parse import parse_bool, parse_list
 from utils.text import html_to_markdown, slugify
 
 logger = logging.getLogger(__name__)
+
+# imaplib.IMAP4_SSL (implicit TLS) and imaplib.IMAP4 (used with STARTTLS) share
+# the same select/uid/logout/list API surface used throughout this connector.
+IMAPConnection = imaplib.IMAP4 | imaplib.IMAP4_SSL
 
 
 def _decode_header_value(raw: str | bytes | None) -> str:
@@ -90,17 +95,19 @@ def _extract_body(msg: Message) -> str:
 class IMAPIngestionJob(IngestionJob):
     """Ingestion connector for IMAP email mailboxes.
 
-    Connects to an IMAP server via IMAP4_SSL and ingests emails as documents.
+    Connects to an IMAP server via implicit TLS (IMAP4_SSL) or STARTTLS and ingests emails as documents.
     Each email becomes one document with subject as title and body as content.
     Mailboxes are auto-discovered when not specified in config.
 
     Configuration (config.yaml):
         - config.host: IMAP server hostname (required)
-        - config.port: IMAP server port (optional, default 993)
+        - config.port: IMAP server port (optional, default 993, or 143 when config.use_starttls is set)
         - config.username: IMAP account username (required)
         - config.password: IMAP account password or app-specific password (required)
         - config.mailboxes: comma-separated list of mailboxes to ingest (optional, default: all)
         - config.since: only ingest messages on or after this date, e.g. "2024-01-01" (optional)
+        - config.use_starttls: connect over plaintext then upgrade via STARTTLS instead of
+          implicit TLS (optional, default False)
     """
 
     @property
@@ -116,7 +123,8 @@ class IMAPIngestionJob(IngestionJob):
         if not self.host:
             raise ValueError("host is required in IMAP connector config")
 
-        self.port = int(cfg.get("port", 993))
+        self.use_starttls = parse_bool(cfg.get("use_starttls"))
+        self.port = int(cfg.get("port", 143 if self.use_starttls else 993))
 
         self.username = cfg.get("username", "").strip()
         if not self.username:
@@ -133,7 +141,7 @@ class IMAPIngestionJob(IngestionJob):
 
         # Shared connection + currently selected mailbox, reused across list_items()
         # and get_raw_content() for the duration of a single run().
-        self._run_conn: imaplib.IMAP4_SSL | None = None
+        self._run_conn: IMAPConnection | None = None
         self._selected_mailbox: str | None = None
 
         logger.info(f"Initialized IMAP connector for {self.host}:{self.port}")
@@ -148,12 +156,21 @@ class IMAPIngestionJob(IngestionJob):
 
     _CONNECT_TIMEOUT = 30
 
-    def _connect(self) -> imaplib.IMAP4_SSL:
-        conn = imaplib.IMAP4_SSL(self.host, self.port, timeout=self._CONNECT_TIMEOUT)
+    def _connect(self) -> IMAPConnection:
+        ssl_context = ssl.create_default_context()
+        if self.use_starttls:
+            conn = imaplib.IMAP4(self.host, self.port, timeout=self._CONNECT_TIMEOUT)
+            conn.starttls(ssl_context)
+            if not conn._tls_established:
+                # starttls() raises on failure, so this should be unreachable, but
+                # never send credentials over a connection that isn't verified as TLS.
+                raise RuntimeError("STARTTLS did not establish a TLS session")
+        else:
+            conn = imaplib.IMAP4_SSL(self.host, self.port, ssl_context=ssl_context, timeout=self._CONNECT_TIMEOUT)
         conn.login(self.username, self.password)
         return conn
 
-    def _get_run_conn(self) -> imaplib.IMAP4_SSL:
+    def _get_run_conn(self) -> IMAPConnection:
         """Return the connection shared for this run, opening one if needed."""
         if self._run_conn is None:
             self._run_conn = self._connect()
@@ -169,7 +186,7 @@ class IMAPIngestionJob(IngestionJob):
         self._selected_mailbox = mailbox
         return True
 
-    def _discover_mailboxes(self, conn: imaplib.IMAP4_SSL) -> list[str]:
+    def _discover_mailboxes(self, conn: IMAPConnection) -> list[str]:
         typ, data = conn.list()
         if typ != "OK":
             logger.warning(f"[{self.source_name}] Failed to list mailboxes")
@@ -189,14 +206,14 @@ class IMAPIngestionJob(IngestionJob):
                     mailboxes.append(name)
         return mailboxes
 
-    def _select_mailbox(self, conn: imaplib.IMAP4_SSL, mailbox: str) -> bool:
+    def _select_mailbox(self, conn: IMAPConnection, mailbox: str) -> bool:
         typ, _ = conn.select(f'"{mailbox}"', readonly=True)
         if typ != "OK":
             logger.warning(f"[{self.source_name}] Cannot select mailbox {mailbox!r}, skipping")
             return False
         return True
 
-    def _fetch_all_uids(self, conn: imaplib.IMAP4_SSL) -> list[bytes]:
+    def _fetch_all_uids(self, conn: IMAPConnection) -> list[bytes]:
         if self.since:
             # RFC 3501 SEARCH date format is DD-Mon-YYYY (e.g. "01-Jan-2025").
             typ, data = conn.uid("search", None, "SINCE", self.since.strftime("%d-%b-%Y"))
@@ -208,7 +225,7 @@ class IMAPIngestionJob(IngestionJob):
 
     _FETCH_BATCH_SIZE = 100
 
-    def _fetch_headers_batch(self, conn: imaplib.IMAP4_SSL, uids: list[bytes]) -> dict[bytes, Message]:
+    def _fetch_headers_batch(self, conn: IMAPConnection, uids: list[bytes]) -> dict[bytes, Message]:
         """Fetch headers-only for all UIDs, chunked to avoid oversized IMAP commands."""
         result: dict[bytes, Message] = {}
         for i in range(0, len(uids), self._FETCH_BATCH_SIZE):
@@ -229,7 +246,7 @@ class IMAPIngestionJob(IngestionJob):
                 result[uid] = message_from_bytes(part[1])
         return result
 
-    def _fetch_full_message(self, conn: imaplib.IMAP4_SSL, uid: bytes) -> Message | None:
+    def _fetch_full_message(self, conn: IMAPConnection, uid: bytes) -> Message | None:
         """Fetch a single full RFC822 message by UID."""
         typ, data = conn.uid("fetch", uid, "(RFC822)")
         if typ != "OK" or not data:

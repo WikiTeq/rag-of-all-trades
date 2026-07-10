@@ -1,5 +1,6 @@
 import email
 import imaplib
+import ssl
 import unittest
 from datetime import UTC, datetime
 from email.mime.multipart import MIMEMultipart
@@ -11,18 +12,37 @@ from tasks.imap_ingestion import IMAPIngestionJob, _decode_header_value, _extrac
 from utils.text import html_to_markdown
 
 
-def _make_job(mailboxes="", since=""):
+def _make_job(mailboxes="", since="", port=993, use_starttls=None):
     config = {
         "name": "test-imap",
         "config": {
             "host": "imap.example.com",
-            "port": 993,
+            "port": port,
             "username": "user@example.com",
             "password": "secret",
             "mailboxes": mailboxes,
             "since": since,
         },
     }
+    if use_starttls is not None:
+        config["config"]["use_starttls"] = use_starttls
+    with patch("tasks.imap_ingestion.IMAPIngestionJob._connect"):
+        job = IMAPIngestionJob(config)
+    return job
+
+
+def _make_job_no_port(use_starttls=None):
+    """Like _make_job, but omits port entirely so the connector's default kicks in."""
+    config = {
+        "name": "test-imap",
+        "config": {
+            "host": "imap.example.com",
+            "username": "user@example.com",
+            "password": "secret",
+        },
+    }
+    if use_starttls is not None:
+        config["config"]["use_starttls"] = use_starttls
     with patch("tasks.imap_ingestion.IMAPIngestionJob._connect"):
         job = IMAPIngestionJob(config)
     return job
@@ -100,7 +120,73 @@ class TestIMAPIngestionInit(unittest.TestCase):
         job = _make_job()
         with patch("tasks.imap_ingestion.imaplib.IMAP4_SSL") as mock_imap_ssl:
             job._connect()
-        mock_imap_ssl.assert_called_once_with(job.host, job.port, timeout=job._CONNECT_TIMEOUT)
+        _, kwargs = mock_imap_ssl.call_args
+        assert mock_imap_ssl.call_args[0] == (job.host, job.port)
+        assert kwargs["timeout"] == job._CONNECT_TIMEOUT
+
+    def test_connect_verifies_certificates(self):
+        job = _make_job()
+        with patch("tasks.imap_ingestion.imaplib.IMAP4_SSL") as mock_imap_ssl:
+            job._connect()
+        _, kwargs = mock_imap_ssl.call_args
+        ssl_context = kwargs["ssl_context"]
+        assert ssl_context.check_hostname is True
+        assert ssl_context.verify_mode == ssl.CERT_REQUIRED
+
+    def test_use_starttls_defaults_to_false(self):
+        job = _make_job()
+        self.assertFalse(job.use_starttls)
+
+    def test_use_starttls_parsed_from_config(self):
+        job = _make_job(use_starttls=True)
+        self.assertTrue(job.use_starttls)
+
+    def test_default_port_is_993_without_starttls(self):
+        job = _make_job_no_port()
+        self.assertEqual(job.port, 993)
+
+    def test_default_port_is_143_with_starttls(self):
+        job = _make_job_no_port(use_starttls=True)
+        self.assertEqual(job.port, 143)
+
+    def test_explicit_port_overrides_starttls_default(self):
+        job = _make_job(port=8993, use_starttls=True)
+        self.assertEqual(job.port, 8993)
+
+    def test_connect_uses_starttls_when_enabled(self):
+        job = _make_job(port=143, use_starttls=True)
+        mock_conn = MagicMock(spec=imaplib.IMAP4)
+        mock_conn._tls_established = True
+        with patch("tasks.imap_ingestion.imaplib.IMAP4", return_value=mock_conn) as mock_imap4:
+            conn = job._connect()
+
+        mock_imap4.assert_called_once_with(job.host, job.port, timeout=job._CONNECT_TIMEOUT)
+        mock_conn.starttls.assert_called_once()
+        starttls_arg = mock_conn.starttls.call_args[0][0]
+        self.assertIsInstance(starttls_arg, ssl.SSLContext)
+        mock_conn.login.assert_called_once_with(job.username, job.password)
+        self.assertIs(conn, mock_conn)
+
+    def test_connect_raises_if_starttls_did_not_establish_tls(self):
+        """Even if starttls() itself doesn't raise, never proceed to login()
+        over a connection that isn't actually confirmed as TLS — this is the
+        guard against a STARTTLS-stripping downgrade attack."""
+        job = _make_job(port=143, use_starttls=True)
+        mock_conn = MagicMock(spec=imaplib.IMAP4)
+        mock_conn._tls_established = False  # simulates a stripped/failed handshake
+        with patch("tasks.imap_ingestion.imaplib.IMAP4", return_value=mock_conn):
+            with self.assertRaises(RuntimeError):
+                job._connect()
+
+        mock_conn.login.assert_not_called()
+
+    def test_connect_does_not_use_starttls_when_disabled(self):
+        job = _make_job(use_starttls=False)
+        with patch("tasks.imap_ingestion.imaplib.IMAP4") as mock_imap4:
+            with patch("tasks.imap_ingestion.imaplib.IMAP4_SSL") as mock_imap_ssl:
+                job._connect()
+        mock_imap4.assert_not_called()
+        mock_imap_ssl.assert_called_once()
 
     def test_since_absent_defaults_to_none(self):
         job = _make_job()
