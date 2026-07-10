@@ -461,6 +461,7 @@ sources:
       username: "${IMAP1_USERNAME}"
       password: "${IMAP1_PASSWORD}" # app-specific password for Gmail
       mailboxes: "${IMAP1_MAILBOXES}" # optional, comma-separated; remove this line (not just the env var) to ingest all mailboxes
+      since: "2024-01-01"            # optional, only ingest messages on or after this date (YYYY-MM-DD)
       schedules: "${IMAP1_SCHEDULES}"
 ```
 

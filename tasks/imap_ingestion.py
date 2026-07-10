@@ -100,6 +100,7 @@ class IMAPIngestionJob(IngestionJob):
         - config.username: IMAP account username (required)
         - config.password: IMAP account password or app-specific password (required)
         - config.mailboxes: comma-separated list of mailboxes to ingest (optional, default: all)
+        - config.since: only ingest messages on or after this date, e.g. "2024-01-01" (optional)
     """
 
     @property
@@ -127,12 +128,23 @@ class IMAPIngestionJob(IngestionJob):
 
         self.mailboxes = parse_list(cfg.get("mailboxes", ""))
 
+        since_str = cfg.get("since", "").strip()
+        self.since: datetime | None = self._parse_since(since_str) if since_str else None
+
         # Shared connection + currently selected mailbox, reused across list_items()
         # and get_raw_content() for the duration of a single run().
         self._run_conn: imaplib.IMAP4_SSL | None = None
         self._selected_mailbox: str | None = None
 
         logger.info(f"Initialized IMAP connector for {self.host}:{self.port}")
+
+    @staticmethod
+    def _parse_since(value: str) -> datetime:
+        """Parse a date string (YYYY-MM-DD) into a datetime object."""
+        try:
+            return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
+        except ValueError:
+            raise ValueError(f"Invalid date format {value!r} in IMAP connector config. Expected YYYY-MM-DD.")
 
     _CONNECT_TIMEOUT = 30
 
@@ -185,7 +197,11 @@ class IMAPIngestionJob(IngestionJob):
         return True
 
     def _fetch_all_uids(self, conn: imaplib.IMAP4_SSL) -> list[bytes]:
-        typ, data = conn.uid("search", None, "ALL")
+        if self.since:
+            # RFC 3501 SEARCH date format is DD-Mon-YYYY (e.g. "01-Jan-2025").
+            typ, data = conn.uid("search", None, "SINCE", self.since.strftime("%d-%b-%Y"))
+        else:
+            typ, data = conn.uid("search", None, "ALL")
         if typ != "OK" or not data or not data[0]:
             return []
         return data[0].split()

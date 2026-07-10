@@ -1,6 +1,7 @@
 import email
 import imaplib
 import unittest
+from datetime import UTC, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from unittest.mock import MagicMock, patch
@@ -10,7 +11,7 @@ from tasks.imap_ingestion import IMAPIngestionJob, _decode_header_value, _extrac
 from utils.text import html_to_markdown
 
 
-def _make_job(mailboxes=""):
+def _make_job(mailboxes="", since=""):
     config = {
         "name": "test-imap",
         "config": {
@@ -19,6 +20,7 @@ def _make_job(mailboxes=""):
             "username": "user@example.com",
             "password": "secret",
             "mailboxes": mailboxes,
+            "since": since,
         },
     }
     with patch("tasks.imap_ingestion.IMAPIngestionJob._connect"):
@@ -93,6 +95,18 @@ class TestIMAPIngestionInit(unittest.TestCase):
         with patch("tasks.imap_ingestion.imaplib.IMAP4_SSL") as mock_imap_ssl:
             job._connect()
         mock_imap_ssl.assert_called_once_with(job.host, job.port, timeout=job._CONNECT_TIMEOUT)
+
+    def test_since_absent_defaults_to_none(self):
+        job = _make_job()
+        self.assertIsNone(job.since)
+
+    def test_since_parsed_from_iso_date(self):
+        job = _make_job(since="2024-03-15")
+        self.assertEqual(job.since, datetime(2024, 3, 15, tzinfo=UTC))
+
+    def test_since_invalid_format_raises(self):
+        with self.assertRaises(ValueError):
+            _make_job(since="03/15/2024")
 
 
 class TestIMAPListItems(unittest.TestCase):
@@ -348,6 +362,28 @@ class TestIMAPGetExtraMetadata(unittest.TestCase):
         meta = job.get_extra_metadata(item, "", {})
         reserved = {"source", "key", "checksum", "version", "format", "source_name", "file_name", "last_modified"}
         self.assertTrue(reserved.isdisjoint(meta.keys()))
+
+
+class TestIMAPFetchAllUids(unittest.TestCase):
+    def test_no_since_searches_all(self):
+        job = _make_job(mailboxes="INBOX")
+        conn = MagicMock(spec=imaplib.IMAP4_SSL)
+        conn.uid.return_value = ("OK", [b"1 2 3"])
+
+        uids = job._fetch_all_uids(conn)
+
+        conn.uid.assert_called_once_with("search", None, "ALL")
+        self.assertEqual(uids, [b"1", b"2", b"3"])
+
+    def test_since_uses_since_search_criterion(self):
+        job = _make_job(mailboxes="INBOX", since="2024-03-15")
+        conn = MagicMock(spec=imaplib.IMAP4_SSL)
+        conn.uid.return_value = ("OK", [b"5 6"])
+
+        uids = job._fetch_all_uids(conn)
+
+        conn.uid.assert_called_once_with("search", None, "SINCE", "15-Mar-2024")
+        self.assertEqual(uids, [b"5", b"6"])
 
 
 class TestIMAPFetchHeadersBatch(unittest.TestCase):
