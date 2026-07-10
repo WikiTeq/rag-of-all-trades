@@ -32,6 +32,8 @@ def _make_raw_email(
     subject="Test Subject",
     from_="sender@example.com",
     to_="recipient@example.com",
+    cc_="",
+    bcc_="",
     date_="Mon, 1 Jan 2024 10:00:00 +0000",
     message_id="<abc123@mail.example.com>",
     body="Hello world",
@@ -41,6 +43,10 @@ def _make_raw_email(
     msg["Subject"] = subject
     msg["From"] = from_
     msg["To"] = to_
+    if cc_:
+        msg["Cc"] = cc_
+    if bcc_:
+        msg["Bcc"] = bcc_
     msg["Date"] = date_
     msg["Message-ID"] = message_id
     return msg.as_bytes()
@@ -208,6 +214,26 @@ class TestIMAPGetRawContent(unittest.TestCase):
         self.assertEqual(item._metadata_cache["message_id"], "<cache@test.com>")
         self.assertEqual(item._metadata_cache["mailbox"], "INBOX")
 
+    def test_cc_bcc_included_in_content_and_cache(self):
+        job = _make_job(mailboxes="INBOX")
+        raw = _make_raw_email(cc_="cc@example.com", bcc_="bcc@example.com")
+        item = self._make_item_with_msg(raw)
+        content = job.get_raw_content(item)
+        self.assertIn("**Cc:** cc@example.com", content)
+        self.assertIn("**Bcc:** bcc@example.com", content)
+        self.assertEqual(item._metadata_cache["cc"], "cc@example.com")
+        self.assertEqual(item._metadata_cache["bcc"], "bcc@example.com")
+
+    def test_cc_bcc_absent_when_no_headers(self):
+        job = _make_job(mailboxes="INBOX")
+        raw = _make_raw_email()  # no cc_/bcc_ passed
+        item = self._make_item_with_msg(raw)
+        content = job.get_raw_content(item)
+        self.assertNotIn("**Cc:**", content)
+        self.assertNotIn("**Bcc:**", content)
+        self.assertEqual(item._metadata_cache["cc"], "")
+        self.assertEqual(item._metadata_cache["bcc"], "")
+
     def test_fetch_fails_returns_empty(self):
         job = _make_job(mailboxes="INBOX")
         item = IngestionItem(id="imap:test:123", source_ref={"mailbox": "INBOX", "uid": b"1"})
@@ -345,6 +371,8 @@ class TestIMAPGetExtraMetadata(unittest.TestCase):
                 "subject": "Test",
                 "from": "a@b.com",
                 "to": "c@d.com",
+                "cc": "cc@b.com",
+                "bcc": "bcc@b.com",
                 "date": "Mon, 1 Jan 2024",
                 "mailbox": "INBOX",
                 "message_id": "<x@y>",
@@ -353,8 +381,17 @@ class TestIMAPGetExtraMetadata(unittest.TestCase):
         meta = job.get_extra_metadata(item, "", {})
         self.assertEqual(meta["subject"], "Test")
         self.assertEqual(meta["from"], "a@b.com")
+        self.assertEqual(meta["cc"], "cc@b.com")
+        self.assertEqual(meta["bcc"], "bcc@b.com")
         self.assertEqual(meta["mailbox"], "INBOX")
         self.assertEqual(meta["message_id"], "<x@y>")
+
+    def test_cc_bcc_default_to_empty_string(self):
+        job = _make_job()
+        item = IngestionItem(id="imap:test:1", source_ref={"mailbox": "INBOX", "uid": b"1"})
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["cc"], "")
+        self.assertEqual(meta["bcc"], "")
 
     def test_does_not_overwrite_reserved_keys(self):
         job = _make_job()

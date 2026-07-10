@@ -444,7 +444,7 @@ SLACK2_SCHEDULES=3600
 
 The IMAP connector ingests emails from any IMAP-capable mail server (Gmail, Outlook, self-hosted, etc.)
 via IMAP4_SSL. Each email becomes a document with the subject as the title and the parsed body as content.
-Metadata collected per email includes: subject, from, to, date, mailbox, message\_id.
+Metadata collected per email includes: subject, from, to, cc, bcc, date, mailbox, message\_id.
 
 Deduplication is based on the `Message-ID` header (cross-mailbox safe). Falls back to mailbox+UID when
 `Message-ID` is absent.

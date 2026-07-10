@@ -325,6 +325,8 @@ class IMAPIngestionJob(IngestionJob):
         subject = _decode_header_value(msg.get("Subject"))
         from_ = _decode_header_value(msg.get("From"))
         to_ = _decode_header_value(msg.get("To"))
+        cc_ = _decode_header_value(msg.get("Cc"))
+        bcc_ = _decode_header_value(msg.get("Bcc"))
         date_str = msg.get("Date") or ""
         body = _extract_body(msg)
 
@@ -333,6 +335,8 @@ class IMAPIngestionJob(IngestionJob):
                 "subject": subject,
                 "from": from_,
                 "to": to_,
+                "cc": cc_,
+                "bcc": bcc_,
                 "date": date_str,
                 "mailbox": mailbox,
                 "message_id": (msg.get("Message-ID") or "").strip(),
@@ -344,6 +348,10 @@ class IMAPIngestionJob(IngestionJob):
             parts.append(f"**From:** {from_}")
         if to_:
             parts.append(f"**To:** {to_}")
+        if cc_:
+            parts.append(f"**Cc:** {cc_}")
+        if bcc_:
+            parts.append(f"**Bcc:** {bcc_}")
         if date_str:
             parts.append(f"**Date:** {date_str}")
         if body:
@@ -360,6 +368,8 @@ class IMAPIngestionJob(IngestionJob):
             "subject": cache.get("subject", ""),
             "from": cache.get("from", ""),
             "to": cache.get("to", ""),
+            "cc": cache.get("cc", ""),
+            "bcc": cache.get("bcc", ""),
             "date": cache.get("date", ""),
             "mailbox": cache.get("mailbox", item.source_ref.get("mailbox", "")),
             "message_id": cache.get("message_id", ""),
