@@ -50,6 +50,7 @@ sources:
   #    filter_redirects: true  # optional, exclude redirect pages (default: true)
   #    username: "${MEDIAWIKI1_USERNAME}"  # optional, for private wikis
   #    password: "${MEDIAWIKI1_PASSWORD}"  # optional, for private wikis
+  #    load_semantics: false  # optional, query Semantic MediaWiki properties per page (default: false)
   #    schedules: "${MEDIAWIKI1_SCHEDULES}"
 
   #- type: "serpapi"
