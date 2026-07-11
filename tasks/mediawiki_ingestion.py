@@ -1,3 +1,4 @@
+import json
 import logging
 from collections.abc import Iterator
 from typing import Any
@@ -7,6 +8,7 @@ from llama_index.readers.mediawiki import MediaWikiReader
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_bool
 from utils.text import slugify
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,8 @@ class MediaWikiIngestionJob(IngestionJob):
                 - config.filter_redirects: Exclude redirect pages (optional, default True)
                 - config.username: MediaWiki username or bot username (optional, for private wikis)
                 - config.password: MediaWiki password or bot password (optional, for private wikis)
+                - config.load_semantics: Query Semantic MediaWiki properties per page and attach
+                  them as metadata (optional, default False)
 
         Raises:
             ValueError: If host is not provided
@@ -83,6 +87,8 @@ class MediaWikiIngestionJob(IngestionJob):
         password = cfg.get("password")
         if username and password:
             self._reader.login(username, password)
+
+        self.load_semantics = parse_bool(cfg.get("load_semantics"))
 
         logger.info(
             "Initialized MediaWiki connector for %s://%s%s",
@@ -162,6 +168,57 @@ class MediaWikiIngestionJob(IngestionJob):
         page_title = item.source_ref.title
         return slugify(page_title, max_len=255, extra_replacements={":": "__", "/": "_"})
 
+    # SMW\DataItem::TYPE_WIKIPAGE — the default type for untyped SMW properties.
+    _SMW_TYPE_WIKIPAGE = 9
+
+    @classmethod
+    def _decode_smw_dataitem_value(cls, dataitem: dict[str, Any]) -> str:
+        """Decode a single smwbrowse dataitem entry into a display string.
+
+        Wikipage-type values (SMW's default type for untyped properties) are serialized
+        as "DBkey#namespace#interwiki#subobjectname" (see SMW's DIWikiPage::getSerialization);
+        only the DBkey segment is human-readable and it uses underscores in place of spaces.
+        Other types (text, number, time, ...) are already plain values.
+        """
+        item = str(dataitem.get("item", ""))
+        if dataitem.get("type") == cls._SMW_TYPE_WIKIPAGE:
+            return item.split("#", 1)[0].replace("_", " ")
+        return item
+
+    # Prefix for semantic property metadata keys, so they stay flat (filterable via the
+    # existing /api/v1/query metadata filter API, which only matches top-level keys) while
+    # never colliding with connector-owned keys (title, page_id, namespace, url).
+    _SMW_METADATA_PREFIX = "smw_"
+
+    def _load_semantic_properties(self, title: str, namespace: int) -> dict[str, str]:
+        """Query Semantic MediaWiki for a page's properties via the smwbrowse API action.
+
+        Excludes system properties (leading underscore, e.g. _ASK, _INST, _SKEY) and
+        subobjects (sobj). Only the first value is kept for multi-valued properties.
+        Each property is returned under a "smw_"-prefixed key to avoid colliding with
+        connector-owned metadata keys.
+
+        Returns an empty dict if the query fails for any reason (SMW not installed,
+        page has no semantic data, transient error) — ingestion of the page continues
+        without semantic metadata rather than failing the item.
+        """
+        try:
+            params = json.dumps({"subject": title, "ns": namespace, "iw": "", "subobject": ""})
+            response = self._reader.site.get("smwbrowse", browse="subject", params=params, format="json")
+        except Exception:
+            logger.warning(f"Failed to fetch semantic properties for page: {title}")
+            return {}
+
+        properties: dict[str, str] = {}
+        for entry in response.get("query", {}).get("data", []):
+            property_key = entry.get("property", "")
+            if not property_key or property_key.startswith("_"):
+                continue
+            dataitems = entry.get("dataitem", [])
+            if dataitems:
+                properties[self._SMW_METADATA_PREFIX + property_key] = self._decode_smw_dataitem_value(dataitems[0])
+        return properties
+
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Provide MediaWiki-specific metadata for the page.
 
@@ -171,14 +228,16 @@ class MediaWikiIngestionJob(IngestionJob):
             metadata: Standard metadata dictionary (do not return keys that overlap with it)
 
         Returns:
-            dict: Additional metadata (title, url, page_id, namespace)
+            dict: Additional metadata (title, url, page_id, namespace, and semantic
+                properties when config.load_semantics is enabled)
         """
         page_record = item.source_ref
-        extra: dict[str, Any] = {
-            "title": page_record.title,
-            "page_id": page_record.pageid,
-            "namespace": page_record.namespace,
-        }
+        extra: dict[str, Any] = {}
+        if self.load_semantics:
+            extra.update(self._load_semantic_properties(page_record.title, page_record.namespace))
+        extra["title"] = page_record.title
+        extra["page_id"] = page_record.pageid
+        extra["namespace"] = page_record.namespace
         if page_record.url:
             extra["url"] = page_record.url
         else:
