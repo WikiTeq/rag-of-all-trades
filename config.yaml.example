@@ -55,6 +55,7 @@ sources:
   #    #user_agent: "MyBot/1.0"  # optional, override HTTP User-Agent
   #    #custom_headers:     # optional, extra HTTP headers on all API requests
   #    #  Authorization: "Bearer token"
+  #    load_semantics: false  # optional, query Semantic MediaWiki properties per page (default: false)
   #    schedules: "${MEDIAWIKI1_SCHEDULES}"
 
   #- type: "serpapi"
