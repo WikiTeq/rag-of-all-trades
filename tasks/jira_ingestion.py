@@ -215,7 +215,7 @@ class JiraIngestionJob(IngestionJob):
     def _build_comments_section(self, issue: Any) -> str:
         """Fetch and format the top N comments for an issue as Markdown."""
         try:
-            comments = self._jira.comments(issue, max_results=self.max_comments)
+            comments = self._jira.comments(issue, max_results=self.max_comments, order_by="-created")
         except Exception as e:
             logger.warning(f"[{self.source_name}] Failed to fetch comments for {issue.key}: {e}")
             return ""
@@ -223,7 +223,7 @@ class JiraIngestionJob(IngestionJob):
         if not comments:
             return ""
 
-        lines: list[str] = ["## Comments"]
+        lines: list[str] = []
         for comment in comments:
             author = self._safe_display_name(getattr(comment, "author", None))
             created = getattr(comment, "created", "") or ""
@@ -237,7 +237,10 @@ class JiraIngestionJob(IngestionJob):
                 continue
             lines.append(f"**{author}** ({created}):\n{body}")
 
-        return "\n\n".join(lines)
+        if not lines:
+            return ""
+
+        return "\n\n".join(["## Comments", *lines])
 
     @staticmethod
     def _extract_adf_text(adf: dict) -> str:

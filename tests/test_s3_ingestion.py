@@ -94,6 +94,19 @@ class TestS3IngestionJob:
 
         assert result == "Converted text"
 
+    def test_get_raw_content_passes_key_extension_as_hint(self):
+        self.mock_s3.get_object.return_value = {"Body": io.BytesIO(b"raw bytes")}
+
+        job = S3IngestionJob(self.config)
+        job.convert_to_markdown = Mock(return_value="Converted text")
+        item = IngestionItem(
+            id="s3://bucket-a/report.pdf",
+            source_ref=("bucket-a", "report.pdf"),
+        )
+        job.get_raw_content(item)
+
+        job.convert_to_markdown.assert_called_once_with(b"raw bytes", file_extension=".pdf")
+
     def test_get_raw_content_falls_back_on_empty_conversion(self):
         self.mock_s3.get_object.return_value = {"Body": io.BytesIO(b"raw text")}
         conversion_result = Mock(markdown="   ")

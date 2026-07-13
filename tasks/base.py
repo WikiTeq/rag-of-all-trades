@@ -85,7 +85,7 @@ class IngestionJob(ABC):
             self._markitdown = MarkItDown()
         return self._markitdown
 
-    def convert_to_markdown(self, content: bytes | str, fallback: str = "") -> str:
+    def convert_to_markdown(self, content: bytes | str, fallback: str = "", file_extension: str | None = None) -> str:
         """Convert bytes or text to Markdown using MarkItDown.
 
         Falls back to ``fallback`` when conversion produces an empty result or
@@ -97,6 +97,9 @@ class IngestionJob(ABC):
             fallback: Text to return when conversion yields nothing.
                       Defaults to empty string; for str input defaults to the
                       original string.
+            file_extension: Optional file extension hint (e.g. ``".pdf"``) so
+                             MarkItDown can pick the right converter for binary
+                             content whose type can't be inferred from the bytes.
 
         Returns:
             Converted Markdown string, or ``fallback`` on failure/empty result.
@@ -107,7 +110,7 @@ class IngestionJob(ABC):
             fallback = fallback or content
             content = content.encode("utf-8")
         try:
-            result = self._get_markitdown().convert_stream(io.BytesIO(content))
+            result = self._get_markitdown().convert_stream(io.BytesIO(content), file_extension=file_extension)
             converted = result.markdown or ""
             if converted.strip():
                 return converted

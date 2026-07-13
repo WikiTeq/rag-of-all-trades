@@ -1,4 +1,5 @@
 import logging
+import os
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -70,7 +71,8 @@ class S3IngestionJob(IngestionJob):
         try:
             obj = self.s3_client.get_object(Bucket=bucket, Key=key)
             content_bytes = obj["Body"].read()
-            converted = self.convert_to_markdown(content_bytes)
+            file_extension = os.path.splitext(key)[1] or None
+            converted = self.convert_to_markdown(content_bytes, file_extension=file_extension)
             return converted or content_bytes.decode("utf-8", errors="ignore")
         except Exception as e:
             logger.error(f"[{bucket}/{key}] Failed to fetch content: {e}")

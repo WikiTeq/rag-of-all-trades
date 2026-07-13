@@ -290,6 +290,17 @@ class TestIngestionJobMarkdownConversion:
         assert result == "# Hello"
         mock_md.convert_stream.assert_called_once()
 
+    def test_convert_bytes_passes_file_extension_hint(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        mock_md = Mock()
+        mock_md.convert_stream.return_value = Mock(markdown="# Hello")
+        job._markitdown = mock_md
+
+        job.convert_to_markdown(b"raw bytes", file_extension=".pdf")
+
+        _, kwargs = mock_md.convert_stream.call_args
+        assert kwargs["file_extension"] == ".pdf"
+
     def test_convert_bytes_falls_back_on_empty_result(self):
         job = DummyIngestionJob({"name": "test-source"})
         mock_md = Mock()

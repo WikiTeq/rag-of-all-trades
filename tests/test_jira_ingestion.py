@@ -104,7 +104,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.mock_md_class.return_value = self.mock_md
 
         # By default, convert_stream returns the input text unchanged
-        def _passthrough(stream):
+        def _passthrough(stream, **kwargs):
             result = Mock()
             result.markdown = stream.read().decode("utf-8")
             return result
@@ -440,7 +440,7 @@ class TestJiraIngestionJob(unittest.TestCase):
             c.created = "2024-06-01T10:00:00.000+0000"
             c.body = f"Comment {i}"
             all_comments.append(c)
-        self.mock_jira.comments.side_effect = lambda issue, max_results=None: (
+        self.mock_jira.comments.side_effect = lambda issue, max_results=None, order_by=None: (
             all_comments[:max_results] if max_results else all_comments
         )
 
@@ -450,6 +450,44 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.assertIn("Comment 0", content)
         self.assertIn("Comment 1", content)
         self.assertNotIn("Comment 2", content)
+
+    def test_get_raw_content_requests_newest_comments_first(self):
+        issue = _make_issue(summary="Issue", description="desc")
+        item = IngestionItem(id="jira:TEST-1", source_ref=issue)
+
+        md_result = Mock()
+        md_result.markdown = "desc"
+        self.mock_md.convert_stream.return_value = md_result
+
+        comment = Mock()
+        comment.author = Mock(displayName="Charlie")
+        comment.created = "2024-06-01T10:00:00.000+0000"
+        comment.body = "Great issue!"
+        self.mock_jira.comments.return_value = [comment]
+
+        job = self._make_job(load_comments=True, max_comments=5)
+        job.get_raw_content(item)
+
+        self.mock_jira.comments.assert_called_once_with(issue, max_results=5, order_by="-created")
+
+    def test_get_raw_content_omits_comments_header_when_all_bodies_empty(self):
+        issue = _make_issue(summary="Issue", description="desc")
+        item = IngestionItem(id="jira:TEST-1", source_ref=issue)
+
+        md_result = Mock()
+        md_result.markdown = "desc"
+        self.mock_md.convert_stream.return_value = md_result
+
+        comment = Mock()
+        comment.author = Mock(displayName="Charlie")
+        comment.created = "2024-06-01T10:00:00.000+0000"
+        comment.body = "   "
+        self.mock_jira.comments.return_value = [comment]
+
+        job = self._make_job(load_comments=True, max_comments=5)
+        content = job.get_raw_content(item)
+
+        self.assertNotIn("## Comments", content)
 
     def test_get_raw_content_comment_fetch_failure_does_not_raise(self):
         issue = _make_issue(summary="Issue", description="desc")
