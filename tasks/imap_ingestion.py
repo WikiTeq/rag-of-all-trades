@@ -1,3 +1,4 @@
+import calendar
 import imaplib
 import logging
 import re
@@ -22,6 +23,19 @@ logger = logging.getLogger(__name__)
 IMAPConnection = imaplib.IMAP4 | imaplib.IMAP4_SSL
 
 
+def _format_imap_search_date(value: datetime) -> str:
+    """Format a date as DD-Mon-YYYY using English month abbreviations, per RFC 3501.
+
+    calendar.month_abbr reads the process's current LC_TIME locale (same as
+    strftime("%b")), so it is wrapped in calendar.different_locale("C") to force
+    English output regardless of the runtime locale. Safe under this project's
+    prefork Celery worker pool (one task per process at a time); would need a
+    lock if ever run under a threaded/gevent pool, since setlocale() is process-wide.
+    """
+    with calendar.different_locale("C"):
+        return f"{value.day:02d}-{calendar.month_abbr[value.month]}-{value.year:04d}"
+
+
 def _decode_header_value(raw: str | bytes | None) -> str:
     if not raw:
         return ""
@@ -44,6 +58,8 @@ def _parse_date(date_str: str) -> datetime | None:
         return None
     try:
         parsed = parsedate_to_datetime(date_str)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
         return parsed.astimezone(UTC)
     except Exception:
         return None
@@ -136,7 +152,7 @@ class IMAPIngestionJob(IngestionJob):
 
         self.mailboxes = parse_list(cfg.get("mailboxes", ""))
 
-        since_str = cfg.get("since", "").strip()
+        since_str = str(cfg.get("since") or "").strip()
         self.since: datetime | None = self._parse_since(since_str) if since_str else None
 
         # Shared connection + currently selected mailbox, reused across list_items()
@@ -152,7 +168,7 @@ class IMAPIngestionJob(IngestionJob):
         try:
             return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=UTC)
         except ValueError:
-            raise ValueError(f"Invalid date format {value!r} in IMAP connector config. Expected YYYY-MM-DD.")
+            raise ValueError(f"Invalid date format {value!r} in IMAP connector config. Expected YYYY-MM-DD.") from None
 
     _CONNECT_TIMEOUT = 30
 
@@ -216,7 +232,7 @@ class IMAPIngestionJob(IngestionJob):
     def _fetch_all_uids(self, conn: IMAPConnection) -> list[bytes]:
         if self.since:
             # RFC 3501 SEARCH date format is DD-Mon-YYYY (e.g. "01-Jan-2025").
-            typ, data = conn.uid("search", None, "SINCE", self.since.strftime("%d-%b-%Y"))
+            typ, data = conn.uid("search", None, "SINCE", _format_imap_search_date(self.since))
         else:
             typ, data = conn.uid("search", None, "ALL")
         if typ != "OK" or not data or not data[0]:

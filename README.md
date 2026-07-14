@@ -468,6 +468,7 @@ sources:
       since: "2024-01-01"            # optional, only ingest messages on or after this date (YYYY-MM-DD)
       use_starttls: false            # optional, default false; connect plaintext then upgrade via STARTTLS instead of implicit TLS
       schedules: "${IMAP1_SCHEDULES}"
+      #request_delay: 0  # optional, seconds between items; raise for rate-limited providers (e.g. Gmail)
 ```
 
 ```dotenv

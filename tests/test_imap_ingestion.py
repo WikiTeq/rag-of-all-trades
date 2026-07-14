@@ -8,7 +8,7 @@ from email.mime.text import MIMEText
 from unittest.mock import MagicMock, patch
 
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.imap_ingestion import IMAPIngestionJob, _decode_header_value, _extract_body
+from tasks.imap_ingestion import IMAPIngestionJob, _decode_header_value, _extract_body, _parse_date
 from utils.text import html_to_markdown
 
 
@@ -199,6 +199,10 @@ class TestIMAPIngestionInit(unittest.TestCase):
     def test_since_invalid_format_raises(self):
         with self.assertRaises(ValueError):
             _make_job(since="03/15/2024")
+
+    def test_since_null_defaults_to_none(self):
+        job = _make_job(since=None)
+        self.assertIsNone(job.since)
 
 
 class TestIMAPListItems(unittest.TestCase):
@@ -508,6 +512,37 @@ class TestIMAPFetchAllUids(unittest.TestCase):
         conn.uid.assert_called_once_with("search", None, "SINCE", "15-Mar-2024")
         self.assertEqual(uids, [b"5", b"6"])
 
+    def test_since_search_date_uses_english_month_regardless_of_locale(self):
+        """strftime('%b') is locale-dependent; the IMAP SEARCH date must stay English (RFC 3501)."""
+        job = _make_job(mailboxes="INBOX", since="2024-12-01")
+        conn = MagicMock(spec=imaplib.IMAP4_SSL)
+        conn.uid.return_value = ("OK", [b"1"])
+
+        job._fetch_all_uids(conn)
+
+        conn.uid.assert_called_once_with("search", None, "SINCE", "01-Dec-2024")
+
+    def test_since_search_date_stays_english_under_non_english_locale(self):
+        """Regression test: calendar.month_abbr (like strftime('%b')) reads the process
+        LC_TIME locale directly and returns non-English abbreviations (e.g. "Dez" under
+        de_DE.UTF-8) unless explicitly forced to an English/C locale first."""
+        import locale
+
+        try:
+            locale.setlocale(locale.LC_TIME, "de_DE.UTF-8")
+        except locale.Error:
+            self.skipTest("de_DE.UTF-8 locale not available on this system")
+        try:
+            job = _make_job(mailboxes="INBOX", since="2024-12-01")
+            conn = MagicMock(spec=imaplib.IMAP4_SSL)
+            conn.uid.return_value = ("OK", [b"1"])
+
+            job._fetch_all_uids(conn)
+
+            conn.uid.assert_called_once_with("search", None, "SINCE", "01-Dec-2024")
+        finally:
+            locale.setlocale(locale.LC_TIME, "C")
+
 
 class TestIMAPFetchHeadersBatch(unittest.TestCase):
     def test_batches_uids_in_chunks(self):
@@ -533,6 +568,25 @@ class TestIMAPFetchHeadersBatch(unittest.TestCase):
         self.assertEqual(len(result), 250)
         self.assertTrue(all(size <= job._FETCH_BATCH_SIZE for size in chunk_sizes))
         self.assertEqual(chunk_sizes, [100, 100, 50])
+
+
+class TestIMAPParseDate(unittest.TestCase):
+    def test_empty_string_returns_none(self):
+        self.assertIsNone(_parse_date(""))
+
+    def test_malformed_date_returns_none(self):
+        self.assertIsNone(_parse_date("not a date"))
+
+    def test_offset_aware_date_converted_to_utc(self):
+        result = _parse_date("Mon, 15 Jan 2024 10:00:00 -0500")
+        self.assertEqual(result, datetime(2024, 1, 15, 15, 0, 0, tzinfo=UTC))
+
+    def test_naive_unknown_zone_date_treated_as_utc(self):
+        # RFC 5322 "-0000" means "unknown/no timezone" and parsedate_to_datetime()
+        # returns a naive datetime for it; must be treated as UTC, not the host's
+        # local timezone.
+        result = _parse_date("Mon, 15 Jan 2024 10:00:00 -0000")
+        self.assertEqual(result, datetime(2024, 1, 15, 10, 0, 0, tzinfo=UTC))
 
 
 class TestIMAPHelpers(unittest.TestCase):
