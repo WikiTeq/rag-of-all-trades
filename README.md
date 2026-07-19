@@ -29,6 +29,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Web
 * Pipedrive
 * Slack
+* IMAP
 
 ## Embeddings support
 
@@ -274,7 +275,7 @@ sources:
 SERPAPI1_KEY=xxxx
 SERPAPI1_QUERIES=aaa
 SERPAPI1_SCHEDULES=3600
-````
+```
 
 ### Web Connector
 
@@ -453,6 +454,47 @@ SLACK2_SCHEDULES=3600
 ```
 
 > `channel_ids` and `channel_patterns` are mutually exclusive. `latest_date` requires `earliest_date`.
+
+### IMAP Connector
+
+The IMAP connector ingests emails from any IMAP-capable mail server (Gmail, Outlook, self-hosted, etc.)
+via implicit TLS (IMAP4_SSL) or STARTTLS. Each email becomes a document with the subject as the title
+and the parsed body as content. Metadata collected per email includes: subject, from, to, cc, bcc, date,
+mailbox, message\_id.
+
+Deduplication is based on the `Message-ID` header (cross-mailbox safe). Falls back to mailbox+UID when
+`Message-ID` is absent.
+
+Server certificates are always verified (hostname + trust chain) — self-signed certificates will be
+rejected unless the server's CA is trusted by the environment running the connector.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "imap"
+    name: "imap1"
+    config:
+      host: "${IMAP1_HOST}"
+      port: 993                     # optional, default 993 (IMAPS), or 143 when use_starttls is set
+      username: "${IMAP1_USERNAME}"
+      password: "${IMAP1_PASSWORD}" # app-specific password for Gmail
+      mailboxes: "${IMAP1_MAILBOXES}" # optional, comma-separated; remove this line (not just the env var) to ingest all mailboxes
+      since: "2024-01-01"            # optional, only ingest messages on or after this date (YYYY-MM-DD)
+      use_starttls: false            # optional, default false; connect plaintext then upgrade via STARTTLS instead of implicit TLS
+      schedules: "${IMAP1_SCHEDULES}"
+      #request_delay: 0  # optional, seconds between items; raise for rate-limited providers (e.g. Gmail)
+```
+
+```dotenv
+# .env
+
+IMAP1_HOST=imap.gmail.com
+IMAP1_USERNAME=your-email@gmail.com
+IMAP1_PASSWORD=your-app-specific-password
+IMAP1_MAILBOXES=INBOX,Sent
+IMAP1_SCHEDULES=3600
+```
 
 ## Reference of the `config.yaml`
 
