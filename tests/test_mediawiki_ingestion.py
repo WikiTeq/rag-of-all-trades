@@ -7,13 +7,14 @@ from unittest.mock import ANY, MagicMock, Mock, patch
 
 import pytest
 from llama_index.core.schema import Document
+from requests.adapters import HTTPAdapter
 
 # llama-index-readers-mediawiki is not yet published; stub it so the module
 # can be imported and MediaWikiReader is always patched in tests.
 sys.modules.setdefault("llama_index.readers.mediawiki", MagicMock())
 
 from tasks.helper_classes.ingestion_item import IngestionItem  # noqa: E402
-from tasks.mediawiki_ingestion import MediaWikiIngestionJob  # noqa: E402
+from tasks.mediawiki_ingestion import HostOverrideAdapter, MediaWikiIngestionJob  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -173,6 +174,234 @@ class TestInitialization:
     def test_source_type(self, base_wiki_job):
         job, _ = base_wiki_job
         assert job.source_type == "mediawiki"
+
+    def test_verify_ssl_default_true(self):
+        """SSL verification is enabled by default; no custom Site is injected."""
+        cfg = _default_config(host="example.com")
+        with (
+            patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
+            patch("tasks.mediawiki_ingestion.mwclient.Site") as MockSite,
+        ):
+            MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
+            job = MediaWikiIngestionJob(cfg)
+            assert job.verify_ssl is True
+            MockSite.assert_not_called()
+
+    def test_verify_ssl_disabled_injects_site(self):
+        """verify_ssl=False builds a custom mwclient Site with verify=False."""
+        cfg = _default_config(host="example.com", verify_ssl=False)
+        with (
+            patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
+            patch("tasks.mediawiki_ingestion.mwclient.Site") as MockSite,
+            patch("tasks.mediawiki_ingestion.requests.Session") as MockSession,
+        ):
+            mock_reader = Mock(host="example.com", path="/w/", scheme="https")
+            MockReader.return_value = mock_reader
+            mock_session = Mock()
+            mock_session.headers = {}
+            MockSession.return_value = mock_session
+
+            job = MediaWikiIngestionJob(cfg)
+
+            assert job.verify_ssl is False
+            assert mock_session.verify is False
+            MockSite.assert_called_once()
+            call_kwargs = MockSite.call_args.kwargs
+            assert call_kwargs["pool"] is mock_session
+            assert call_kwargs["connection_options"] == {"verify": False}
+            assert mock_reader._site is MockSite.return_value
+
+    def test_verify_ssl_string_false(self):
+        """String 'false' from env interpolation is parsed as False."""
+        cfg = _default_config(host="example.com", verify_ssl="false")
+        with (
+            patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
+            patch("tasks.mediawiki_ingestion.mwclient.Site"),
+            patch("tasks.mediawiki_ingestion.requests.Session") as MockSession,
+        ):
+            MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
+            mock_session = Mock()
+            mock_session.headers = {}
+            MockSession.return_value = mock_session
+
+            job = MediaWikiIngestionJob(cfg)
+            assert job.verify_ssl is False
+
+    def test_resolve_to_ip_mounts_host_override_adapter(self):
+        """resolve_to_ip mounts HostOverrideAdapter on the session."""
+        cfg = _default_config(host="wiki.example.com", resolve_to_ip="10.0.0.1")
+        with (
+            patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
+            patch("tasks.mediawiki_ingestion.mwclient.Site") as MockSite,
+            patch("tasks.mediawiki_ingestion.requests.Session") as MockSession,
+        ):
+            MockReader.return_value = Mock(host="wiki.example.com", path="/w/", scheme="https")
+            mock_session = Mock()
+            mock_session.headers = {}
+            MockSession.return_value = mock_session
+
+            MediaWikiIngestionJob(cfg)
+
+            mock_session.mount.assert_called_once()
+            prefix, adapter = mock_session.mount.call_args[0]
+            assert prefix == "https://wiki.example.com"
+            assert isinstance(adapter, HostOverrideAdapter)
+            assert adapter._dest_ip == "10.0.0.1"
+            assert adapter._dest_hostname == "wiki.example.com"
+            MockSite.assert_called_once()
+
+    def test_resolve_to_ip_from_api_url(self):
+        """resolve_to_ip uses hostname parsed from api_url."""
+        cfg = _default_config(
+            api_url="https://wiki.example.com/w/api.php",
+            resolve_to_ip="10.0.0.1",
+        )
+        with (
+            patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
+            patch("tasks.mediawiki_ingestion.mwclient.Site"),
+            patch("tasks.mediawiki_ingestion.requests.Session") as MockSession,
+        ):
+            MockReader.return_value = Mock(host="wiki.example.com", path="/w/", scheme="https")
+            mock_session = Mock()
+            mock_session.headers = {}
+            MockSession.return_value = mock_session
+
+            MediaWikiIngestionJob(cfg)
+
+            prefix, _ = mock_session.mount.call_args[0]
+            assert prefix == "https://wiki.example.com"
+
+    def test_custom_headers_applied_to_session(self):
+        """custom_headers are merged into the session used by mwclient."""
+        cfg = _default_config(
+            host="example.com",
+            custom_headers={"Authorization": "Bearer token123", "X-Custom": "value"},
+        )
+        with (
+            patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
+            patch("tasks.mediawiki_ingestion.mwclient.Site"),
+            patch("tasks.mediawiki_ingestion.requests.Session") as MockSession,
+        ):
+            MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
+            mock_session = Mock()
+            mock_session.headers = {}
+            MockSession.return_value = mock_session
+
+            MediaWikiIngestionJob(cfg)
+
+            assert mock_session.headers["Authorization"] == "Bearer token123"
+            assert mock_session.headers["X-Custom"] == "value"
+            # mwclient default UA restored when using a custom pool
+            assert "User-Agent" in mock_session.headers
+
+    def test_custom_headers_ignored_when_not_dict(self):
+        """Non-dict custom_headers are ignored without raising."""
+        cfg = _default_config(host="example.com", custom_headers="not-a-dict")
+        with (
+            patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
+            patch("tasks.mediawiki_ingestion.mwclient.Site") as MockSite,
+        ):
+            MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
+            job = MediaWikiIngestionJob(cfg)
+            assert job is not None
+            # No network overrides → Site not built eagerly
+            MockSite.assert_not_called()
+
+    def test_user_agent_override(self):
+        """user_agent sets the session User-Agent and injects a custom Site."""
+        ua = "Mozilla/5.0 (compatible; RAGacy-test/1.0)"
+        cfg = _default_config(host="example.com", user_agent=ua)
+        with (
+            patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
+            patch("tasks.mediawiki_ingestion.mwclient.Site") as MockSite,
+            patch("tasks.mediawiki_ingestion.requests.Session") as MockSession,
+        ):
+            MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
+            mock_session = Mock()
+            mock_session.headers = {}
+            MockSession.return_value = mock_session
+
+            MediaWikiIngestionJob(cfg)
+
+            assert mock_session.headers["User-Agent"] == ua
+            MockSite.assert_called_once()
+
+    def test_user_agent_wins_over_custom_headers(self):
+        """Dedicated user_agent config overrides User-Agent from custom_headers."""
+        ua = "RAGacy-connector/1.0"
+        cfg = _default_config(
+            host="example.com",
+            user_agent=ua,
+            custom_headers={"User-Agent": "should-not-win", "X-Custom": "ok"},
+        )
+        with (
+            patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
+            patch("tasks.mediawiki_ingestion.mwclient.Site"),
+            patch("tasks.mediawiki_ingestion.requests.Session") as MockSession,
+        ):
+            MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
+            mock_session = Mock()
+            mock_session.headers = {}
+            MockSession.return_value = mock_session
+
+            MediaWikiIngestionJob(cfg)
+
+            assert mock_session.headers["User-Agent"] == ua
+            assert mock_session.headers["X-Custom"] == "ok"
+
+    def test_no_custom_site_when_defaults(self):
+        """Default network options leave MediaWikiReader's Site creation alone."""
+        cfg = _default_config(host="example.com")
+        with (
+            patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
+            patch("tasks.mediawiki_ingestion.mwclient.Site") as MockSite,
+        ):
+            MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
+            MediaWikiIngestionJob(cfg)
+            MockSite.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# HostOverrideAdapter
+# ---------------------------------------------------------------------------
+
+
+class TestHostOverrideAdapter:
+    def test_send_rewrites_url_to_ip(self):
+        """Hostname is replaced with the override IP; Host header is preserved."""
+        adapter = HostOverrideAdapter(dest_ip="10.0.0.1", dest_hostname="wiki.example.com")
+
+        mock_request = Mock()
+        mock_request.url = "https://wiki.example.com/w/api.php?action=query"
+        mock_request.headers = {}
+
+        with patch.object(HTTPAdapter, "send", return_value=Mock()) as mock_super_send:
+            adapter.send(mock_request)
+
+            assert "10.0.0.1" in mock_request.url
+            assert "wiki.example.com" not in mock_request.url
+            assert mock_request.headers["Host"] == "wiki.example.com"
+            mock_super_send.assert_called_once()
+
+    def test_send_preserves_existing_host_header(self):
+        """Existing Host header is not overwritten."""
+        adapter = HostOverrideAdapter(dest_ip="10.0.0.1", dest_hostname="wiki.example.com")
+
+        mock_request = Mock()
+        mock_request.url = "https://wiki.example.com/w/api.php"
+        mock_request.headers = {"Host": "custom-host.example.com"}
+
+        with patch.object(HTTPAdapter, "send", return_value=Mock()):
+            adapter.send(mock_request)
+            assert mock_request.headers["Host"] == "custom-host.example.com"
+
+    def test_init_poolmanager_sets_server_hostname(self):
+        """init_poolmanager passes server_hostname for TLS SNI."""
+        adapter = HostOverrideAdapter(dest_ip="10.0.0.1", dest_hostname="wiki.example.com")
+
+        with patch.object(HTTPAdapter, "init_poolmanager") as mock_super_init:
+            adapter.init_poolmanager(1, 10)
+            mock_super_init.assert_called_once_with(1, 10, server_hostname="wiki.example.com")
 
 
 # ---------------------------------------------------------------------------

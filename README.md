@@ -206,19 +206,24 @@ sources:
   - type: "mediawiki"
     name: "wiki1"
     config:
+      # Either api_url OR host (+ optional path/scheme)
+      # host: "${MEDIAWIKI1_HOST}"
+      # path: "/w/"
+      # scheme: "https"
       api_url: "${MEDIAWIKI1_API_URL}"
+      page_limit: 500
+      namespaces: "0"
+      filter_redirects: true
+      username: "${MEDIAWIKI1_USERNAME}"  # optional, private wikis
+      password: "${MEDIAWIKI1_PASSWORD}"
+      # Network overrides (optional) — reverse-proxy bypass / custom TLS
+      # verify_ssl: true              # set false to skip TLS cert verification
+      # resolve_to_ip: "10.0.0.1"     # connect to this IP, keep Host/SNI as hostname
+      # user_agent: "MyBot/1.0"       # override HTTP User-Agent
+      # custom_headers:               # extra headers on every API request
+      #   Authorization: "Bearer token"
       request_delay: 0.1
       schedules: "${MEDIAWIKI1_SCHEDULES}"
-
-  - type: "mediawiki"
-    name: "wiki2"
-    config:
-      ...
-
-  - type: "mediawiki"
-    name: "wiki3"
-    config:
-      ...
 ```
 
 ```dotenv
@@ -227,6 +232,16 @@ sources:
 MEDIAWIKI1_API_URL=https://en.wikipedia.org/w/api.php
 MEDIAWIKI1_SCHEDULES=3600
 ```
+
+Optional network settings:
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `verify_ssl` | `true` | TLS certificate verification |
+| `resolve_to_ip` | unset | Connect to this IP while keeping hostname for Host/SNI (like `curl --resolve`) |
+| `user_agent` | mwclient default | Override HTTP `User-Agent` (wins over `custom_headers`) |
+| `custom_headers` | unset | Extra HTTP headers on all MediaWiki API requests |
+
 
 ### SerpAPI Connector
 

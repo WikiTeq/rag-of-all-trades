@@ -50,6 +50,11 @@ sources:
   #    filter_redirects: true  # optional, exclude redirect pages (default: true)
   #    username: "${MEDIAWIKI1_USERNAME}"  # optional, for private wikis
   #    password: "${MEDIAWIKI1_PASSWORD}"  # optional, for private wikis
+  #    #verify_ssl: true     # optional, verify TLS certs (default: true)
+  #    #resolve_to_ip: "10.0.0.1"  # optional, curl --resolve style IP override
+  #    #user_agent: "MyBot/1.0"  # optional, override HTTP User-Agent
+  #    #custom_headers:     # optional, extra HTTP headers on all API requests
+  #    #  Authorization: "Bearer token"
   #    schedules: "${MEDIAWIKI1_SCHEDULES}"
 
   #- type: "serpapi"
