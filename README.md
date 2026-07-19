@@ -29,6 +29,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Web
 * Pipedrive
 * Slack
+* Fireflies
 
 ## Embeddings support
 
@@ -453,6 +454,38 @@ SLACK2_SCHEDULES=3600
 ```
 
 > `channel_ids` and `channel_patterns` are mutually exclusive. `latest_date` requires `earliest_date`.
+
+### Fireflies Connector
+
+The Fireflies connector ingests meeting transcripts from [Fireflies.ai](https://fireflies.ai) via its
+GraphQL API. Document content is composed from the transcript summary (overview, outline/sentences, notes).
+Metadata collected per transcript includes: title, host_email, organizer_email, participants, date,
+transcript_url, duration, meeting_link, speakers, keywords, gist, action_items.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "fireflies"
+    name: "fireflies1"
+    config:
+      api_key: "${FIREFLIES_API_KEY}"
+      schedules: "${FIREFLIES_SCHEDULES}"
+      filter_keyword: ""            # optional, filter by title keyword
+      filter_fromDate: ""           # optional, ISO 8601 e.g. 2024-01-01T00:00:00.000Z
+      filter_toDate: ""             # optional, ISO 8601
+      filter_hostEmail: ""          # optional, filter by host email
+      filter_organizers: ""         # optional, filter by organizer email(s), comma-separated
+      filter_channel_id: ""         # optional, filter by channel ID
+      max_items: 100                # optional, default 100
+```
+
+```dotenv
+# .env
+
+FIREFLIES_API_KEY=your-fireflies-api-key
+FIREFLIES_SCHEDULES=3600
+```
 
 ## Reference of the `config.yaml`
 
