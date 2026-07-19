@@ -1,15 +1,49 @@
 import logging
 from collections.abc import Iterator
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlparse, urlsplit
 
+import mwclient
+import requests
 from llama_index.readers.mediawiki import MediaWikiReader
+from mwclient.client import USER_AGENT
+from requests.adapters import HTTPAdapter
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_bool
 from utils.text import slugify
 
 logger = logging.getLogger(__name__)
+
+
+class HostOverrideAdapter(HTTPAdapter):
+    """HTTP adapter that resolves a specific hostname to a given IP address.
+
+    Works like curl's --resolve flag: the TCP connection goes to the override IP,
+    but TLS SNI and certificate validation still use the original hostname.
+    Compatible with requests 2.x / urllib3 2.x.
+    """
+
+    def __init__(self, dest_ip: str, dest_hostname: str, **kwargs):
+        self._dest_ip = dest_ip
+        self._dest_hostname = dest_hostname
+        super().__init__(**kwargs)
+
+    def init_poolmanager(self, *args, **kwargs):
+        """Configure the pool manager to use the original hostname for TLS SNI/cert."""
+        kwargs["server_hostname"] = self._dest_hostname
+        super().init_poolmanager(*args, **kwargs)
+
+    def send(self, request, **kwargs):
+        """Swap hostname -> IP in the URL so the socket connects to the override IP."""
+        parsed = urlparse(request.url)
+        # Preserve original Host header for the server
+        request.headers.setdefault("Host", parsed.hostname)
+        # Rewrite URL to connect to the override IP
+        new_netloc = parsed.netloc.replace(parsed.hostname, self._dest_ip)
+        request.url = parsed._replace(netloc=new_netloc).geturl()
+        return super().send(request, **kwargs)
 
 
 class MediaWikiIngestionJob(IngestionJob):
@@ -31,6 +65,10 @@ class MediaWikiIngestionJob(IngestionJob):
                 - config.filter_redirects: Exclude redirect pages (optional, default True)
                 - config.username: MediaWiki username or bot username (optional, for private wikis)
                 - config.password: MediaWiki password or bot password (optional, for private wikis)
+                - config.verify_ssl: Whether to verify SSL certificates (optional, default True)
+                - config.resolve_to_ip: IP address to resolve the API hostname to (optional)
+                - config.custom_headers: Dict of extra HTTP headers to send (optional)
+                - config.user_agent: Override HTTP User-Agent (optional, default mwclient UA)
 
         Raises:
             ValueError: If host is not provided
@@ -69,6 +107,14 @@ class MediaWikiIngestionJob(IngestionJob):
         else:
             namespaces = raw
 
+        self.verify_ssl = parse_bool(cfg.get("verify_ssl"), default=True)
+        resolve_to_ip = (cfg.get("resolve_to_ip") or "").strip() or None
+        user_agent = (cfg.get("user_agent") or "").strip() or None
+        custom_headers = cfg.get("custom_headers")
+        if custom_headers is not None and not isinstance(custom_headers, dict):
+            logger.warning("custom_headers must be a dict; ignoring value of type %s", type(custom_headers).__name__)
+            custom_headers = None
+
         self._reader = MediaWikiReader(
             host=host,
             path=path,
@@ -78,6 +124,24 @@ class MediaWikiIngestionJob(IngestionJob):
             filter_redirects=cfg.get("filter_redirects", True),
             logger=logger,
         )
+
+        # MediaWikiReader builds mwclient.Site lazily without connection options.
+        # When network overrides are set, pre-create Site with a custom session
+        # and inject it so login/list/fetch all use the same HTTP configuration.
+        #
+        # NOTE (tech debt): Prefer pushing verify_ssl / resolve_to_ip /
+        # custom_headers / user_agent into MediaWikiReader itself (constructor
+        # fields or a configure_http() that owns Site creation) so this job
+        # only maps config and does not touch _site / mwclient.Site
+        if not self.verify_ssl or resolve_to_ip or custom_headers or user_agent:
+            self._reader._site = self._build_mwclient_site(
+                host=host,
+                path=path,
+                scheme=scheme,
+                resolve_to_ip=resolve_to_ip,
+                custom_headers=custom_headers,
+                user_agent=user_agent,
+            )
 
         username = cfg.get("username")
         password = cfg.get("password")
@@ -89,6 +153,56 @@ class MediaWikiIngestionJob(IngestionJob):
             self._reader.scheme,
             self._reader.host,
             self._reader.path,
+        )
+
+    def _build_mwclient_site(
+        self,
+        host: str,
+        path: str,
+        scheme: str,
+        resolve_to_ip: str | None,
+        custom_headers: dict[str, str] | None,
+        user_agent: str | None,
+    ) -> mwclient.Site:
+        """Build an mwclient Site with SSL, DNS override, and header options.
+
+        Uses a custom requests Session (passed as pool) so HostOverrideAdapter
+        and header/SSL settings apply to every API call.
+        """
+        session = requests.Session()
+        # When pool is set, mwclient skips its default User-Agent — restore it
+        # (or use config.user_agent). Dedicated user_agent wins over custom_headers.
+        session.headers["User-Agent"] = user_agent or USER_AGENT
+
+        if custom_headers:
+            session.headers.update(custom_headers)
+            if user_agent:
+                session.headers["User-Agent"] = user_agent
+
+        connection_options: dict[str, Any] = {}
+        if not self.verify_ssl:
+            session.verify = False
+            connection_options["verify"] = False
+            # Suppress noisy InsecureRequestWarning when verification is intentionally off
+            import urllib3
+
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            logger.warning("SSL certificate verification is disabled")
+
+        # Works like curl --resolve: TCP connects to the given IP while TLS SNI
+        # and certificate validation still use the original hostname.
+        if resolve_to_ip:
+            prefix = f"{scheme}://{host}"
+            adapter = HostOverrideAdapter(dest_ip=resolve_to_ip, dest_hostname=host)
+            session.mount(prefix, adapter)
+            logger.info("DNS override: %s -> %s", host, resolve_to_ip)
+
+        return mwclient.Site(
+            host,
+            path=path,
+            scheme=scheme,
+            pool=session,
+            connection_options=connection_options or None,
         )
 
     def list_items(self) -> Iterator[IngestionItem]:
