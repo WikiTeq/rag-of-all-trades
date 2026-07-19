@@ -5,6 +5,7 @@ from tasks.mediawiki_ingestion import MediaWikiIngestionJob
 from tasks.pipedrive_ingestion import PipedriveIngestionJob
 from tasks.s3_ingestion import S3IngestionJob
 from tasks.serpapi_ingestion import SerpAPIIngestionJob
+from tasks.slab_ingestion import SlabIngestionJob
 from tasks.slack_ingestion import SlackIngestionJob
 from tasks.web_ingestion import WebIngestionJob
 
@@ -34,3 +35,4 @@ IngestionJobFactory.register("directory", DirectoryIngestionJob)
 IngestionJobFactory.register("web", WebIngestionJob)
 IngestionJobFactory.register("pipedrive", PipedriveIngestionJob)
 IngestionJobFactory.register("slack", SlackIngestionJob)
+IngestionJobFactory.register("slab", SlabIngestionJob)
