@@ -1,5 +1,6 @@
 import gc
 import hashlib
+import io
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -9,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from llama_index.core import Document
+from markitdown import MarkItDown
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.helper_classes.metadata_tracker import MetadataTracker
@@ -40,7 +42,9 @@ class IngestionJob(ABC):
         Sets up metadata tracking, vector store management, and duplicate detection infrastructure.
         """
         self.config = config
-        cfg = config.get("config") or {}
+        cfg = config.get("config", None)
+        if cfg is None:
+            cfg = {}
         if not isinstance(cfg, dict):
             raise ValueError("config.config must be an object")
         raw_delay = cfg.get("request_delay", 0)
@@ -58,6 +62,50 @@ class IngestionJob(ABC):
         # Seen checksums - prevent reprocessing identical content
         self._seen_capacity = 10000
         self._seen = OrderedDict()
+
+        # Lazy-initialised MarkItDown instance shared across conversion calls
+        self._markitdown: MarkItDown | None = None
+
+    def _get_markitdown(self) -> MarkItDown:
+        """Return a shared MarkItDown instance, creating it on first use."""
+        if self._markitdown is None:
+            self._markitdown = MarkItDown()
+        return self._markitdown
+
+    def convert_to_markdown(self, content: bytes | str, fallback: str = "", file_extension: str | None = None) -> str:
+        """Convert bytes or text to Markdown using MarkItDown.
+
+        Falls back to ``fallback`` when conversion produces an empty result or
+        raises an exception. For str input, falls back to the original string
+        when no explicit fallback is provided.
+
+        Args:
+            content: Raw bytes or plain-text string to convert.
+            fallback: Text to return when conversion yields nothing.
+                      Defaults to empty string; for str input defaults to the
+                      original string.
+            file_extension: Optional file extension hint (e.g. ``".pdf"``) so
+                             MarkItDown can pick the right converter for binary
+                             content whose type can't be inferred from the bytes.
+
+        Returns:
+            Converted Markdown string, or ``fallback`` on failure/empty result.
+        """
+        if isinstance(content, str):
+            if not content.strip():
+                return content
+            fallback = fallback or content
+            content = content.encode("utf-8")
+        try:
+            result = self._get_markitdown().convert_stream(io.BytesIO(content), file_extension=file_extension)
+            converted = result.markdown or ""
+            if converted.strip():
+                return converted
+            logger.debug("MarkItDown produced empty result; using fallback text")
+            return fallback
+        except Exception as exc:
+            logger.warning("MarkItDown conversion failed: %s; falling back", exc)
+            return fallback
 
     @property
     @abstractmethod

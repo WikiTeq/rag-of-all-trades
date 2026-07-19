@@ -277,3 +277,110 @@ class TestIngestionJob:
 
         assert result == "[test-source] Completed: 1 ingested, 1 skipped"
         assert job.process_item.call_count == 2
+
+
+class TestIngestionJobMarkdownConversion:
+    def test_convert_bytes_returns_converted_text(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        mock_md = Mock()
+        mock_md.convert_stream.return_value = Mock(markdown="# Hello")
+        job._markitdown = mock_md
+
+        result = job.convert_to_markdown(b"raw bytes")
+
+        assert result == "# Hello"
+        mock_md.convert_stream.assert_called_once()
+
+    def test_convert_bytes_passes_file_extension_hint(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        mock_md = Mock()
+        mock_md.convert_stream.return_value = Mock(markdown="# Hello")
+        job._markitdown = mock_md
+
+        job.convert_to_markdown(b"raw bytes", file_extension=".pdf")
+
+        _, kwargs = mock_md.convert_stream.call_args
+        assert kwargs["file_extension"] == ".pdf"
+
+    def test_convert_bytes_falls_back_on_empty_result(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        mock_md = Mock()
+        mock_md.convert_stream.return_value = Mock(markdown="   ")
+        job._markitdown = mock_md
+
+        result = job.convert_to_markdown(b"raw", fallback="raw text")
+
+        assert result == "raw text"
+
+    def test_convert_bytes_falls_back_on_exception(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        mock_md = Mock()
+        mock_md.convert_stream.side_effect = RuntimeError("boom")
+        job._markitdown = mock_md
+
+        result = job.convert_to_markdown(b"raw", fallback="fallback")
+
+        assert result == "fallback"
+
+    def test_convert_bytes_default_fallback_is_empty_string(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        mock_md = Mock()
+        mock_md.convert_stream.return_value = Mock(markdown="")
+        job._markitdown = mock_md
+
+        result = job.convert_to_markdown(b"raw")
+
+        assert result == ""
+
+    def test_convert_text_returns_converted_text(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        mock_md = Mock()
+        mock_md.convert_stream.return_value = Mock(markdown="# Heading")
+        job._markitdown = mock_md
+
+        result = job.convert_to_markdown("some wiki text")
+
+        assert result == "# Heading"
+
+    def test_convert_text_falls_back_on_empty_result(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        mock_md = Mock()
+        mock_md.convert_stream.return_value = Mock(markdown="   ")
+        job._markitdown = mock_md
+
+        result = job.convert_to_markdown("original text")
+
+        assert result == "original text"
+
+    def test_convert_text_falls_back_on_exception(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        mock_md = Mock()
+        mock_md.convert_stream.side_effect = RuntimeError("oops")
+        job._markitdown = mock_md
+
+        result = job.convert_to_markdown("original text")
+
+        assert result == "original text"
+
+    def test_convert_text_returns_empty_string_unchanged(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        assert job.convert_to_markdown("") == ""
+
+    def test_convert_text_returns_whitespace_only_unchanged(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        assert job.convert_to_markdown("   ") == "   "
+
+    def test_get_markitdown_is_lazily_created(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        assert job._markitdown is None
+        with patch("tasks.base.MarkItDown") as mock_cls:
+            instance = job._get_markitdown()
+            mock_cls.assert_called_once_with()
+            assert instance is mock_cls.return_value
+
+    def test_get_markitdown_returns_same_instance(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        with patch("tasks.base.MarkItDown"):
+            first = job._get_markitdown()
+            second = job._get_markitdown()
+            assert first is second

@@ -3,7 +3,6 @@ from collections.abc import Iterator
 from typing import Any
 
 from jira import JIRA
-from markitdown import MarkItDown
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -80,7 +79,6 @@ class JiraIngestionJob(IngestionJob):
 
         # Build authenticated JIRA client
         self._jira = self._build_client()
-        self._md = MarkItDown()
 
         logger.info(
             f"Initialized Jira connector for {self.server_url} "
@@ -214,10 +212,11 @@ class JiraIngestionJob(IngestionJob):
         parts.append(f"# {summary}\n")
 
         description = getattr(issue.fields, "description", "") or ""
-        if description.strip():
-            md_description = self._to_markdown(description)
-            if md_description.strip():
-                parts.append(md_description)
+        if isinstance(description, dict):
+            description = self._extract_adf_text(description)
+        md_description = self.convert_to_markdown(description).strip()
+        if md_description:
+            parts.append(md_description)
 
         if self.load_comments:
             comments_md = self._build_comments_section(issue)
@@ -253,30 +252,38 @@ class JiraIngestionJob(IngestionJob):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _to_markdown(self, text: str) -> str:
-        """Convert Jira description text to Markdown using MarkItDown.
-
-        Falls back to returning the original text if conversion fails.
-        Jira descriptions may use Jira wiki markup or Atlassian Document Format
-        (ADF, a JSON structure). Both are handled gracefully here.
-        """
-        # ADF is a JSON dict — MarkItDown won't help; extract plain text
-        if isinstance(text, dict):
-            return self._extract_adf_text(text)
-
-        if not text or not text.strip():
+    def _build_comments_section(self, issue: Any) -> str:
+        """Fetch and format the top N comments for an issue as Markdown."""
+        try:
+            comments = self._jira.comments(issue, max_results=self.max_comments, order_by="-created")
+        except Exception as e:
+            logger.warning(f"[{self.source_name}] Failed to fetch comments for {issue.key}: {e}")
             return ""
 
-        try:
-            import io
+        if not comments:
+            return ""
 
-            result = self._md.convert_stream(io.BytesIO(text.encode("utf-8")))
-            converted = result.text_content or ""
-            return converted.strip() if converted.strip() else text
-        except Exception:
-            return text
+        lines: list[str] = []
+        for comment in comments:
+            author = self._safe_display_name(getattr(comment, "author", None))
+            created = getattr(comment, "created", "") or ""
+            body = getattr(comment, "body", "") or ""
+            if body == "":
+                continue
+            if isinstance(body, dict):
+                body = self._extract_adf_text(body)
+            body = self.convert_to_markdown(body).strip()
+            if not body:
+                continue
+            lines.append(f"**{author}** ({created}):\n{body}")
 
-    def _extract_adf_text(self, adf: dict) -> str:
+        if not lines:
+            return ""
+
+        return "\n\n".join(["## Comments", *lines])
+
+    @staticmethod
+    def _extract_adf_text(adf: dict) -> str:
         """Recursively extract plain text from an Atlassian Document Format (ADF) node."""
         text_parts: list[str] = []
 
@@ -303,29 +310,6 @@ class JiraIngestionJob(IngestionJob):
 
         walk(adf)
         return "\n".join(text_parts)
-
-    def _build_comments_section(self, issue: Any) -> str:
-        """Fetch and format the top N comments for an issue as Markdown."""
-        try:
-            comments = self._jira.comments(issue)
-        except Exception as e:
-            logger.warning(f"[{self.source_name}] Failed to fetch comments for {issue.key}: {e}")
-            return ""
-
-        if not comments:
-            return ""
-
-        top_comments = comments[: self.max_comments]
-        lines: list[str] = ["## Comments"]
-        for comment in top_comments:
-            author = self._safe_display_name(getattr(comment, "author", None))
-            created = getattr(comment, "created", "") or ""
-            body = getattr(comment, "body", "") or ""
-            if isinstance(body, dict):
-                body = self._extract_adf_text(body)
-            lines.append(f"**{author}** ({created}):\n{body}")
-
-        return "\n\n".join(lines)
 
     @staticmethod
     def _safe_display_name(obj: Any) -> str:
