@@ -16,6 +16,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
 * Slack ingestion from channels by ID or name/regex pattern, with thread reply support
+* GitHub ingestion from repository files and issues via Personal Access Token or GitHub App
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -29,6 +30,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Web
 * Pipedrive
 * Slack
+* GitHub
 
 ## Embeddings support
 
@@ -453,6 +455,53 @@ SLACK2_SCHEDULES=3600
 ```
 
 > `channel_ids` and `channel_patterns` are mutually exclusive. `latest_date` requires `earliest_date`.
+
+### GitHub Connector
+
+The GitHub connector ingests repository files and optionally issues from a GitHub repository.
+Files can be filtered by extension and directory. Authentication supports a Personal Access Token
+or GitHub App credentials. The `1` suffix in variable names (e.g. `GITHUB1_*`) supports multiple
+GitHub connector instances.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "github"
+    name: "github1"
+    config:
+      personal_token: "${GITHUB1_PERSONAL_TOKEN}"
+      # GitHub App auth (mutually exclusive with personal_token):
+      #github_app_id: "${GITHUB1_APP_ID}"
+      #github_app_installation_id: "${GITHUB1_APP_INSTALLATION_ID}"
+      #github_app_private_key: "${GITHUB1_APP_PRIVATE_KEY}"
+      owner: "${GITHUB1_OWNER}"
+      repo: "${GITHUB1_REPO}"
+      branch: "main"                    # optional, default "main" (mutually exclusive with commit_sha)
+      #commit_sha: ""                   # optional (mutually exclusive with branch)
+      include_extensions: "md,py"       # optional, comma-separated (mutually exclusive with exclude_extensions)
+      #exclude_extensions: ""           # optional (mutually exclusive with include_extensions)
+      #include_directories: ""          # optional, comma-separated (mutually exclusive with exclude_directories)
+      #exclude_directories: ""          # optional (mutually exclusive with include_directories)
+      include_issues: false             # optional, default false
+      #include_issues_labels: ""        # optional, comma-separated (mutually exclusive with exclude_issues_labels)
+      #exclude_issues_labels: ""        # optional (mutually exclusive with include_issues_labels)
+      concurrent_requests: 5            # optional, default 5
+      schedules: "${GITHUB1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+GITHUB1_PERSONAL_TOKEN=your-personal-access-token
+# GitHub App auth (alternative to personal token):
+#GITHUB1_APP_ID=
+#GITHUB1_APP_INSTALLATION_ID=
+#GITHUB1_APP_PRIVATE_KEY=
+GITHUB1_OWNER=your-org-or-username
+GITHUB1_REPO=your-repo-name
+GITHUB1_SCHEDULES=3600
+```
 
 ## Reference of the `config.yaml`
 
