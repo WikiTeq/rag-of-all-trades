@@ -686,6 +686,56 @@ curl -X 'POST' \
 }
 ```
 
+### /api/v1/connectors
+
+Lists all enabled connectors and a non-sensitive subset of their configuration
+(credentials such as API keys, tokens, and passwords are never included).
+
+```bash
+curl -X 'GET' \
+  'http://localhost:8000/api/v1/connectors' \
+  -H 'accept: application/json'
+```
+
+If `API_KEY` is configured, include the `Authorization` header:
+
+```bash
+curl -X 'GET' \
+  'http://localhost:8000/api/v1/connectors' \
+  -H 'Authorization: Bearer your-api-key' \
+  -H 'accept: application/json'
+```
+
+**Response example**:
+
+```json
+{
+  "connectors": [
+    {
+      "type": "s3",
+      "name": "account1",
+      "config": {
+        "buckets": ["docs-bucket"],
+        "region": "us-east-1",
+        "use_ssl": true,
+        "endpoint": "https://s3.example.com"
+      }
+    },
+    {
+      "type": "jira",
+      "name": "jira1",
+      "config": {
+        "server_url": "https://your-domain.atlassian.net",
+        "jql": "project = DOCS",
+        "auth_type": "basic",
+        "max_results": 50,
+        "load_comments": false
+      }
+    }
+  ]
+}
+```
+
 ### /health
 
 This endpoint checks the health of the service.
