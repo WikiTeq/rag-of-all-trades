@@ -20,6 +20,15 @@ class TestDirectoryIngestionJob(unittest.TestCase):
     def tearDown(self):
         self.reader_patcher.stop()
 
+    def _make_file_job(self, temp_dir: str, name: str, source: str):
+        """Build a directory job whose reader returns the provided file content."""
+        file_path = Path(temp_dir) / name
+        file_path.write_text(source, encoding="utf-8")
+        self.mock_directory_reader.load_resource.return_value = [Mock(text=source)]
+        job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+        item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
+        return job, item
+
     def test_source_type(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
@@ -235,6 +244,182 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             self.assertEqual(args[1], missing_path)
             self.assertIn("SimpleDirectoryReader failed", args[0])
             self.assertIn("missing file", str(args[2]))
+
+    def test_markdown_frontmatter_is_removed_from_content_and_returned_as_metadata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = "---\ntitle: Example\ntags:\n  - rag\n---\n# Body\n\nText"
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+
+            content = job.get_raw_content(item)
+            extra = job.get_extra_metadata(item, content, {})
+
+            self.assertEqual(content, "# Body\n\nText")
+            self.assertEqual(extra, {"md_title": "Example", "md_tags": ["rag"]})
+
+    def test_frontmatter_keeps_inline_and_block_scalar_lists(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = (
+                "---\n"
+                "tags: [markdown, tutorial, web]\n"
+                "categories:\n"
+                "  - docs\n"
+                "  - rag\n"
+                "---\n"
+                "Body"
+            )
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+
+            extra = job.get_extra_metadata(item, job.get_raw_content(item), {})
+
+            self.assertEqual(extra["md_tags"], ["markdown", "tutorial", "web"])
+            self.assertEqual(extra["md_categories"], ["docs", "rag"])
+
+    def test_frontmatter_keeps_special_character_property_names(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = (
+                "---\n"
+                "og:image: /images/guide.jpg\n"
+                "twitter:card: summary_large_image\n"
+                "feature-flag: true\n"
+                "---\n"
+                "Body"
+            )
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+
+            extra = job.get_extra_metadata(item, job.get_raw_content(item), {})
+
+            self.assertEqual(extra["md_og:image"], "/images/guide.jpg")
+            self.assertEqual(extra["md_twitter:card"], "summary_large_image")
+            self.assertIs(extra["md_feature-flag"], True)
+
+    def test_frontmatter_normalizes_dates_to_iso_strings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = "---\ndate: 2024-01-15\nupdated: 2024-01-15T14:30:00Z\n---\nBody"
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+
+            extra = job.get_extra_metadata(item, job.get_raw_content(item), {})
+
+            self.assertEqual(extra["md_date"], "2024-01-15")
+            self.assertEqual(extra["md_updated"], "2024-01-15T14:30:00+00:00")
+
+    def test_frontmatter_discards_structured_properties(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = (
+                "---\n"
+                "title: Documentation Page\n"
+                "tags: [markdown, vuepress, documentation]\n"
+                "seo:\n"
+                "  title: Nested title\n"
+                "meta:\n"
+                "  - name: description\n"
+                "    content: Page description\n"
+                "  - name: keywords\n"
+                "    content: markdown vuepress documentation\n"
+                "matrix: [[a, b], [c]]\n"
+                "---\n"
+                "Body"
+            )
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+
+            extra = job.get_extra_metadata(item, job.get_raw_content(item), {})
+
+            self.assertEqual(
+                extra,
+                {
+                    "md_title": "Documentation Page",
+                    "md_tags": ["markdown", "vuepress", "documentation"],
+                },
+            )
+
+    def test_markdown_checksum_changes_when_only_frontmatter_changes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = "---\ntitle: Original\n---\nBody"
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+            original_checksum = job.get_item_checksum(item)
+
+            Path(item.source_ref).write_text(
+                "---\ntitle: Updated\n---\nBody",
+                encoding="utf-8",
+            )
+
+            self.assertNotEqual(job.get_item_checksum(item), original_checksum)
+
+    def test_markdown_without_frontmatter_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = "# Body\n\nText"
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+
+            content = job.get_raw_content(item)
+
+            self.assertEqual(content, source)
+            self.assertEqual(job.get_extra_metadata(item, content, {}), {})
+
+    def test_malformed_markdown_frontmatter_is_preserved(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = "---\ntitle: [broken\n---\n# Body"
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+
+            content = job.get_raw_content(item)
+
+            self.assertEqual(content, source)
+            self.assertEqual(job.get_extra_metadata(item, content, {}), {})
+
+    def test_non_mapping_markdown_frontmatter_is_preserved(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = "---\n- one\n- two\n---\n# Body"
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+
+            content = job.get_raw_content(item)
+
+            self.assertEqual(content, source)
+            self.assertEqual(job.get_extra_metadata(item, content, {}), {})
+
+    def test_non_markdown_frontmatter_like_content_is_unchanged(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = "---\ntitle: Example\n---\nText"
+            job, item = self._make_file_job(temp_dir, "doc.txt", source)
+
+            content = job.get_raw_content(item)
+
+            self.assertEqual(content, source)
+            self.assertEqual(job.get_extra_metadata(item, content, {}), {})
+
+    def test_json_frontmatter_is_not_processed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = '{\n"title": "JSON"\n}\nBody'
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+
+            content = job.get_raw_content(item)
+
+            self.assertEqual(content, source)
+            self.assertEqual(job.get_extra_metadata(item, content, {}), {})
+
+    def test_toml_frontmatter_is_not_processed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = '+++\ntitle = "TOML"\n+++\nBody'
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+
+            content = job.get_raw_content(item)
+
+            self.assertEqual(content, source)
+            self.assertEqual(job.get_extra_metadata(item, content, {}), {})
+
+    def test_process_item_preserves_reserved_metadata_and_ingests_markdown_body(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = "---\nsource: overridden\ntitle: Example\n---\nBody"
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+            job.metadata_tracker = Mock()
+            job.vector_manager = Mock()
+            job.metadata_tracker.get_latest_record.return_value = None
+
+            result = job.process_item(item)
+
+            document = job.vector_manager.insert_documents.call_args.args[0][0]
+            self.assertEqual(result, 1)
+            self.assertEqual(document.text, "Body")
+            self.assertEqual(document.metadata["source"], "directory")
+            self.assertEqual(document.metadata["md_source"], "overridden")
+            self.assertEqual(document.metadata["md_title"], "Example")
 
     def test_config_parses_bools_and_num_files_limit_with_forced_raise_on_error(self):
         with tempfile.TemporaryDirectory() as temp_dir:

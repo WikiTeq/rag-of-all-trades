@@ -1,8 +1,13 @@
+import hashlib
 import logging
 from collections.abc import Iterable
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
+import frontmatter
+import yaml
+from frontmatter.default_handlers import YAMLHandler
 from llama_index.core import SimpleDirectoryReader
 from pydantic import BaseModel, field_validator
 
@@ -12,6 +17,80 @@ from utils.parse import parse_list
 from utils.text import sanitize_ascii_key
 
 logger = logging.getLogger(__name__)
+_UNSUPPORTED_FRONTMATTER_VALUE = object()
+
+
+class _NonMappingFrontmatterError(ValueError):
+    """Raised when a frontmatter header is not a YAML mapping."""
+
+
+class _MappingYAMLHandler(YAMLHandler):
+    """YAML handler that preserves non-mapping frontmatter as content."""
+
+    def load(self, fm: str, **kwargs: object) -> Any:
+        parsed = super().load(fm, **kwargs)
+        if not isinstance(parsed, dict):
+            raise _NonMappingFrontmatterError
+        return parsed
+
+
+_YAML_FRONTMATTER_HANDLER = _MappingYAMLHandler()
+
+
+def _normalize_frontmatter_value(value: Any) -> Any:
+    """Normalize one supported frontmatter value for document metadata."""
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, list):
+        normalized = []
+        for item in value:
+            if isinstance(item, list):
+                return _UNSUPPORTED_FRONTMATTER_VALUE
+            normalized_item = _normalize_frontmatter_value(item)
+            if normalized_item is _UNSUPPORTED_FRONTMATTER_VALUE:
+                return _UNSUPPORTED_FRONTMATTER_VALUE
+            normalized.append(normalized_item)
+        return normalized
+    return _UNSUPPORTED_FRONTMATTER_VALUE
+
+
+def _parse_markdown_frontmatter(content: str) -> tuple[str, dict[str, Any]]:
+    """Split supported YAML frontmatter from Markdown content."""
+    stripped_content = content.strip()
+    if not _YAML_FRONTMATTER_HANDLER.detect(stripped_content):
+        return content, {}
+
+    try:
+        _YAML_FRONTMATTER_HANDLER.split(stripped_content)
+    except ValueError:
+        logger.warning("Ignoring Markdown frontmatter without a closing delimiter")
+        return content, {}
+
+    try:
+        parsed, body = frontmatter.parse(
+            content,
+            handler=_YAML_FRONTMATTER_HANDLER,
+        )
+    except _NonMappingFrontmatterError:
+        logger.warning("Ignoring Markdown frontmatter that is not a mapping")
+        return content, {}
+    except yaml.YAMLError as exc:
+        logger.warning("Ignoring malformed Markdown frontmatter: %s", exc)
+        return content, {}
+
+    metadata: dict[str, Any] = {}
+    for key, value in parsed.items():
+        if not isinstance(key, str):
+            continue
+        normalized = _normalize_frontmatter_value(value)
+        # Structured values, including VuePress `meta`, are unsupported and must be discarded
+        if normalized is _UNSUPPORTED_FRONTMATTER_VALUE:
+            continue
+        metadata[key] = normalized
+
+    return body, metadata
 
 
 class DirectoryConnectorConfig(BaseModel):
@@ -146,7 +225,46 @@ class DirectoryIngestionJob(IngestionJob):
             return ""
 
         merged = "\n\n".join((doc.text or "").strip() for doc in docs if (doc.text or "").strip())
+        if file_path.suffix.lower() == ".md":
+            merged, _ = _parse_markdown_frontmatter(merged)
         return merged if merged.strip() else ""
+
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        """Hash complete Markdown sources so metadata-only changes reingest."""
+        file_path = Path(item.source_ref)
+        if file_path.suffix.lower() != ".md":
+            return None
+
+        try:
+            source = file_path.read_bytes()
+        except OSError as exc:
+            logger.warning("Failed to checksum Markdown file %s: %s", file_path, exc)
+            return None
+
+        return hashlib.md5(source, usedforsecurity=False).hexdigest()
+
+    def get_extra_metadata(
+        self,
+        item: IngestionItem,
+        content: str,
+        metadata: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return valid YAML frontmatter under the `md_` metadata namespace."""
+        file_path = Path(item.source_ref)
+        if file_path.suffix.lower() != ".md":
+            return {}
+
+        try:
+            source = file_path.read_text(
+                encoding=self.connector_config.encoding,
+                errors="ignore",
+            )
+        except OSError as exc:
+            logger.warning("Failed to read Markdown metadata from %s: %s", file_path, exc)
+            return {}
+
+        _, frontmatter = _parse_markdown_frontmatter(source)
+        return {f"md_{key}": value for key, value in frontmatter.items()}
 
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe name for the item.
