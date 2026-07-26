@@ -318,19 +318,21 @@ class MediaWikiIngestionJob(IngestionJob):
         try:
             params = json.dumps({"subject": title, "ns": namespace, "iw": "", "subobject": ""})
             response = self._reader.site.get("smwbrowse", browse="subject", params=params, format="json")
-        except Exception:
-            logger.warning(f"Failed to fetch semantic properties for page: {title}")
-            return {}
 
-        properties: dict[str, str] = {}
-        for entry in response.get("query", {}).get("data", []):
-            property_key = entry.get("property", "")
-            if not property_key or property_key.startswith("_"):
-                continue
-            dataitems = entry.get("dataitem", [])
-            if dataitems:
-                properties[self._SMW_METADATA_PREFIX + property_key] = self._decode_smw_dataitem_value(dataitems[0])
-        return properties
+            properties: dict[str, str] = {}
+            for entry in response.get("query", {}).get("data", []):
+                property_key = entry.get("property", "")
+                if not property_key or property_key.startswith("_"):
+                    continue
+                dataitems = entry.get("dataitem", [])
+                if dataitems:
+                    properties[self._SMW_METADATA_PREFIX + property_key] = self._decode_smw_dataitem_value(dataitems[0])
+            return properties
+        except Exception:
+            logger.warning(
+                f"Failed to fetch semantic properties for page: {title} (namespace: {namespace})", exc_info=True
+            )
+            return {}
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Provide MediaWiki-specific metadata for the page.

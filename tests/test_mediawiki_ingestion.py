@@ -697,6 +697,23 @@ class TestGetExtraMetadata:
         assert extra["title"] == "Test Page"
         assert extra["url"] == "https://example.com/wiki/Test_Page"
 
+    def test_load_semantics_malformed_response_does_not_raise(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = None
+        item = _make_item(
+            "Test Page",
+            last_modified=datetime(2024, 1, 1, 12, 0, 0),
+            pageid=10,
+            namespace=0,
+            url="https://example.com/wiki/Test_Page",
+        )
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["title"] == "Test Page"
+        assert extra["url"] == "https://example.com/wiki/Test_Page"
+        assert not any(key.startswith("smw_") for key in extra)
+
 
 # ---------------------------------------------------------------------------
 # process_item
