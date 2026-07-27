@@ -368,7 +368,8 @@ class MediaWikiIngestionJob(IngestionJob):
                 dataitems = entry.get("dataitem", [])
                 if dataitems:
                     values = [self._decode_smw_dataitem_value(dataitem) for dataitem in dataitems]
-                    properties[self._SMW_METADATA_PREFIX + property_key] = "; ".join(values)
+                    normalized_key = property_key.strip().lower().replace(" ", "_")
+                    properties[self._SMW_METADATA_PREFIX + normalized_key] = "; ".join(values)
             return properties
         except Exception:
             logger.warning(

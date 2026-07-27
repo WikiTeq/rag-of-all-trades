@@ -583,9 +583,9 @@ class TestGetExtraMetadata:
 
         extra = job.get_extra_metadata(item=item, content="content", metadata={})
 
-        assert extra["smw_Sitename"] == "Some Value"
-        assert extra["smw_Is_discontinued"] == "false"
-        assert "smw_Should_be_ignored" not in extra
+        assert extra["smw_sitename"] == "Some Value"
+        assert extra["smw_is_discontinued"] == "false"
+        assert "smw_should_be_ignored" not in extra
         assert "Should_be_ignored" not in extra
 
     def test_load_semantics_skips_system_properties(self):
@@ -610,7 +610,7 @@ class TestGetExtraMetadata:
         assert "smw__ASK" not in extra
         assert "smw__INST" not in extra
         assert "smw__SKEY" not in extra
-        assert extra["smw_Sitename"] == "Some Value"
+        assert extra["smw_sitename"] == "Some Value"
 
     def test_load_semantics_joins_all_values_for_multi_valued_property(self):
         job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
@@ -633,7 +633,7 @@ class TestGetExtraMetadata:
 
         extra = job.get_extra_metadata(item=item, content="content", metadata={})
 
-        assert extra["smw_Tags"] == "first; second; third"
+        assert extra["smw_tags"] == "first; second; third"
 
     def test_load_semantics_decodes_wikipage_type_values(self):
         job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
@@ -657,8 +657,8 @@ class TestGetExtraMetadata:
 
         extra = job.get_extra_metadata(item=item, content="content", metadata={})
 
-        assert extra["smw_Sitename"] == "Test Wiki"
-        assert extra["smw_Tags"] == "First tag; Second tag"
+        assert extra["smw_sitename"] == "Test Wiki"
+        assert extra["smw_tags"] == "First tag; Second tag"
 
     def test_load_semantics_resolves_wikipage_namespace_prefix(self):
         job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
@@ -678,7 +678,7 @@ class TestGetExtraMetadata:
 
         extra = job.get_extra_metadata(item=item, content="content", metadata={})
 
-        assert extra["smw_Additional_contributor"] == "User:Dan.Mummert.AAO"
+        assert extra["smw_additional_contributor"] == "User:Dan.Mummert.AAO"
 
     def test_load_semantics_wikipage_unknown_namespace_falls_back_to_title(self):
         job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
@@ -698,7 +698,7 @@ class TestGetExtraMetadata:
 
         extra = job.get_extra_metadata(item=item, content="content", metadata={})
 
-        assert extra["smw_Additional_contributor"] == "Dan.Mummert.AAO"
+        assert extra["smw_additional_contributor"] == "Dan.Mummert.AAO"
 
     def test_load_semantics_decodes_date_type_values(self):
         job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
@@ -717,7 +717,7 @@ class TestGetExtraMetadata:
 
         extra = job.get_extra_metadata(item=item, content="content", metadata={})
 
-        assert extra["smw_SomeDataProp"] == "2021-12-04T03:37:15"
+        assert extra["smw_somedataprop"] == "2021-12-04T03:37:15"
 
     def test_load_semantics_does_not_clobber_connector_metadata(self):
         job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
@@ -741,8 +741,8 @@ class TestGetExtraMetadata:
 
         assert extra["title"] == "Test Page"
         assert extra["page_id"] == 10
-        assert extra["smw_Title"] == "Fake Title Collision"
-        assert extra["smw_Page_id"] == "999"
+        assert extra["smw_title"] == "Fake Title Collision"
+        assert extra["smw_page_id"] == "999"
 
     def test_load_semantics_failure_does_not_raise_and_omits_semantic_metadata(self):
         job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
