@@ -656,6 +656,65 @@ class TestGetExtraMetadata:
         assert extra["smw_Sitename"] == "Test Wiki"
         assert extra["smw_Tags"] == "First tag"
 
+    def test_load_semantics_resolves_wikipage_namespace_prefix(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.namespaces = {0: "", 2: "User"}
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {
+                        "property": "Additional_contributor",
+                        "dataitem": [{"type": 9, "item": "Dan.Mummert.AAO#2##"}],
+                        "direction": "direct",
+                    },
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_Additional_contributor"] == "User:Dan.Mummert.AAO"
+
+    def test_load_semantics_wikipage_unknown_namespace_falls_back_to_title(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.namespaces = {0: ""}
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {
+                        "property": "Additional_contributor",
+                        "dataitem": [{"type": 9, "item": "Dan.Mummert.AAO#2##"}],
+                        "direction": "direct",
+                    },
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_Additional_contributor"] == "Dan.Mummert.AAO"
+
+    def test_load_semantics_decodes_date_type_values(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {
+                        "property": "SomeDataProp",
+                        "dataitem": [{"type": 6, "item": "1/2021/12/4/3/37/15/0"}],
+                        "direction": "direct",
+                    },
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_SomeDataProp"] == "2021-12-04T03:37:15"
+
     def test_load_semantics_does_not_clobber_connector_metadata(self):
         job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
         reader.site.get.return_value = {

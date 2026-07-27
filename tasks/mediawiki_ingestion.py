@@ -281,22 +281,62 @@ class MediaWikiIngestionJob(IngestionJob):
         page_title = item.source_ref.title
         return slugify(page_title, max_len=255, extra_replacements={":": "__", "/": "_"})
 
-    # SMW\DataItem::TYPE_WIKIPAGE — the default type for untyped SMW properties.
+    # SMW\DataItem type IDs (see SMW's DataItem.php DI_TYPE_* constants).
     _SMW_TYPE_WIKIPAGE = 9
+    _SMW_TYPE_DATE = 6
 
-    @classmethod
-    def _decode_smw_dataitem_value(cls, dataitem: dict[str, Any]) -> str:
+    def _decode_smw_dataitem_value(self, dataitem: dict[str, Any]) -> str:
         """Decode a single smwbrowse dataitem entry into a display string.
 
-        Wikipage-type values (SMW's default type for untyped properties) are serialized
-        as "DBkey#namespace#interwiki#subobjectname" (see SMW's DIWikiPage::getSerialization);
-        only the DBkey segment is human-readable and it uses underscores in place of spaces.
-        Other types (text, number, time, ...) are already plain values.
+        Other types (text, number, ...) are already plain values.
         """
         item = str(dataitem.get("item", ""))
-        if dataitem.get("type") == cls._SMW_TYPE_WIKIPAGE:
-            return item.split("#", 1)[0].replace("_", " ")
+        dataitem_type = dataitem.get("type")
+        if dataitem_type == self._SMW_TYPE_WIKIPAGE:
+            return self._decode_smw_wikipage_value(item)
+        if dataitem_type == self._SMW_TYPE_DATE:
+            return self._decode_smw_date_value(item)
         return item
+
+    def _decode_smw_wikipage_value(self, item: str) -> str:
+        """Decode a wikipage-type dataitem value into a "Namespace:Page title" display string.
+
+        Serialized as "DBkey#namespace#interwiki#subobjectname" (see SMW's
+        DIWikiPage::getSerialization); the DBkey uses underscores in place of spaces.
+        The namespace segment is a namespace ID, resolved to its name via the wiki's
+        namespace mapping so e.g. "Dan.Mummert.AAO#2##" becomes "User:Dan.Mummert.AAO"
+        rather than the bare, ambiguous DBkey. Namespace 0 (main) has no prefix.
+        """
+        parts = item.split("#")
+        title = parts[0].replace("_", " ")
+        if len(parts) < 2:
+            return title
+        try:
+            namespace_id = int(parts[1])
+        except ValueError:
+            return title
+        if namespace_id == 0:
+            return title
+        namespace_name = self._reader.site.namespaces.get(namespace_id)
+        if not namespace_name:
+            return title
+        return f"{namespace_name}:{title}"
+
+    @staticmethod
+    def _decode_smw_date_value(item: str) -> str:
+        """Decode a date/time-type dataitem value into an ISO 8601 string.
+
+        Serialized as "calendarmodel/year/month/day/hour/minute/second[/...]" (see SMW's
+        DITime::getSerialization). Falls back to the raw value if it doesn't match that shape.
+        """
+        parts = item.split("/")
+        if len(parts) < 7:
+            return item
+        try:
+            _, year, month, day, hour, minute, second = (int(p) for p in parts[:7])
+        except ValueError:
+            return item
+        return f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}"
 
     # Prefix for semantic property metadata keys, so they stay flat (filterable via the
     # existing /api/v1/query metadata filter API, which only matches top-level keys) while
