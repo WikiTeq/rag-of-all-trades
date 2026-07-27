@@ -306,8 +306,9 @@ class MediaWikiIngestionJob(IngestionJob):
         """Decode a wikipage-type dataitem value into a "Namespace:Page title" display string.
 
         Serialized as "DBkey#namespace#interwiki#subobjectname" (see SMW's
-        DIWikiPage::getSerialization); the DBkey uses underscores in place of spaces.
-        The namespace segment is a namespace ID, resolved to its name via the wiki's
+        SMW\\DataItems\\WikiPage::getSerialization, which joins [dbkey, namespace,
+        interwiki] with "#"); the DBkey uses underscores in place of spaces. The
+        namespace segment is a namespace ID, resolved to its name via the wiki's
         namespace mapping so e.g. "Dan.Mummert.AAO#2##" becomes "User:Dan.Mummert.AAO"
         rather than the bare, ambiguous DBkey. Namespace 0 (main) has no prefix.
         """
@@ -330,8 +331,12 @@ class MediaWikiIngestionJob(IngestionJob):
     def _decode_smw_date_value(item: str) -> str:
         """Decode a date/time-type dataitem value into an ISO 8601 string.
 
-        Serialized as "calendarmodel/year/month/day/hour/minute/second[/...]" (see SMW's
-        DITime::getSerialization). Falls back to the raw value if it doesn't match that shape.
+        Serialized as "calendarmodel/year[/month[/day[/hour/minute/second/timezone]]]",
+        with fields present only up to the value's stored precision (see SMW's
+        SMW\\DataItems\\Time::getSerialization). Times are always stored in UTC, so the
+        trailing timezone field can be safely dropped once decoded. Falls back to the raw
+        value for lower-precision values (year-only, year-month, ...) that don't have all
+        7 of the year..second fields.
         """
         parts = item.split("/")
         if len(parts) < 7:
