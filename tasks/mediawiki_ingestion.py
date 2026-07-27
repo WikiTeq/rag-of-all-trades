@@ -239,11 +239,15 @@ class MediaWikiIngestionJob(IngestionJob):
         every page edit. Using it avoids fetching full page content just to
         detect whether a page has changed.
 
+        The checksum is prefixed with the current load_semantics value so that
+        toggling the flag changes the checksum and triggers re-ingestion of
+        already-ingested pages, even though the page's revision hasn't changed.
+
         Returns None when revision is 0 or absent, falling back to content-based MD5.
         """
         revision = item.source_ref.revision
         if revision:
-            return str(revision)
+            return f"semantics={self.load_semantics}:{revision}"
         return None
 
     def get_raw_content(self, item: IngestionItem) -> str:

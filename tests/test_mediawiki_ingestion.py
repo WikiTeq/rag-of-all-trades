@@ -843,7 +843,7 @@ class TestGetItemChecksum:
     @pytest.mark.parametrize(
         "revision,expected",
         [
-            (98765, "98765"),
+            (98765, "semantics=False:98765"),
             (0, None),
             (None, None),
         ],
@@ -852,3 +852,10 @@ class TestGetItemChecksum:
         job, _ = base_wiki_job
         item = _make_item("Page", revision=revision)
         assert job.get_item_checksum(item) == expected
+
+    def test_get_item_checksum_changes_when_load_semantics_toggled(self):
+        job_off, _ = _make_job(config=_default_config(host="example.com", load_semantics=False))
+        job_on, _ = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        item = _make_item("Page", revision=98765)
+
+        assert job_off.get_item_checksum(item) != job_on.get_item_checksum(item)
