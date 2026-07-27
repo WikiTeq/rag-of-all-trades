@@ -347,9 +347,10 @@ class MediaWikiIngestionJob(IngestionJob):
         """Query Semantic MediaWiki for a page's properties via the smwbrowse API action.
 
         Excludes system properties (leading underscore, e.g. _ASK, _INST, _SKEY) and
-        subobjects (sobj). Only the first value is kept for multi-valued properties.
-        Each property is returned under a "smw_"-prefixed key to avoid colliding with
-        connector-owned metadata keys.
+        subobjects (sobj). Multi-valued properties have all their values joined with "; "
+        into a single string, since the metadata store's existing filter API only supports
+        scalar values (see _SMW_METADATA_PREFIX). Each property is returned under a
+        "smw_"-prefixed key to avoid colliding with connector-owned metadata keys.
 
         Returns an empty dict if the query fails for any reason (SMW not installed,
         page has no semantic data, transient error) — ingestion of the page continues
@@ -366,7 +367,8 @@ class MediaWikiIngestionJob(IngestionJob):
                     continue
                 dataitems = entry.get("dataitem", [])
                 if dataitems:
-                    properties[self._SMW_METADATA_PREFIX + property_key] = self._decode_smw_dataitem_value(dataitems[0])
+                    values = [self._decode_smw_dataitem_value(dataitem) for dataitem in dataitems]
+                    properties[self._SMW_METADATA_PREFIX + property_key] = "; ".join(values)
             return properties
         except Exception:
             logger.warning(

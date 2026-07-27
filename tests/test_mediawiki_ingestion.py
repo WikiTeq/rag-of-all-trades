@@ -612,14 +612,18 @@ class TestGetExtraMetadata:
         assert "smw__SKEY" not in extra
         assert extra["smw_Sitename"] == "Some Value"
 
-    def test_load_semantics_takes_first_value_for_multi_valued_property(self):
+    def test_load_semantics_joins_all_values_for_multi_valued_property(self):
         job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
         reader.site.get.return_value = {
             "query": {
                 "data": [
                     {
                         "property": "Tags",
-                        "dataitem": [{"type": 2, "item": "first"}, {"type": 2, "item": "second"}],
+                        "dataitem": [
+                            {"type": 2, "item": "first"},
+                            {"type": 2, "item": "second"},
+                            {"type": 2, "item": "third"},
+                        ],
                         "direction": "direct",
                     }
                 ]
@@ -629,7 +633,7 @@ class TestGetExtraMetadata:
 
         extra = job.get_extra_metadata(item=item, content="content", metadata={})
 
-        assert extra["smw_Tags"] == "first"
+        assert extra["smw_Tags"] == "first; second; third"
 
     def test_load_semantics_decodes_wikipage_type_values(self):
         job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
@@ -654,7 +658,7 @@ class TestGetExtraMetadata:
         extra = job.get_extra_metadata(item=item, content="content", metadata={})
 
         assert extra["smw_Sitename"] == "Test Wiki"
-        assert extra["smw_Tags"] == "First tag"
+        assert extra["smw_Tags"] == "First tag; Second tag"
 
     def test_load_semantics_resolves_wikipage_namespace_prefix(self):
         job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
