@@ -174,9 +174,9 @@ class JiraIngestionJob(IngestionJob):
         description = getattr(issue.fields, "description", "") or ""
         if isinstance(description, dict):
             description = self._extract_adf_text(description)
-        md_description = self.convert_to_markdown(description).strip()
-        if md_description:
-            parts.append(md_description)
+        description = description.strip()
+        if description:
+            parts.append(description)
 
         if self.load_comments:
             comments_md = self._build_comments_section(issue)
@@ -232,7 +232,7 @@ class JiraIngestionJob(IngestionJob):
                 continue
             if isinstance(body, dict):
                 body = self._extract_adf_text(body)
-            body = self.convert_to_markdown(body).strip()
+            body = body.strip()
             if not body:
                 continue
             lines.append(f"**{author}** ({created}):\n{body}")
