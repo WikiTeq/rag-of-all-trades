@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from llama_index.core import Document
-from markitdown import MarkItDown
+from markitdown import MarkItDown, StreamInfo
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.helper_classes.metadata_tracker import MetadataTracker
@@ -109,8 +109,9 @@ class IngestionJob(ABC):
                 return content
             fallback = fallback or content
             content = content.encode("utf-8")
+        stream_info = StreamInfo(extension=file_extension) if file_extension else None
         try:
-            result = self._get_markitdown().convert_stream(io.BytesIO(content), file_extension=file_extension)
+            result = self._get_markitdown().convert_stream(io.BytesIO(content), stream_info=stream_info)
             converted = result.markdown or ""
             if converted.strip():
                 return converted
