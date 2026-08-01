@@ -194,6 +194,14 @@ sources:
       schedules: "3600"
 ```
 
+For `.md` files, YAML frontmatter (a `---`-delimited block at the top of the file) is
+automatically parsed: it is removed from the indexed document content, and each
+accepted property is added to document metadata under the `md_` prefix (e.g. `title`
+becomes `md_title`). Scalar values, dates, and flat lists are supported; dates are
+normalized to ISO strings. Nested objects and lists of objects (e.g. VuePress-style
+`meta` blocks) are discarded. Malformed or non-mapping frontmatter is left in place
+as regular document content.
+
 ### MediaWiki Connector
 
 The MediaWiki connector ingests documents from MediaWiki sites and converts them to Markdown format.

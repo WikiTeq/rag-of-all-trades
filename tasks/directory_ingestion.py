@@ -39,9 +39,9 @@ _YAML_FRONTMATTER_HANDLER = _MappingYAMLHandler()
 
 def _normalize_frontmatter_value(value: Any) -> Any:
     """Normalize one supported frontmatter value for document metadata."""
-    if isinstance(value, (date, datetime)):
+    if isinstance(value, date | datetime):
         return value.isoformat()
-    if value is None or isinstance(value, (str, bool, int, float)):
+    if value is None or isinstance(value, str | bool | int | float):
         return value
     if isinstance(value, list):
         normalized = []
@@ -70,7 +70,7 @@ def _parse_markdown_frontmatter(content: str) -> tuple[str, dict[str, Any]]:
 
     try:
         parsed, body = frontmatter.parse(
-            content,
+            stripped_content,
             handler=_YAML_FRONTMATTER_HANDLER,
         )
     except _NonMappingFrontmatterError:
@@ -230,18 +230,42 @@ class DirectoryIngestionJob(IngestionJob):
         return merged if merged.strip() else ""
 
     def get_item_checksum(self, item: IngestionItem) -> str | None:
-        """Hash complete Markdown sources so metadata-only changes reingest."""
+        """Hash complete Markdown sources so metadata-only changes reingest.
+
+        Deliberately does not parse frontmatter here: this runs for every item on
+        every job run, including unchanged files that get skipped right after, so
+        parsing is deferred to get_raw_content()/get_extra_metadata() and cached
+        on item._metadata_cache for reuse between the two.
+        """
         file_path = Path(item.source_ref)
         if file_path.suffix.lower() != ".md":
             return None
 
         try:
-            source = file_path.read_bytes()
+            source_bytes = file_path.read_bytes()
         except OSError as exc:
             logger.warning("Failed to checksum Markdown file %s: %s", file_path, exc)
             return None
 
-        return hashlib.md5(source, usedforsecurity=False).hexdigest()
+        return hashlib.md5(source_bytes, usedforsecurity=False).hexdigest()
+
+    def _get_cached_frontmatter(self, item: IngestionItem, file_path: Path) -> dict[str, Any]:
+        """Read and parse Markdown frontmatter once per item, caching the result."""
+        if "frontmatter" in item._metadata_cache:
+            return item._metadata_cache["frontmatter"]
+
+        try:
+            source_text = file_path.read_text(
+                encoding=self.connector_config.encoding,
+                errors="ignore",
+            )
+        except OSError as exc:
+            logger.warning("Failed to read Markdown frontmatter from %s: %s", file_path, exc)
+            return {}
+
+        _, frontmatter_data = _parse_markdown_frontmatter(source_text)
+        item._metadata_cache["frontmatter"] = frontmatter_data
+        return frontmatter_data
 
     def get_extra_metadata(
         self,
@@ -254,17 +278,8 @@ class DirectoryIngestionJob(IngestionJob):
         if file_path.suffix.lower() != ".md":
             return {}
 
-        try:
-            source = file_path.read_text(
-                encoding=self.connector_config.encoding,
-                errors="ignore",
-            )
-        except OSError as exc:
-            logger.warning("Failed to read Markdown metadata from %s: %s", file_path, exc)
-            return {}
-
-        _, frontmatter = _parse_markdown_frontmatter(source)
-        return {f"md_{key}": value for key, value in frontmatter.items()}
+        frontmatter_data = self._get_cached_frontmatter(item, file_path)
+        return {f"md_{key}": value for key, value in frontmatter_data.items()}
 
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe name for the item.

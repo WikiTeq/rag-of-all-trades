@@ -258,15 +258,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
     def test_frontmatter_keeps_inline_and_block_scalar_lists(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            source = (
-                "---\n"
-                "tags: [markdown, tutorial, web]\n"
-                "categories:\n"
-                "  - docs\n"
-                "  - rag\n"
-                "---\n"
-                "Body"
-            )
+            source = "---\ntags: [markdown, tutorial, web]\ncategories:\n  - docs\n  - rag\n---\nBody"
             job, item = self._make_file_job(temp_dir, "doc.md", source)
 
             extra = job.get_extra_metadata(item, job.get_raw_content(item), {})
@@ -277,12 +269,7 @@ class TestDirectoryIngestionJob(unittest.TestCase):
     def test_frontmatter_keeps_special_character_property_names(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source = (
-                "---\n"
-                "og:image: /images/guide.jpg\n"
-                "twitter:card: summary_large_image\n"
-                "feature-flag: true\n"
-                "---\n"
-                "Body"
+                "---\nog:image: /images/guide.jpg\ntwitter:card: summary_large_image\nfeature-flag: true\n---\nBody"
             )
             job, item = self._make_file_job(temp_dir, "doc.md", source)
 
@@ -393,6 +380,31 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
             self.assertEqual(content, source)
             self.assertEqual(job.get_extra_metadata(item, content, {}), {})
+
+    def test_get_item_checksum_does_not_parse_frontmatter(self):
+        """Unchanged files are skipped right after get_item_checksum(); parsing here would be wasted work."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = "---\ntitle: Cached\n---\nBody"
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+
+            job.get_item_checksum(item)
+
+            self.assertEqual(item._metadata_cache, {})
+
+    def test_get_extra_metadata_only_reads_and_parses_file_once(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = "---\ntitle: Cached\n---\nBody"
+            job, item = self._make_file_job(temp_dir, "doc.md", source)
+
+            first = job.get_extra_metadata(item, "Body", {})
+            self.assertIn("frontmatter", item._metadata_cache)
+
+            with patch.object(Path, "read_text") as mock_read_text:
+                second = job.get_extra_metadata(item, "Body", {})
+
+            mock_read_text.assert_not_called()
+            self.assertEqual(first, {"md_title": "Cached"})
+            self.assertEqual(second, {"md_title": "Cached"})
 
     def test_toml_frontmatter_is_not_processed(self):
         with tempfile.TemporaryDirectory() as temp_dir:
