@@ -23,6 +23,7 @@ TEST_DATABASE_URL = os.environ.get(
 
 
 def _db_available() -> bool:
+    engine = None
     try:
         engine = create_engine(TEST_DATABASE_URL)
         with engine.connect():
@@ -30,7 +31,8 @@ def _db_available() -> bool:
     except Exception:
         return False
     finally:
-        engine.dispose()
+        if engine is not None:
+            engine.dispose()
 
 
 @unittest.skipUnless(_db_available(), f"Postgres not reachable at {TEST_DATABASE_URL}")
