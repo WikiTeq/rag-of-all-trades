@@ -39,7 +39,7 @@ class ScalarMetadataFilter(BaseModel):
 
 class ListMetadataFilter(BaseModel):
     name: str
-    operator: Literal["IN", "NIN"]
+    operator: Literal["IN", "NIN", "ANY", "ALL"]
     value: list[str | int | float]
 
     @field_validator("name")

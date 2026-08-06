@@ -23,6 +23,8 @@ _OPERATOR_MAP: dict[str, FilterOperator] = {
     "LTE": FilterOperator.LTE,
     "IN": FilterOperator.IN,
     "NIN": FilterOperator.NIN,
+    "ANY": FilterOperator.ANY,
+    "ALL": FilterOperator.ALL,
     "TEXT_MATCH": FilterOperator.TEXT_MATCH,
 }
 
