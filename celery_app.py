@@ -7,6 +7,7 @@ from celery_singleton import Singleton
 from utils.config import settings
 from utils.db import engine
 from utils.logger import configure_logging
+from utils.observability import setup_observability
 
 configure_logging()
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ celery_app.conf.beat_schedule = {}
 @worker_process_init.connect
 def init_worker(**kwargs):
     engine.dispose()
+    setup_observability()
 
 
 @worker_process_shutdown.connect
