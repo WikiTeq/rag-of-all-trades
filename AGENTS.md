@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Purpose
-Rag Of All Trades is a FastAPI-based RAG microservice that ingests content into PGVector via Celery and serves retrieval and rephrase APIs using LlamaIndex.
+Rag Of All Trades is a FastAPI-based RAG service that ingests content into PGVector via Celery and serves retrieval and rephrase APIs using LlamaIndex.
 
 ## Architecture
 - API runtime: `main.py` initializes PGVectorStore, builds `RAGQueryEngine`, configures CORS and rate limiting, and exposes `/health`.
