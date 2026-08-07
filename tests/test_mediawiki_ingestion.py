@@ -843,7 +843,7 @@ class TestGetItemChecksum:
     @pytest.mark.parametrize(
         "revision,expected",
         [
-            (98765, "semantics=False:98765"),
+            (98765, "98765"),
             (0, None),
             (None, None),
         ],
@@ -852,6 +852,22 @@ class TestGetItemChecksum:
         job, _ = base_wiki_job
         item = _make_item("Page", revision=revision)
         assert job.get_item_checksum(item) == expected
+
+    def test_get_item_checksum_load_semantics_disabled_is_backward_compatible(self):
+        """With load_semantics off (the default), the checksum is the bare revision
+        string, unchanged from before load_semantics existed — so enabling this PR's
+        code on a wiki that doesn't use the flag never spuriously re-ingests pages.
+        """
+        job, _ = _make_job(config=_default_config(host="example.com", load_semantics=False))
+        item = _make_item("Page", revision=98765)
+
+        assert job.get_item_checksum(item) == "98765"
+
+    def test_get_item_checksum_load_semantics_enabled_adds_prefix(self):
+        job, _ = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        item = _make_item("Page", revision=98765)
+
+        assert job.get_item_checksum(item) == "smw:98765"
 
     def test_get_item_checksum_changes_when_load_semantics_toggled(self):
         job_off, _ = _make_job(config=_default_config(host="example.com", load_semantics=False))

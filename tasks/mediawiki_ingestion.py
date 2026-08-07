@@ -239,15 +239,17 @@ class MediaWikiIngestionJob(IngestionJob):
         every page edit. Using it avoids fetching full page content just to
         detect whether a page has changed.
 
-        The checksum is prefixed with the current load_semantics value so that
-        toggling the flag changes the checksum and triggers re-ingestion of
-        already-ingested pages, even though the page's revision hasn't changed.
+        When load_semantics is enabled, the checksum is prefixed with "smw:" so that
+        turning the flag on invalidates already-ingested pages' checksums and triggers
+        re-ingestion (to pick up semantic metadata). When disabled (the default), the
+        checksum is the bare revision string, unchanged from before load_semantics
+        existed — so wikis that don't use the flag never get spuriously re-ingested.
 
         Returns None when revision is 0 or absent, falling back to content-based MD5.
         """
         revision = item.source_ref.revision
         if revision:
-            return f"semantics={self.load_semantics}:{revision}"
+            return f"smw:{revision}" if self.load_semantics else str(revision)
         return None
 
     def get_raw_content(self, item: IngestionItem) -> str:
