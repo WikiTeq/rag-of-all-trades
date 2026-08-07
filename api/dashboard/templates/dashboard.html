@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RAG Dashboard</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #0f766e;
+      --border: #e5e7eb;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: "JetBrains Mono", "Fira Code", "Menlo", monospace;
+      background: radial-gradient(circle at 10% 10%, #d1fae5, transparent 40%), var(--bg);
+      color: var(--text);
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; }
+    h1 { margin: 0 0 16px; font-size: 28px; }
+    .meta { color: var(--muted); margin-bottom: 18px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
+    .value { margin-top: 8px; font-size: 24px; font-weight: 700; }
+    .small { margin-top: 8px; color: var(--muted); font-size: 12px; }
+    .flow-section {
+      margin-top: 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .runs-section {
+      margin-top: 18px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: #fff;
+    }
+    .runs-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 780px;
+    }
+    .runs-table th,
+    .runs-table td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      font-size: 13px;
+    }
+    .runs-table th {
+      font-size: 12px;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+      background: #f8fafc;
+    }
+    .runs-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+    .status-pill {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+    .status-success {
+      color: #166534;
+      background: #dcfce7;
+    }
+    .status-error {
+      color: #991b1b;
+      background: #fee2e2;
+    }
+    .status-running {
+      color: #92400e;
+      background: #fef3c7;
+    }
+    .flow-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .flow-canvas {
+      position: relative;
+      min-height: 320px;
+      overflow: hidden;
+      border-radius: 10px;
+      background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
+      border: 1px solid var(--border);
+      padding: 16px;
+    }
+    #flow-links {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 1;
+    }
+    .flow-node {
+      position: relative;
+      z-index: 2;
+      border-radius: 12px;
+      border: 1px solid #c7d2fe;
+      background: linear-gradient(145deg, #eef2ff 0%, #e0e7ff 100%);
+      padding: 12px 14px;
+      box-shadow: 0 8px 24px rgba(30, 64, 175, 0.08);
+    }
+    .db-node {
+      width: min(360px, 95%);
+      margin: 0 auto;
+      text-align: center;
+    }
+    .flow-node-title {
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #4338ca;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .flow-node-main {
+      margin-top: 6px;
+      font-size: 20px;
+      font-weight: 700;
+      color: #1f2937;
+      word-break: break-word;
+    }
+    .flow-node-meta {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #4b5563;
+    }
+    .connectors-flow-list {
+      position: relative;
+      z-index: 2;
+      margin-top: 120px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 10px;
+    }
+    .connector-block {
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      padding: 10px 12px;
+      min-height: 76px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+    }
+    .connector-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    .connector-type {
+      margin-top: 4px;
+      font-size: 12px;
+      color: #475569;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .connector-schedule {
+      margin-top: 3px;
+      font-size: 12px;
+      color: #334155;
+    }
+    .flow-path {
+      fill: none;
+      stroke: #2563eb;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-dasharray: 8 9;
+      animation: flow-dash 1.2s linear infinite;
+      opacity: 0.9;
+    }
+    .flow-pulse {
+      fill: none;
+      stroke: #0f766e;
+      stroke-width: 3;
+      stroke-linecap: round;
+      stroke-dasharray: 1 140;
+      animation: flow-pulse 1.4s linear infinite;
+      opacity: 0.9;
+    }
+    @keyframes flow-dash {
+      to { stroke-dashoffset: -34; }
+    }
+    @keyframes flow-pulse {
+      to { stroke-dashoffset: -282; }
+    }
+    @media (max-width: 700px) {
+      .flow-canvas { min-height: 420px; }
+      .connectors-flow-list { margin-top: 90px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>RAG Application Dashboard</h1>
+    <div class="meta">Refresh interval: {{ refresh_interval_seconds }} seconds</div>
+    <div class="grid">
+      <section class="card">
+        <div class="label">Vector Items</div>
+        <div id="vector-items" class="value">-</div>
+      </section>
+      <section class="card">
+        <div class="label">Vector DB Size</div>
+        <div id="vector-size" class="value">-</div>
+        <div id="vector-size-bytes" class="small"></div>
+      </section>
+      <section class="card">
+        <div class="label">Running Celery Jobs</div>
+        <div id="celery-jobs" class="value">-</div>
+      </section>
+      <section class="card">
+        <div class="label">Vector Table</div>
+        <div id="vector-table" class="value" style="font-size:18px">-</div>
+      </section>
+      <section class="card">
+        <div class="label">Configured Connectors</div>
+        <div id="connectors-count" class="value">-</div>
+        <div class="small">Rendered in flow map below</div>
+      </section>
+    </div>
+    <section class="flow-section">
+      <div class="flow-header">
+        <div class="label">Connector Data Flow</div>
+        <div id="connectors-summary" class="small">-</div>
+      </div>
+      <div id="flow-canvas" class="flow-canvas">
+        <svg id="flow-links" aria-hidden="true"></svg>
+        <div id="db-flow-node" class="flow-node db-node">
+          <div class="flow-node-title">Main Vector Database</div>
+          <div id="db-flow-table" class="flow-node-main">-</div>
+          <div id="db-flow-meta" class="flow-node-meta">-</div>
+        </div>
+        <div id="connectors-flow-list" class="connectors-flow-list"></div>
+      </div>
+    </section>
+    <section class="runs-section">
+      <div class="flow-header">
+        <div class="label">Recent Ingestion Runs</div>
+        <div id="ingestion-runs-summary" class="small">-</div>
+      </div>
+      <div class="table-wrap">
+        <table class="runs-table">
+          <thead>
+            <tr>
+              <th>Started At</th>
+              <th>Connector</th>
+              <th>Status</th>
+              <th>Duration</th>
+              <th>Ingested</th>
+              <th>Skipped</th>
+            </tr>
+          </thead>
+          <tbody id="ingestion-runs-body">
+            <tr>
+              <td colspan="6" class="small">Loading...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+    <div id="updated-at" class="small" style="margin-top:16px;"></div>
+  </div>
+  <script>
+    const refreshIntervalMs = {{ refresh_interval_seconds }} * 1000;
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+
+    function buildConnectorBlock(connector) {
+      const block = document.createElement('article');
+      block.className = 'connector-block';
+      const name = document.createElement('div');
+      name.className = 'connector-name';
+      name.textContent = connector.name || 'unknown';
+      const type = document.createElement('div');
+      type.className = 'connector-type';
+      type.textContent = connector.type || 'unknown';
+      const schedule = document.createElement('div');
+      schedule.className = 'connector-schedule';
+      schedule.textContent = `every ${connector.schedule_seconds ?? 'n/a'}s`;
+      block.appendChild(name);
+      block.appendChild(type);
+      block.appendChild(schedule);
+      return block;
+    }
+
+    function drawFlowLinks() {
+      const svg = document.getElementById('flow-links');
+      const canvas = document.getElementById('flow-canvas');
+      const dbNode = document.getElementById('db-flow-node');
+      const connectors = Array.from(document.querySelectorAll('.connector-block'));
+      const canvasRect = canvas.getBoundingClientRect();
+      const dbRect = dbNode.getBoundingClientRect();
+
+      svg.textContent = '';
+      svg.setAttribute('viewBox', `0 0 ${Math.ceil(canvasRect.width)} ${Math.ceil(canvasRect.height)}`);
+
+      const defs = document.createElementNS(SVG_NS, 'defs');
+      const marker = document.createElementNS(SVG_NS, 'marker');
+      marker.setAttribute('id', 'flow-arrow');
+      marker.setAttribute('viewBox', '0 0 10 10');
+      marker.setAttribute('refX', '8');
+      marker.setAttribute('refY', '5');
+      marker.setAttribute('markerWidth', '6');
+      marker.setAttribute('markerHeight', '6');
+      marker.setAttribute('orient', 'auto-start-reverse');
+      const arrowPath = document.createElementNS(SVG_NS, 'path');
+      arrowPath.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
+      arrowPath.setAttribute('fill', '#2563eb');
+      marker.appendChild(arrowPath);
+      defs.appendChild(marker);
+      svg.appendChild(defs);
+
+      if (!connectors.length) {
+        return;
+      }
+
+      const dbX = dbRect.left + (dbRect.width / 2) - canvasRect.left;
+      const dbY = dbRect.bottom - canvasRect.top;
+
+      connectors.forEach((connector) => {
+        const rect = connector.getBoundingClientRect();
+        const startX = rect.left + (rect.width / 2) - canvasRect.left;
+        const startY = rect.top - canvasRect.top;
+
+        const c1Y = startY - 64;
+        const c2Y = dbY + 64;
+        const d = `M ${startX} ${startY} C ${startX} ${c1Y}, ${dbX} ${c2Y}, ${dbX} ${dbY}`;
+
+        const pathBase = document.createElementNS(SVG_NS, 'path');
+        pathBase.setAttribute('d', d);
+        pathBase.setAttribute('class', 'flow-path');
+        pathBase.setAttribute('marker-end', 'url(#flow-arrow)');
+        svg.appendChild(pathBase);
+
+        const pathPulse = document.createElementNS(SVG_NS, 'path');
+        pathPulse.setAttribute('d', d);
+        pathPulse.setAttribute('class', 'flow-pulse');
+        svg.appendChild(pathPulse);
+      });
+    }
+
+    function renderConnectorsFlow(connectors) {
+      const flowList = document.getElementById('connectors-flow-list');
+      const summary = document.getElementById('connectors-summary');
+      flowList.textContent = '';
+
+      if (!connectors.length) {
+        const empty = document.createElement('div');
+        empty.className = 'small';
+        empty.textContent = 'No connectors configured';
+        flowList.appendChild(empty);
+        summary.textContent = 'No active connector flows';
+      } else {
+        connectors.forEach((connector) => {
+          flowList.appendChild(buildConnectorBlock(connector));
+        });
+        summary.textContent = `${connectors.length} connector flow${connectors.length === 1 ? '' : 's'} -> vector database`;
+      }
+
+      requestAnimationFrame(drawFlowLinks);
+    }
+
+    function getStatusClass(status) {
+      const normalized = (status || '').toLowerCase();
+      if (normalized === 'success') return 'status-success';
+      if (normalized === 'error') return 'status-error';
+      return 'status-running';
+    }
+
+    function renderRecentIngestionRuns(runs) {
+      const body = document.getElementById('ingestion-runs-body');
+      const summary = document.getElementById('ingestion-runs-summary');
+      body.textContent = '';
+
+      if (!runs.length) {
+        const row = document.createElement('tr');
+        const cell = document.createElement('td');
+        cell.colSpan = 6;
+        cell.className = 'small';
+        cell.textContent = 'No ingestion runs logged yet';
+        row.appendChild(cell);
+        body.appendChild(row);
+        summary.textContent = '0 runs';
+        return;
+      }
+
+      runs.forEach((run) => {
+        const row = document.createElement('tr');
+
+        const started = document.createElement('td');
+        started.textContent = run.started_at ? new Date(run.started_at).toLocaleString() : '-';
+
+        const connector = document.createElement('td');
+        connector.textContent = `${run.connector_name || 'unknown'} (${run.connector_type || 'unknown'})`;
+
+        const status = document.createElement('td');
+        const statusPill = document.createElement('span');
+        statusPill.className = `status-pill ${getStatusClass(run.status)}`;
+        statusPill.textContent = run.status || 'unknown';
+        status.appendChild(statusPill);
+
+        const duration = document.createElement('td');
+        duration.textContent = run.duration_human || '-';
+
+        const ingested = document.createElement('td');
+        ingested.textContent = (run.items_ingested ?? 0).toLocaleString();
+
+        const skipped = document.createElement('td');
+        skipped.textContent = (run.items_skipped ?? 0).toLocaleString();
+
+        row.appendChild(started);
+        row.appendChild(connector);
+        row.appendChild(status);
+        row.appendChild(duration);
+        row.appendChild(ingested);
+        row.appendChild(skipped);
+        body.appendChild(row);
+      });
+
+      summary.textContent = `Latest ${runs.length} run${runs.length === 1 ? '' : 's'}`;
+    }
+
+    async function refreshStats() {
+      const response = await fetch('/dashboard/stats', { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error('Failed to fetch dashboard stats');
+      }
+      const data = await response.json();
+      document.getElementById('vector-items').textContent = data.vector_items_count.toLocaleString();
+      document.getElementById('vector-size').textContent = data.vector_db_size_human;
+      document.getElementById('vector-size-bytes').textContent = data.vector_db_size_bytes.toLocaleString() + ' bytes';
+      document.getElementById('celery-jobs').textContent = data.running_celery_jobs.toLocaleString();
+      document.getElementById('vector-table').textContent = data.vector_table;
+      document.getElementById('connectors-count').textContent = data.configured_connectors_count.toLocaleString();
+      document.getElementById('db-flow-table').textContent = data.vector_table;
+      document.getElementById('db-flow-meta').textContent = `${data.vector_items_count.toLocaleString()} items | ${data.vector_db_size_human}`;
+      document.getElementById('updated-at').textContent = 'Last update: ' + new Date(data.updated_at).toLocaleString();
+
+      const connectors = data.configured_connectors || [];
+      renderConnectorsFlow(connectors);
+      renderRecentIngestionRuns(data.recent_ingestion_runs || []);
+    }
+
+    async function startRefreshLoop() {
+      try {
+        await refreshStats();
+      } catch (error) {
+        document.getElementById('updated-at').textContent = 'Dashboard update error: ' + error.message;
+      }
+      setInterval(async () => {
+        try {
+          await refreshStats();
+        } catch (error) {
+          document.getElementById('updated-at').textContent = 'Dashboard update error: ' + error.message;
+        }
+      }, refreshIntervalMs);
+    }
+
+    startRefreshLoop();
+    window.addEventListener('resize', () => requestAnimationFrame(drawFlowLinks));
+  </script>
+</body>
+</html>
