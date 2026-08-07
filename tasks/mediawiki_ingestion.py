@@ -354,6 +354,18 @@ class MediaWikiIngestionJob(IngestionJob):
     # never colliding with connector-owned keys (title, page_id, namespace, url).
     _SMW_METADATA_PREFIX = "smw_"
 
+    @staticmethod
+    def _normalize_property_key(property_key: str) -> str:
+        """Normalize an SMW property name into a metadata-key-safe string.
+
+        Strips surrounding whitespace, lowercases, and replaces spaces with
+        underscores, so e.g. "Assigned editor" becomes "assigned_editor" and
+        stays consistent with the rest of the connector's metadata key format
+        (see _SMW_METADATA_PREFIX). Kept as its own method since normalization
+        may need to grow more complex (e.g. handling other punctuation).
+        """
+        return property_key.strip().lower().replace(" ", "_")
+
     def _load_semantic_properties(self, title: str, namespace: int) -> dict[str, str]:
         """Query Semantic MediaWiki for a page's properties via the smwbrowse API action.
 
@@ -379,7 +391,7 @@ class MediaWikiIngestionJob(IngestionJob):
                 dataitems = entry.get("dataitem", [])
                 if dataitems:
                     values = [self._decode_smw_dataitem_value(dataitem) for dataitem in dataitems]
-                    normalized_key = property_key.strip().lower().replace(" ", "_")
+                    normalized_key = self._normalize_property_key(property_key)
                     properties[self._SMW_METADATA_PREFIX + normalized_key] = "; ".join(values)
             return properties
         except Exception:
