@@ -719,6 +719,59 @@ class TestGetExtraMetadata:
 
         assert extra["smw_somedataprop"] == "2021-12-04T03:37:15"
 
+    @pytest.mark.parametrize(
+        "raw_item,expected",
+        [
+            ("1/2021", "2021"),
+            ("1/2021/12", "2021-12"),
+            ("1/2021/12/4", "2021-12-04"),
+            ("1/2021/12/4/3/37/15", "2021-12-04T03:37:15"),
+            ("1/2021/12/4/3/37/15/0", "2021-12-04T03:37:15"),
+        ],
+    )
+    def test_load_semantics_decodes_date_type_values_at_partial_precision(self, raw_item, expected):
+        """SMW date values may be stored at less than full (year..second) precision;
+
+        the decoded metadata value should reflect only the fields actually present
+        rather than falling back to the raw, undecoded SMW serialization string.
+        """
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {
+                        "property": "SomeDataProp",
+                        "dataitem": [{"type": 6, "item": raw_item}],
+                        "direction": "direct",
+                    },
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_somedataprop"] == expected
+
+    def test_load_semantics_date_type_value_falls_back_to_raw_when_unparseable(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {
+                        "property": "SomeDataProp",
+                        "dataitem": [{"type": 6, "item": "not-a-date"}],
+                        "direction": "direct",
+                    },
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_somedataprop"] == "not-a-date"
+
     def test_load_semantics_does_not_clobber_connector_metadata(self):
         job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
         reader.site.get.return_value = {

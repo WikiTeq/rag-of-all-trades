@@ -336,17 +336,31 @@ class MediaWikiIngestionJob(IngestionJob):
         Serialized as "calendarmodel/year[/month[/day[/hour/minute/second/timezone]]]",
         with fields present only up to the value's stored precision (see SMW's
         SMW\\DataItems\\Time::getSerialization). Times are always stored in UTC, so the
-        trailing timezone field can be safely dropped once decoded. Falls back to the raw
-        value for lower-precision values (year-only, year-month, ...) that don't have all
-        7 of the year..second fields.
+        trailing timezone field can be safely dropped once decoded.
+
+        Returns an ISO 8601 string truncated to the value's stored precision:
+        "YYYY", "YYYY-MM", "YYYY-MM-DD", or the full "YYYY-MM-DDTHH:MM:SS" once
+        hour/minute/second are all present. Falls back to the raw value if it
+        doesn't parse (missing year, or any present field isn't an integer).
         """
         parts = item.split("/")
-        if len(parts) < 7:
+        if len(parts) < 2:
             return item
         try:
-            _, year, month, day, hour, minute, second = (int(p) for p in parts[:7])
+            fields = [int(p) for p in parts[1:7]]
         except ValueError:
             return item
+
+        year = fields[0]
+        if len(fields) < 2:
+            return f"{year:04d}"
+        month = fields[1]
+        if len(fields) < 3:
+            return f"{year:04d}-{month:02d}"
+        day = fields[2]
+        if len(fields) < 6:
+            return f"{year:04d}-{month:02d}-{day:02d}"
+        hour, minute, second = fields[3:6]
         return f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}"
 
     # Prefix for semantic property metadata keys, so they stay flat (filterable via the
