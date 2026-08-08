@@ -454,5 +454,25 @@ class TestSharePointIngestionGetExtraMetadata(unittest.TestCase):
         self.assertEqual(extra["url"], "")
 
 
+class TestSharePointIngestionGetItemChecksum(unittest.TestCase):
+    def test_drive_returns_etag_when_present(self):
+        info = {**_make_info(), "etag": '"{abc123},1"'}
+        item = IngestionItem(id="x", source_ref=info)
+        job = _make_job()
+        self.assertEqual(job.get_item_checksum(item), '"{abc123},1"')
+
+    def test_drive_returns_none_when_etag_absent(self):
+        info = _make_info()
+        item = IngestionItem(id="x", source_ref=info)
+        job = _make_job()
+        self.assertIsNone(job.get_item_checksum(item))
+
+    def test_page_returns_none(self):
+        doc = Document(text="x", metadata={})
+        item = IngestionItem(id="x", source_ref=doc)
+        job = _make_job(sharepoint_type="page")
+        self.assertIsNone(job.get_item_checksum(item))
+
+
 if __name__ == "__main__":
     unittest.main()
