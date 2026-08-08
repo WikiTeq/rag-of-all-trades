@@ -1,0 +1,264 @@
+import logging
+from collections.abc import Iterator
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from llama_index.readers.microsoft_sharepoint import SharePointReader, SharePointType
+
+from tasks.base import IngestionJob
+from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_bool, parse_timestamp
+from utils.text import slugify
+
+logger = logging.getLogger(__name__)
+
+
+class SharePointIngestionJob(IngestionJob):
+    """Ingestion connector for Microsoft SharePoint.
+
+    Fetches files from SharePoint document libraries or site pages using the
+    LlamaIndex SharePoint reader and stores them in the vector store.
+
+    Supports two modes (configured via ``sharepoint_type``):
+      - ``file`` (default): load files from a SharePoint drive / folder
+      - ``page``: load SharePoint site pages
+
+    For file mode, files are discovered without downloading (``list_resources`` +
+    ``get_resource_info``) and downloaded one at a time during ingestion
+    (``load_resource``), avoiding the bulk-download bottleneck of ``load_data``.
+
+    Configuration (config.yaml):
+        - config.client_id: Azure app client ID (required)
+        - config.client_secret: Azure app client secret (required)
+        - config.tenant_id: Azure tenant ID (required)
+        - config.sharepoint_site_name: SharePoint site name (required unless sharepoint_site_id is set)
+        - config.sharepoint_site_id: SharePoint site ID (required unless sharepoint_site_name is set)
+        - config.sharepoint_host_name: SharePoint host, e.g. contoso.sharepoint.com (optional, passed through to reader)
+        - config.sharepoint_relative_url: Relative URL of the site, e.g. /sites/MySite (optional, passed through to reader)
+        - config.sharepoint_folder_path: Folder path within the drive (optional)
+        - config.sharepoint_folder_id: Folder ID within the drive (optional)
+        - config.drive_name: Name of the document library / drive (optional)
+        - config.sharepoint_type: "file" or "page" (optional, default "file")
+        - config.recursive: traverse subfolders recursively (optional, default true)
+    """
+
+    @property
+    def source_type(self) -> str:
+        return "sharepoint"
+
+    def __init__(self, config: dict):
+        super().__init__(config)
+
+        cfg = config.get("config", {})
+
+        self.client_id = cfg.get("client_id", "").strip()
+        if not self.client_id:
+            raise ValueError("client_id is required in SharePoint connector config")
+
+        self.client_secret = cfg.get("client_secret", "").strip()
+        if not self.client_secret:
+            raise ValueError("client_secret is required in SharePoint connector config")
+
+        self.tenant_id = cfg.get("tenant_id", "").strip()
+        if not self.tenant_id:
+            raise ValueError("tenant_id is required in SharePoint connector config")
+
+        self.sharepoint_site_name: str | None = cfg.get("sharepoint_site_name", "").strip() or None
+        self.sharepoint_site_id: str | None = cfg.get("sharepoint_site_id", "").strip() or None
+        if not self.sharepoint_site_name and not self.sharepoint_site_id:
+            raise ValueError(
+                "SharePoint connector requires either sharepoint_site_name or sharepoint_site_id in config"
+            )
+        self.sharepoint_host_name: str | None = cfg.get("sharepoint_host_name", "").strip() or None
+        self.sharepoint_relative_url: str | None = cfg.get("sharepoint_relative_url", "").strip() or None
+        self.sharepoint_folder_path: str | None = cfg.get("sharepoint_folder_path", "").strip() or None
+        self.sharepoint_folder_id: str | None = cfg.get("sharepoint_folder_id", "").strip() or None
+        self.drive_name: str | None = cfg.get("drive_name", "").strip() or None
+
+        _type_map = {"file": SharePointType.DRIVE, "page": SharePointType.PAGE}
+        sharepoint_type_raw = cfg.get("sharepoint_type", "file").strip().lower()
+        if sharepoint_type_raw not in _type_map:
+            raise ValueError(f"Invalid sharepoint_type {sharepoint_type_raw!r}; expected one of {list(_type_map)}")
+        self.sharepoint_type = _type_map[sharepoint_type_raw]
+
+        self.recursive = parse_bool(cfg.get("recursive", True), default=True)
+
+        logger.info(
+            f"Initialized SharePoint connector: site={self.sharepoint_site_name!r}, "
+            f"type={sharepoint_type_raw!r}, recursive={self.recursive}"
+        )
+
+    def list_items(self) -> Iterator[IngestionItem]:
+        """Discover SharePoint items and yield one IngestionItem per document/page."""
+        self._reader = SharePointReader(
+            client_id=self.client_id,
+            client_secret=self.client_secret,
+            tenant_id=self.tenant_id,
+            sharepoint_site_name=self.sharepoint_site_name,
+            sharepoint_site_id=self.sharepoint_site_id,
+            sharepoint_host_name=self.sharepoint_host_name,
+            sharepoint_relative_url=self.sharepoint_relative_url,
+            sharepoint_type=self.sharepoint_type,
+            drive_name=self.drive_name,
+        )
+        logger.info(f"[{self.source_name}] Loading SharePoint content")
+        if self.sharepoint_type == SharePointType.DRIVE:
+            if not self.sharepoint_site_name and self.sharepoint_site_id:
+                logger.warning(
+                    "[%s] DRIVE mode with sharepoint_site_id only (no sharepoint_site_name): "
+                    "this configuration is not fully supported. If sharepoint_folder_path is set, "
+                    "list_resources() will raise TypeError because it builds the path as "
+                    "os.path.join(sharepoint_site_name, sharepoint_folder_path). Even without a "
+                    "folder path, path-prefix stripping in the reader assumes a site-name prefix "
+                    "and Graph root:/{path} lookups become unreliable. Prefer setting "
+                    "sharepoint_site_name (optionally alongside sharepoint_site_id).",
+                    self.source_name,
+                )
+            yield from self._list_drive_items()
+        else:
+            yield from self._list_page_items()
+
+    def _list_drive_items(self) -> Iterator[IngestionItem]:
+        list_kwargs: dict[str, Any] = {
+            k: v
+            for k, v in {
+                "sharepoint_site_name": self.sharepoint_site_name,
+                "sharepoint_site_id": self.sharepoint_site_id,
+                "sharepoint_folder_path": self.sharepoint_folder_path,
+                "sharepoint_folder_id": self.sharepoint_folder_id,
+            }.items()
+            if v is not None
+        }
+        list_kwargs["recursive"] = self.recursive
+
+        paths = self._reader.list_resources(**list_kwargs)
+        logger.info(f"[{self.source_name}] Found {len(paths)} resource(s) in SharePoint drive")
+
+        for path in paths:
+            resource_id = str(path)
+            try:
+                info = self._reader.get_resource_info(resource_id)
+                file_path = info["file_path"]
+            except KeyError:
+                logger.warning(
+                    "[%s] Resource info for %r missing file_path; skipping",
+                    self.source_name,
+                    resource_id,
+                )
+                continue
+            except Exception:
+                logger.exception(
+                    "[%s] Failed to get resource info for %r; skipping",
+                    self.source_name,
+                    resource_id,
+                )
+                continue
+
+            last_modified = parse_timestamp(info.get("modified_at"))
+            if last_modified is None:
+                logger.warning(
+                    "[%s] Missing modified_at for %r; using now()",
+                    self.source_name,
+                    resource_id,
+                )
+                last_modified = datetime.now(UTC)
+
+            # Known limitation: item_id is path-based, so a rename/move produces
+            # orphan embeddings and re-ingests as a new item. get_resource_info()
+            # in reader 0.8.1 does not expose Graph driveItem.id; monkey-patching
+            # is avoided per project policy. Orphan-embedding cleanup is a generic
+            # ROAT concern tracked separately.
+            item_id = f"sharepoint:{self.source_name}:{file_path}"
+            yield IngestionItem(id=item_id, source_ref=info, last_modified=last_modified)
+
+    def _list_page_items(self) -> Iterator[IngestionItem]:
+        load_kwargs: dict[str, Any] = {
+            k: v
+            for k, v in {
+                "sharepoint_site_name": self.sharepoint_site_name,
+                "sharepoint_site_id": self.sharepoint_site_id,
+            }.items()
+            if v is not None
+        }
+
+        docs = self._reader.load_data(**load_kwargs)
+        logger.info(f"[{self.source_name}] Loaded {len(docs)} page(s) from SharePoint")
+
+        for doc in docs:
+            stable_id = (
+                doc.metadata.get("file_id") or doc.id_ or doc.metadata.get("file_path") or doc.metadata.get("file_name")
+            )
+            item_id = f"sharepoint:{self.source_name}:{stable_id}"
+            raw_ts = (
+                doc.metadata.get("lastModifiedDateTime")
+                or doc.metadata.get("last_modified_datetime")
+                or doc.metadata.get("last_modified")
+            )
+            parsed = parse_timestamp(raw_ts)
+            if parsed is None:
+                if raw_ts is not None:
+                    logger.debug(
+                        "[%s] Could not parse last_modified %r for %s; falling back to now()",
+                        self.source_name,
+                        raw_ts,
+                        stable_id,
+                    )
+                else:
+                    logger.debug(
+                        "[%s] No last_modified metadata for %s; falling back to now()",
+                        self.source_name,
+                        stable_id,
+                    )
+                last_modified = datetime.now(UTC)
+            else:
+                last_modified = parsed.astimezone(UTC)
+            yield IngestionItem(id=item_id, source_ref=doc, last_modified=last_modified)
+
+    def get_raw_content(self, item: IngestionItem) -> str:
+        """Return document text; for file mode, downloads one file at a time."""
+        if self.sharepoint_type == SharePointType.DRIVE:
+            docs = self._reader.load_resource(item.source_ref["file_path"])
+            return (docs[0].text or "") if docs else ""
+        return item.source_ref.text or ""
+
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        """Return Graph etag as checksum for DRIVE items to skip unchanged files.
+
+        When the stored checksum matches, the pipeline skips get_raw_content()
+        (and therefore load_resource()), avoiding a redundant file download.
+        Returns None for PAGE items and when etag is unavailable (falls back to
+        content MD5).
+        """
+        if self.sharepoint_type == SharePointType.DRIVE:
+            etag = item.source_ref.get("etag")
+            return str(etag) if etag is not None else None
+        return None
+
+    def get_item_name(self, item: IngestionItem) -> str:
+        """Return a filesystem-safe unique name for this item."""
+        if self.sharepoint_type == SharePointType.DRIVE:
+            return slugify(f"{self.source_name}_{item.source_ref['file_path']}")
+        doc = item.source_ref
+        file_path = doc.metadata.get("file_path") or doc.metadata.get("file_name") or doc.id_
+        return slugify(f"{self.source_name}_{file_path}")
+
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return SharePoint-specific metadata fields."""
+        if self.sharepoint_type == SharePointType.DRIVE:
+            info = item.source_ref
+            file_path = info.get("file_path", "")
+            file_name = Path(file_path).name if file_path else ""
+            return {
+                "file_path": file_path,
+                "file_name": file_name,
+                "url": info.get("url", ""),
+                "title": file_name,
+            }
+        doc = item.source_ref
+        return {
+            "file_path": doc.metadata.get("file_path", ""),
+            "file_name": doc.metadata.get("file_name", ""),
+            "url": doc.metadata.get("url", ""),
+            "title": doc.metadata.get("title", "") or doc.metadata.get("file_name", ""),
+        }
