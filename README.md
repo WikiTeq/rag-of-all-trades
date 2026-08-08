@@ -200,6 +200,13 @@ sources:
 The MediaWiki connector ingests documents from MediaWiki sites and converts them to Markdown format.
 The connector has the following configuration options:
 
+Set `load_semantics: true` on a wiki that has [Semantic MediaWiki](https://www.semantic-mediawiki.org/)
+installed to attach each page's semantic properties as document metadata, each under a `smw_`-prefixed,
+lowercased key (e.g. `smw_sitename`, `smw_is_discontinued`) to avoid colliding with the connector's own metadata
+fields. System properties (`_ASK`, `_INST`, `_SKEY`, etc.) and subobjects are excluded; multi-valued
+properties have all their values joined with a semicolon and a space (`;`). Adds one extra API
+request per page, so leave it off (the default) unless you need the properties.
+
 ```yaml
 # config.yaml
 
@@ -224,6 +231,7 @@ sources:
       # custom_headers:               # extra headers on every API request
       #   Authorization: "Bearer token"
       request_delay: 0.1
+      load_semantics: false # optional, query Semantic MediaWiki properties per page (default: false)
       schedules: "${MEDIAWIKI1_SCHEDULES}"
 ```
 

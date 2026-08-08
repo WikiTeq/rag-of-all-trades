@@ -1,3 +1,4 @@
+import json
 import logging
 from collections.abc import Iterator
 from typing import Any
@@ -69,6 +70,8 @@ class MediaWikiIngestionJob(IngestionJob):
                 - config.resolve_to_ip: IP address to resolve the API hostname to (optional)
                 - config.custom_headers: Dict of extra HTTP headers to send (optional)
                 - config.user_agent: Override HTTP User-Agent (optional, default mwclient UA)
+                - config.load_semantics: Query Semantic MediaWiki properties per page and attach
+                  them as metadata (optional, default False)
 
         Raises:
             ValueError: If host is not provided
@@ -147,6 +150,8 @@ class MediaWikiIngestionJob(IngestionJob):
         password = cfg.get("password")
         if username and password:
             self._reader.login(username, password)
+
+        self.load_semantics = parse_bool(cfg.get("load_semantics"))
 
         logger.info(
             "Initialized MediaWiki connector for %s://%s%s",
@@ -234,11 +239,17 @@ class MediaWikiIngestionJob(IngestionJob):
         every page edit. Using it avoids fetching full page content just to
         detect whether a page has changed.
 
+        When load_semantics is enabled, the checksum is prefixed with "smw:" so that
+        turning the flag on invalidates already-ingested pages' checksums and triggers
+        re-ingestion (to pick up semantic metadata). When disabled (the default), the
+        checksum is the bare revision string, unchanged from before load_semantics
+        existed — so wikis that don't use the flag never get spuriously re-ingested.
+
         Returns None when revision is 0 or absent, falling back to content-based MD5.
         """
         revision = item.source_ref.revision
         if revision:
-            return str(revision)
+            return f"smw:{revision}" if self.load_semantics else str(revision)
         return None
 
     def get_raw_content(self, item: IngestionItem) -> str:
@@ -276,6 +287,133 @@ class MediaWikiIngestionJob(IngestionJob):
         page_title = item.source_ref.title
         return slugify(page_title, max_len=255, extra_replacements={":": "__", "/": "_"})
 
+    # SMW\DataItem type IDs (see SMW's DataItem.php DI_TYPE_* constants).
+    _SMW_TYPE_WIKIPAGE = 9
+    _SMW_TYPE_DATE = 6
+
+    def _decode_smw_dataitem_value(self, dataitem: dict[str, Any]) -> str:
+        """Decode a single smwbrowse dataitem entry into a display string.
+
+        Other types (text, number, ...) are already plain values.
+        """
+        item = str(dataitem.get("item", ""))
+        dataitem_type = dataitem.get("type")
+        if dataitem_type == self._SMW_TYPE_WIKIPAGE:
+            return self._decode_smw_wikipage_value(item)
+        if dataitem_type == self._SMW_TYPE_DATE:
+            return self._decode_smw_date_value(item)
+        return item
+
+    def _decode_smw_wikipage_value(self, item: str) -> str:
+        """Decode a wikipage-type dataitem value into a "Namespace:Page title" display string.
+
+        Serialized as "DBkey#namespace#interwiki#subobjectname" (see SMW's
+        SMW\\DataItems\\WikiPage::getSerialization, which joins [dbkey, namespace,
+        interwiki] with "#"); the DBkey uses underscores in place of spaces. The
+        namespace segment is a namespace ID, resolved to its name via the wiki's
+        namespace mapping so e.g. "Dan.Mummert.AAO#2##" becomes "User:Dan.Mummert.AAO"
+        rather than the bare, ambiguous DBkey. Namespace 0 (main) has no prefix.
+        """
+        parts = item.split("#")
+        title = parts[0].replace("_", " ")
+        if len(parts) < 2:
+            return title
+        try:
+            namespace_id = int(parts[1])
+        except ValueError:
+            return title
+        if namespace_id == 0:
+            return title
+        namespace_name = self._reader.site.namespaces.get(namespace_id)
+        if not namespace_name:
+            return title
+        return f"{namespace_name}:{title}"
+
+    @staticmethod
+    def _decode_smw_date_value(item: str) -> str:
+        """Decode a date/time-type dataitem value into an ISO 8601 string.
+
+        Serialized as "calendarmodel/year[/month[/day[/hour/minute/second/timezone]]]",
+        with fields present only up to the value's stored precision (see SMW's
+        SMW\\DataItems\\Time::getSerialization). Times are always stored in UTC, so the
+        trailing timezone field can be safely dropped once decoded.
+
+        Returns an ISO 8601 string truncated to the value's stored precision:
+        "YYYY", "YYYY-MM", "YYYY-MM-DD", or the full "YYYY-MM-DDTHH:MM:SS" once
+        hour/minute/second are all present. Falls back to the raw value if it
+        doesn't parse (missing year, or any present field isn't an integer).
+        """
+        parts = item.split("/")
+        if len(parts) < 2:
+            return item
+        try:
+            fields = [int(p) for p in parts[1:7]]
+        except ValueError:
+            return item
+
+        year = fields[0]
+        if len(fields) < 2:
+            return f"{year:04d}"
+        month = fields[1]
+        if len(fields) < 3:
+            return f"{year:04d}-{month:02d}"
+        day = fields[2]
+        if len(fields) < 6:
+            return f"{year:04d}-{month:02d}-{day:02d}"
+        hour, minute, second = fields[3:6]
+        return f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}"
+
+    # Prefix for semantic property metadata keys, so they stay flat (filterable via the
+    # existing /api/v1/query metadata filter API, which only matches top-level keys) while
+    # never colliding with connector-owned keys (title, page_id, namespace, url).
+    _SMW_METADATA_PREFIX = "smw_"
+
+    @staticmethod
+    def _normalize_property_key(property_key: str) -> str:
+        """Normalize an SMW property name into a metadata-key-safe string.
+
+        Strips surrounding whitespace, lowercases, and replaces spaces with
+        underscores, so e.g. "Assigned editor" becomes "assigned_editor" and
+        stays consistent with the rest of the connector's metadata key format
+        (see _SMW_METADATA_PREFIX). Kept as its own method since normalization
+        may need to grow more complex (e.g. handling other punctuation).
+        """
+        return property_key.strip().lower().replace(" ", "_")
+
+    def _load_semantic_properties(self, title: str, namespace: int) -> dict[str, str]:
+        """Query Semantic MediaWiki for a page's properties via the smwbrowse API action.
+
+        Excludes system properties (leading underscore, e.g. _ASK, _INST, _SKEY) and
+        subobjects (sobj). Multi-valued properties have all their values joined with "; "
+        into a single string, since the metadata store's existing filter API only supports
+        scalar values (see _SMW_METADATA_PREFIX). Each property is returned under a
+        "smw_"-prefixed key to avoid colliding with connector-owned metadata keys.
+
+        Returns an empty dict if the query fails for any reason (SMW not installed,
+        page has no semantic data, transient error) — ingestion of the page continues
+        without semantic metadata rather than failing the item.
+        """
+        try:
+            params = json.dumps({"subject": title, "ns": namespace, "iw": "", "subobject": ""})
+            response = self._reader.site.get("smwbrowse", browse="subject", params=params, format="json")
+
+            properties: dict[str, str] = {}
+            for entry in response.get("query", {}).get("data", []):
+                property_key = entry.get("property", "")
+                if not property_key or property_key.startswith("_"):
+                    continue
+                dataitems = entry.get("dataitem", [])
+                if dataitems:
+                    values = [self._decode_smw_dataitem_value(dataitem) for dataitem in dataitems]
+                    normalized_key = self._normalize_property_key(property_key)
+                    properties[self._SMW_METADATA_PREFIX + normalized_key] = "; ".join(values)
+            return properties
+        except Exception:
+            logger.warning(
+                f"Failed to fetch semantic properties for page: {title} (namespace: {namespace})", exc_info=True
+            )
+            return {}
+
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Provide MediaWiki-specific metadata for the page.
 
@@ -285,14 +423,16 @@ class MediaWikiIngestionJob(IngestionJob):
             metadata: Standard metadata dictionary (do not return keys that overlap with it)
 
         Returns:
-            dict: Additional metadata (title, url, page_id, namespace)
+            dict: Additional metadata (title, url, page_id, namespace, and semantic
+                properties when config.load_semantics is enabled)
         """
         page_record = item.source_ref
-        extra: dict[str, Any] = {
-            "title": page_record.title,
-            "page_id": page_record.pageid,
-            "namespace": page_record.namespace,
-        }
+        extra: dict[str, Any] = {}
+        if self.load_semantics:
+            extra.update(self._load_semantic_properties(page_record.title, page_record.namespace))
+        extra["title"] = page_record.title
+        extra["page_id"] = page_record.pageid
+        extra["namespace"] = page_record.namespace
         if page_record.url:
             extra["url"] = page_record.url
         else:
