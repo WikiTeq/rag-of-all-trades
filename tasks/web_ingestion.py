@@ -1,8 +1,13 @@
+import hashlib
 import logging
+import time
 from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
+import requests
+from bs4 import BeautifulSoup
 from llama_index.readers.web import BeautifulSoupWebReader
 from llama_index.readers.web.sitemap.base import SitemapReader
 
@@ -67,7 +72,8 @@ class WebIngestionJob(IngestionJob):
     """Ingestion connector for web pages.
 
     Supports two modes (mutually exclusive):
-      - ``urls``: scrape a fixed list of URLs using BeautifulSoupWebReader
+      - ``urls``: scrape a fixed list of URLs using BeautifulSoupWebReader.
+        Supports ``depth`` for BFS link traversal.
       - ``sitemap_url``: discover URLs from a sitemap.xml and scrape them
         using SitemapReader. Supports ``include_prefix`` for URL filtering.
 
@@ -77,6 +83,9 @@ class WebIngestionJob(IngestionJob):
         - config.include_prefix: only include sitemap URLs containing this string
           (only for sitemap_url mode)
         - config.html_to_text: convert HTML to plain text (default True)
+        - config.depth: BFS levels to follow from seed URLs (default 0, urls mode only)
+        - config.same_domain_only: restrict crawl to seed hosts (default True)
+        - config.max_pages: hard cap on total pages crawled (optional)
     """
 
     @property
@@ -98,6 +107,19 @@ class WebIngestionJob(IngestionJob):
         self.include_prefix: str | None = cfg.get("include_prefix", "").strip() or None
         self.html_to_text = parse_bool(cfg.get("html_to_text"), default=True)
 
+        self.depth: int = int(cfg.get("depth", 0))
+        _sdonly = cfg.get("same_domain_only", True)
+        self.same_domain_only: bool = str(_sdonly).lower() not in ("false", "0", "no")
+        _max = cfg.get("max_pages")
+        if _max is not None:
+            _max = int(_max)
+            if _max <= 0:
+                raise ValueError("max_pages must be a positive integer")
+        self.max_pages: int | None = _max
+
+        if self.depth > 0 and self.sitemap_url:
+            raise ValueError("depth > 0 is not supported with sitemap_url mode; sitemap already enumerates pages")
+
         self.website_extractor = CatchAllWebsiteExtractor(_title_extractor)
         self._reader = BeautifulSoupWebReader(website_extractor=self.website_extractor)
 
@@ -108,7 +130,9 @@ class WebIngestionJob(IngestionJob):
             )
         else:
             logger.info(
-                f"Initialized Web connector (mode=urls, count={len(self.urls)}, html_to_text={self.html_to_text})"
+                f"Initialized Web connector (mode=urls, count={len(self.urls)}, "
+                f"depth={self.depth}, same_domain_only={self.same_domain_only}, "
+                f"max_pages={self.max_pages}, html_to_text={self.html_to_text})"
             )
 
     def list_items(self) -> Iterator[IngestionItem]:
@@ -117,22 +141,32 @@ class WebIngestionJob(IngestionJob):
 
         if self.sitemap_url:
             urls = self._discover_sitemap_urls()
+        elif self.depth > 0:
+            self._crawl_cache: dict[str, dict] = {}
+            urls = self._crawl(self.urls)
         else:
             urls = self.urls
 
         logger.info(f"[{self.source_name}] Found {len(urls)} URL(s)")
 
         for url in urls:
-            yield IngestionItem(
+            item = IngestionItem(
                 id=f"web:{url}",
                 source_ref=url,
                 last_modified=datetime.now(UTC),
             )
+            if self.depth > 0:
+                item._metadata_cache.update(self._crawl_cache.get(url, {}))
+            yield item
 
     def get_raw_content(self, item: IngestionItem) -> str:
         """Fetch and return page content as text."""
         url: str = item.source_ref
         item._metadata_cache["url"] = url
+
+        if "_crawl_text" in item._metadata_cache:
+            item._metadata_cache.setdefault("title", item._metadata_cache.get("_crawl_title", "") or url)
+            return item._metadata_cache["_crawl_text"]
 
         try:
             docs = self._reader.load_data(urls=[url])
@@ -149,7 +183,13 @@ class WebIngestionJob(IngestionJob):
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe name derived from the URL."""
         url: str = item.source_ref
-        return slugify(url, max_len=255)
+        # TODO: consider moving this truncation-with-hash logic into slugify() or a
+        # dedicated utility function so other connectors can reuse it.
+        slug = slugify(url, max_len=4096)
+        if len(slug) <= 255:
+            return slug
+        url_hash = hashlib.md5(url.encode("utf-8"), usedforsecurity=False).hexdigest()[:8]
+        return slugify(url, max_len=246) + "_" + url_hash
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return web-specific metadata fields."""
@@ -157,6 +197,86 @@ class WebIngestionJob(IngestionJob):
             "url": item._metadata_cache.get("url", ""),
             "title": item._metadata_cache.get("title", ""),
         }
+
+    def _crawl(self, seed_urls: list[str]) -> list[str]:
+        """Return all URLs reachable from seed_urls within self.depth hops."""
+
+        def _canon(url: str) -> str:
+            # Strip only the fragment; preserve trailing slash because /page and
+            # /page/ are distinct resources on many servers.
+            stripped = url.split("#")[0]
+            return stripped or url
+
+        # Allowed hosts are derived from seeds, not the current page being crawled.
+        # This means a redirect to an external domain is still blocked when same_domain_only=True.
+        seed_hosts: set[str] = {urlparse(u).netloc for u in seed_urls if u.startswith(("http://", "https://"))}
+
+        # `seen` tracks all URLs queued or visited (dedup/frontier guard).
+        # `crawled` tracks only URLs whose HTML was successfully fetched and cached;
+        # max_pages is enforced against crawled so non-HTML assets don't count against the cap.
+        seen: dict[str, None] = dict.fromkeys(_canon(u) for u in seed_urls)
+        crawled: dict[str, None] = {}
+        frontier: list[str] = list(seen)
+
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; rag-of-all-trades-bot/1.0)"}
+
+        for _ in range(self.depth):
+            next_frontier: list[str] = []
+            for url in frontier:
+                try:
+                    resp = requests.get(url, timeout=10, headers=headers, allow_redirects=True)
+                    resp.raise_for_status()
+                    ct = (resp.headers.get("Content-Type", "") or "").lower()
+                    # Only parse HTML; skip PDFs, images, CSS, etc.
+                    if "text/html" not in ct:
+                        continue
+
+                    soup = BeautifulSoup(resp.text, "html.parser")
+
+                    # Cache extracted text so get_raw_content skips a second HTTP request.
+                    text, meta = _title_extractor(soup)
+                    self._crawl_cache[url] = {
+                        "_crawl_text": text,
+                        "_crawl_title": meta.get("title", ""),
+                    }
+                    crawled[url] = None
+
+                    # Resolve relative links against the final response URL (after
+                    # redirects) so relative hrefs are correct when the server
+                    # redirects to a different path.
+                    final_url = resp.url if isinstance(resp.url, str) else url
+                    base_tag = soup.find("base", href=True)
+                    base_url = urljoin(final_url, base_tag["href"]) if base_tag else final_url
+
+                    for tag in soup.find_all("a", href=True):
+                        link = _canon(urljoin(base_url, tag["href"]))
+                        # Drop non-HTTP schemes: mailto:, javascript:, data:, etc.
+                        if not link.startswith(("http://", "https://")):
+                            continue
+                        if self.same_domain_only and urlparse(link).netloc not in seed_hosts:
+                            continue
+                        if link not in seen:
+                            seen[link] = None
+                            next_frontier.append(link)
+                except Exception as e:
+                    logger.warning(f"[{self.source_name}] Link crawl failed for {url}: {e}")
+                finally:
+                    # Throttle BFS discovery requests. This is distinct from the
+                    # base class delay which fires between ingestion items — in
+                    # crawl mode those items return cached text and make no HTTP
+                    # calls, so the only place to rate-limit the crawler is here.
+                    if self.request_delay:
+                        time.sleep(self.request_delay)
+
+            # Advance one BFS level; stop early if no new URLs were discovered.
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        result = list(seen)
+        if self.max_pages:
+            result = result[: self.max_pages]
+        return result
 
     def _discover_sitemap_urls(self) -> list[str]:
         """Parse the configured sitemap and return matching URLs."""
