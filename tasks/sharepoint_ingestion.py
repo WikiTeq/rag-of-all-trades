@@ -164,6 +164,11 @@ class SharePointIngestionJob(IngestionJob):
                 )
                 last_modified = datetime.now(UTC)
 
+            # Known limitation: item_id is path-based, so a rename/move produces
+            # orphan embeddings and re-ingests as a new item. get_resource_info()
+            # in reader 0.8.1 does not expose Graph driveItem.id; monkey-patching
+            # is avoided per project policy. Orphan-embedding cleanup is a generic
+            # ROAT concern tracked separately.
             item_id = f"sharepoint:{self.source_name}:{file_path}"
             yield IngestionItem(id=item_id, source_ref=info, last_modified=last_modified)
 
@@ -216,6 +221,19 @@ class SharePointIngestionJob(IngestionJob):
             docs = self._reader.load_resource(item.source_ref["file_path"])
             return (docs[0].text or "") if docs else ""
         return item.source_ref.text or ""
+
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        """Return Graph etag as checksum for DRIVE items to skip unchanged files.
+
+        When the stored checksum matches, the pipeline skips get_raw_content()
+        (and therefore load_resource()), avoiding a redundant file download.
+        Returns None for PAGE items and when etag is unavailable (falls back to
+        content MD5).
+        """
+        if self.sharepoint_type == SharePointType.DRIVE:
+            etag = item.source_ref.get("etag")
+            return str(etag) if etag is not None else None
+        return None
 
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe unique name for this item."""
