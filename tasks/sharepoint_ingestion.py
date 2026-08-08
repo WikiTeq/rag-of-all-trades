@@ -106,9 +106,13 @@ class SharePointIngestionJob(IngestionJob):
         if self.sharepoint_type == SharePointType.DRIVE:
             if not self.sharepoint_site_name and self.sharepoint_site_id:
                 logger.warning(
-                    "[%s] DRIVE mode with sharepoint_site_id only: the LlamaIndex reader's "
-                    "load_resource() does not support site_id-based lookup and will fail when "
-                    "downloading files. Set sharepoint_site_name to avoid this.",
+                    "[%s] DRIVE mode with sharepoint_site_id only (no sharepoint_site_name): "
+                    "this configuration is not fully supported. If sharepoint_folder_path is set, "
+                    "list_resources() will raise TypeError because it builds the path as "
+                    "os.path.join(sharepoint_site_name, sharepoint_folder_path). Even without a "
+                    "folder path, path-prefix stripping in the reader assumes a site-name prefix "
+                    "and Graph root:/{path} lookups become unreliable. Prefer setting "
+                    "sharepoint_site_name (optionally alongside sharepoint_site_id).",
                     self.source_name,
                 )
             yield from self._list_drive_items()
