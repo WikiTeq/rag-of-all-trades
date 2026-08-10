@@ -3,6 +3,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from api.v1.shared_schema import SourceReference, TopK
+
 _SAFE_NAME_PATTERN = re.compile(r"^[0-9a-zA-Z.\-_ ]+$")
 _SAFE_VALUE_PATTERN = re.compile(r"^[0-9a-zA-Z.\-_;,:?!\[\]=@() ]+$")
 
@@ -62,12 +64,10 @@ MetadataFilterItem = Annotated[
     Field(discriminator="operator"),
 ]
 
-from api.v1.shared_schema import SourceReference
-
 
 class QueryRequest(BaseModel):
     query: str
-    top_k: int = 20
+    top_k: TopK = 20
     metadata_filters: list[MetadataFilterItem] | None = None
 
     @field_validator("query")
@@ -75,13 +75,6 @@ class QueryRequest(BaseModel):
     def validate_query(cls, value: str) -> str:
         if not value or not value.strip():
             raise ValueError("Query cannot be empty")
-        return value
-
-    @field_validator("top_k")
-    @classmethod
-    def validate_top_k(cls, value: int) -> int:
-        if not (1 <= value <= 100):
-            raise ValueError("top_k must be between 1 and 100")
         return value
 
 

@@ -57,7 +57,7 @@ paths:
     post:
       tags:
       - Applications APIs
-      summary: Query Endpoint
+      summary: Rephrase Endpoint
       description: Rephrase top-k chunks using LLM.
       operationId: query_endpoint_api_v1_rephrase_post
       requestBody:
@@ -92,6 +92,61 @@ components:
           title: Detail
       type: object
       title: HTTPValidationError
+    ListMetadataFilter:
+      properties:
+        name:
+          type: string
+          title: Name
+        operator:
+          type: string
+          enum:
+          - IN
+          - NIN
+          - ANY
+          - ALL
+          title: Operator
+        value:
+          items:
+            anyOf:
+            - type: string
+            - type: integer
+            - type: number
+          type: array
+          title: Value
+      type: object
+      required:
+      - name
+      - operator
+      - value
+      title: ListMetadataFilter
+    ScalarMetadataFilter:
+      properties:
+        name:
+          type: string
+          title: Name
+        operator:
+          type: string
+          enum:
+          - EQ
+          - NE
+          - GT
+          - GTE
+          - LT
+          - LTE
+          - TEXT_MATCH
+          title: Operator
+        value:
+          anyOf:
+          - type: string
+          - type: integer
+          - type: number
+          title: Value
+      type: object
+      required:
+      - name
+      - operator
+      - value
+      title: ScalarMetadataFilter
     SourceReference:
       properties:
         source_name:
@@ -160,12 +215,31 @@ components:
           title: Query
         top_k:
           type: integer
+          maximum: 100.0
+          minimum: 1.0
           title: Top K
           default: 20
         metadata_filters:
           anyOf:
-          - additionalProperties: true
-            type: object
+          - items:
+              oneOf:
+              - $ref: '#/components/schemas/ScalarMetadataFilter'
+              - $ref: '#/components/schemas/ListMetadataFilter'
+              discriminator:
+                propertyName: operator
+                mapping:
+                  ALL: '#/components/schemas/ListMetadataFilter'
+                  ANY: '#/components/schemas/ListMetadataFilter'
+                  EQ: '#/components/schemas/ScalarMetadataFilter'
+                  GT: '#/components/schemas/ScalarMetadataFilter'
+                  GTE: '#/components/schemas/ScalarMetadataFilter'
+                  IN: '#/components/schemas/ListMetadataFilter'
+                  LT: '#/components/schemas/ScalarMetadataFilter'
+                  LTE: '#/components/schemas/ScalarMetadataFilter'
+                  NE: '#/components/schemas/ScalarMetadataFilter'
+                  NIN: '#/components/schemas/ListMetadataFilter'
+                  TEXT_MATCH: '#/components/schemas/ScalarMetadataFilter'
+            type: array
           - type: 'null'
           title: Metadata Filters
       type: object
@@ -197,6 +271,8 @@ components:
           title: Query
         top_k:
           type: integer
+          maximum: 100.0
+          minimum: 1.0
           title: Top K
           default: 20
       type: object
