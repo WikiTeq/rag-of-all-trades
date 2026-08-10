@@ -123,6 +123,25 @@ class TestSharePointIngestionInit(unittest.TestCase):
         self.assertEqual(job.sharepoint_site_id, "abc-123")
         self.assertIsNone(job.sharepoint_site_name)
 
+    def test_drive_folder_path_without_site_name_raises(self):
+        with self.assertRaises(ValueError):
+            SharePointIngestionJob(
+                {
+                    "name": "sp1",
+                    "config": {
+                        "client_id": "c",
+                        "client_secret": "s",
+                        "tenant_id": "t",
+                        "sharepoint_site_id": "abc-123",
+                        "sharepoint_folder_path": "Documents/Reports",
+                    },
+                }
+            )
+
+    def test_drive_folder_path_with_site_name_is_valid(self):
+        job = _make_job(sharepoint_folder_path="Documents/Reports")
+        self.assertEqual(job.sharepoint_folder_path, "Documents/Reports")
+
 
 class TestSharePointIngestionListItemsDrive(unittest.TestCase):
     def test_yields_one_item_per_resource(self):
@@ -147,6 +166,26 @@ class TestSharePointIngestionListItemsDrive(unittest.TestCase):
 
         self.assertIn("sharepoint:", items[0].id)
         self.assertIn("sharepoint1", items[0].id)
+        self.assertIn("MySite/Docs/report.pdf", items[0].id)
+
+    def test_drive_item_id_prefers_file_id(self):
+        info = {**_make_info("MySite/Docs/report.pdf"), "file_id": "driveitem-abc123"}
+        with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
+            MockReader.return_value.list_resources.return_value = [Path("MySite/Docs/report.pdf")]
+            MockReader.return_value.get_resource_info.return_value = info
+            job = _make_job()
+            items = list(job.list_items())
+
+        self.assertIn("driveitem-abc123", items[0].id)
+        self.assertNotIn("report.pdf", items[0].id)
+
+    def test_drive_item_id_falls_back_to_path_when_no_file_id(self):
+        with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
+            MockReader.return_value.list_resources.return_value = [Path("MySite/Docs/report.pdf")]
+            MockReader.return_value.get_resource_info.return_value = _make_info("MySite/Docs/report.pdf")
+            job = _make_job()
+            items = list(job.list_items())
+
         self.assertIn("MySite/Docs/report.pdf", items[0].id)
 
     def test_source_ref_is_info_dict(self):

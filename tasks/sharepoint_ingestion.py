@@ -82,6 +82,17 @@ class SharePointIngestionJob(IngestionJob):
             raise ValueError(f"Invalid sharepoint_type {sharepoint_type_raw!r}; expected one of {list(_type_map)}")
         self.sharepoint_type = _type_map[sharepoint_type_raw]
 
+        if (
+            self.sharepoint_type == SharePointType.DRIVE
+            and self.sharepoint_folder_path
+            and not self.sharepoint_site_name
+        ):
+            raise ValueError(
+                "sharepoint_site_name is required when sharepoint_folder_path is set in DRIVE mode. "
+                "list_resources() builds the path as os.path.join(sharepoint_site_name, "
+                "sharepoint_folder_path) and raises TypeError when sharepoint_site_name is None."
+            )
+
         self.recursive = parse_bool(cfg.get("recursive", True), default=True)
 
         logger.info(
@@ -107,11 +118,8 @@ class SharePointIngestionJob(IngestionJob):
             if not self.sharepoint_site_name and self.sharepoint_site_id:
                 logger.warning(
                     "[%s] DRIVE mode with sharepoint_site_id only (no sharepoint_site_name): "
-                    "this configuration is not fully supported. If sharepoint_folder_path is set, "
-                    "list_resources() will raise TypeError because it builds the path as "
-                    "os.path.join(sharepoint_site_name, sharepoint_folder_path). Even without a "
-                    "folder path, path-prefix stripping in the reader assumes a site-name prefix "
-                    "and Graph root:/{path} lookups become unreliable. Prefer setting "
+                    "path-prefix stripping in the reader assumes a site-name prefix, so "
+                    "Graph root:/{path} lookups may be unreliable. Prefer setting "
                     "sharepoint_site_name (optionally alongside sharepoint_site_id).",
                     self.source_name,
                 )
@@ -164,12 +172,12 @@ class SharePointIngestionJob(IngestionJob):
                 )
                 last_modified = datetime.now(UTC)
 
-            # Known limitation: item_id is path-based, so a rename/move produces
-            # orphan embeddings and re-ingests as a new item. get_resource_info()
-            # in reader 0.8.1 does not expose Graph driveItem.id; monkey-patching
-            # is avoided per project policy. Orphan-embedding cleanup is a generic
-            # ROAT concern tracked separately.
-            item_id = f"sharepoint:{self.source_name}:{file_path}"
+            # Prefer the Graph driveItem.id (file_id) for a stable item_id that
+            # survives renames and moves. get_resource_info() in reader 0.8.1 does
+            # not expose file_id directly, but some reader versions / configs may
+            # include it. Fall back to file_path when absent (v1 limitation).
+            stable_id = info.get("file_id") or file_path
+            item_id = f"sharepoint:{self.source_name}:{stable_id}"
             yield IngestionItem(id=item_id, source_ref=info, last_modified=last_modified)
 
     def _list_page_items(self) -> Iterator[IngestionItem]:
