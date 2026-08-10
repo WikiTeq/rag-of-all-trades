@@ -1,4 +1,8 @@
-from pydantic import BaseModel
+from typing import Annotated
+
+from pydantic import BaseModel, Field
+
+TopK = Annotated[int, Field(ge=1, le=100)]
 
 
 class SourceReference(BaseModel):
