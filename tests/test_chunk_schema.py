@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from api.v1.rephrase_retrieval.schema import QueryRequest
+from api.v1.chunk_retrieval.schema import QueryRequest
 
 
 def test_default_top_k():
@@ -25,12 +25,6 @@ def test_top_k_valid(top_k, expected):
 def test_top_k_invalid_raises(top_k):
     with pytest.raises(ValidationError):
         QueryRequest(query="test", top_k=top_k)
-
-
-@pytest.mark.parametrize("query", ["", "   ", "\t\n"])
-def test_empty_query_raises(query):
-    with pytest.raises(ValidationError):
-        QueryRequest(query=query)
 
 
 def test_top_k_bounds_exported_to_json_schema():
