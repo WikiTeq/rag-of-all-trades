@@ -200,11 +200,12 @@ The MediaWiki connector ingests documents from MediaWiki sites and converts them
 The connector has the following configuration options:
 
 Set `load_semantics: true` on a wiki that has [Semantic MediaWiki](https://www.semantic-mediawiki.org/)
-installed to attach each page's semantic properties as document metadata, each under a `smw_`-prefixed,
-lowercased key (e.g. `smw_sitename`, `smw_is_discontinued`) to avoid colliding with the connector's own metadata
-fields. System properties (`_ASK`, `_INST`, `_SKEY`, etc.) and subobjects are excluded; every property is
-stored as a list of its values (even single-valued ones), filterable via the `/api/v1/query` metadata
-filter API's `CONTAINS`, `IN`, and `NIN` operators.
+installed to attach each page's semantic properties as document metadata, each under a `smw_`-prefixed
+key. The property name is lowercased and spaces are replaced with underscores (e.g. `Assigned editor`
+becomes `smw_assigned_editor`) to avoid colliding with the connector's own metadata fields and to give
+metadata filters a predictable name to construct. System properties (`_ASK`, `_INST`, `_SKEY`, etc.) and
+subobjects are excluded; every property is stored as a list of its values (even single-valued ones),
+filterable via the `/api/v1/query` metadata filter API's `CONTAINS`, `IN`, and `NIN` operators.
 
 ```yaml
 # config.yaml
