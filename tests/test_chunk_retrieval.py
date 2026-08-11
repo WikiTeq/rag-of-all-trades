@@ -35,7 +35,7 @@ def _make_engine():
 
 
 class TestMetadataFilterItemSchema:
-    @pytest.mark.parametrize("operator", ["EQ", "NE", "GT", "GTE", "LT", "LTE", "TEXT_MATCH"])
+    @pytest.mark.parametrize("operator", ["EQ", "NE", "GT", "GTE", "LT", "LTE", "TEXT_MATCH", "CONTAINS"])
     def test_scalar_operators_accept_scalar_value(self, operator):
         item = _filter_adapter.validate_python({"name": "field", "operator": operator, "value": "val"})
         assert item.operator == operator
@@ -50,7 +50,7 @@ class TestMetadataFilterItemSchema:
         with pytest.raises(ValidationError):
             _filter_adapter.validate_python({"name": "field", "operator": operator, "value": "scalar"})
 
-    @pytest.mark.parametrize("operator", ["EQ", "NE", "GT", "GTE", "LT", "LTE", "TEXT_MATCH"])
+    @pytest.mark.parametrize("operator", ["EQ", "NE", "GT", "GTE", "LT", "LTE", "TEXT_MATCH", "CONTAINS"])
     def test_scalar_operators_reject_list_value(self, operator):
         with pytest.raises(ValidationError):
             _filter_adapter.validate_python({"name": "field", "operator": operator, "value": ["a", "b"]})
@@ -118,7 +118,7 @@ class TestBuildFilterObject:
         engine = _make_engine()
         assert engine._build_filter_object([]) is None
 
-    @pytest.mark.parametrize("operator", ["EQ", "NE", "GT", "GTE", "LT", "LTE", "TEXT_MATCH"])
+    @pytest.mark.parametrize("operator", ["EQ", "NE", "GT", "GTE", "LT", "LTE", "TEXT_MATCH", "CONTAINS"])
     def test_scalar_operators_map_correctly(self, operator):
         engine = _make_engine()
         item = _filter_adapter.validate_python({"name": "field", "operator": operator, "value": "val"})
@@ -134,7 +134,7 @@ class TestBuildFilterObject:
         assert result.filters[0].operator == _OPERATOR_MAP[operator]
 
     def test_all_operators_covered_in_map(self):
-        expected = {"EQ", "NE", "GT", "GTE", "LT", "LTE", "IN", "NIN", "TEXT_MATCH"}
+        expected = {"EQ", "NE", "GT", "GTE", "LT", "LTE", "IN", "NIN", "TEXT_MATCH", "CONTAINS"}
         assert set(_OPERATOR_MAP.keys()) == expected
 
     def test_condition_is_and(self):
