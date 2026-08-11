@@ -204,8 +204,7 @@ installed to attach each page's semantic properties as document metadata, each u
 lowercased key (e.g. `smw_sitename`, `smw_is_discontinued`) to avoid colliding with the connector's own metadata
 fields. System properties (`_ASK`, `_INST`, `_SKEY`, etc.) and subobjects are excluded; every property is
 stored as a list of its values (even single-valued ones), filterable via the `/api/v1/query` metadata
-filter API's `CONTAINS`, `IN`, and `NIN` operators. Adds one extra API request per page, so leave it off
-(the default) unless you need the properties.
+filter API's `CONTAINS`, `IN`, and `NIN` operators.
 
 ```yaml
 # config.yaml
