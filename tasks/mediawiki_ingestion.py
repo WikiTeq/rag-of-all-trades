@@ -364,8 +364,9 @@ class MediaWikiIngestionJob(IngestionJob):
         return f"{year:04d}-{month:02d}-{day:02d}T{hour:02d}:{minute:02d}:{second:02d}"
 
     # Prefix for semantic property metadata keys, so they stay flat (filterable via the
-    # existing /api/v1/query metadata filter API, which only matches top-level keys) while
-    # never colliding with connector-owned keys (title, page_id, namespace, url).
+    # existing /api/v1/query metadata filter API, which only matches top-level keys —
+    # including its CONTAINS/IN/NIN list operators) while never colliding with
+    # connector-owned keys (title, page_id, namespace, url).
     _SMW_METADATA_PREFIX = "smw_"
 
     @staticmethod
@@ -380,14 +381,15 @@ class MediaWikiIngestionJob(IngestionJob):
         """
         return property_key.strip().lower().replace(" ", "_")
 
-    def _load_semantic_properties(self, title: str, namespace: int) -> dict[str, str]:
+    def _load_semantic_properties(self, title: str, namespace: int) -> dict[str, list[str]]:
         """Query Semantic MediaWiki for a page's properties via the smwbrowse API action.
 
         Excludes system properties (leading underscore, e.g. _ASK, _INST, _SKEY) and
-        subobjects (sobj). Multi-valued properties have all their values joined with "; "
-        into a single string, since the metadata store's existing filter API only supports
-        scalar values (see _SMW_METADATA_PREFIX). Each property is returned under a
-        "smw_"-prefixed key to avoid colliding with connector-owned metadata keys.
+        subobjects (sobj). Each property is stored as a list of its decoded values —
+        even single-valued properties become a 1-item list — so the shape is uniform
+        and filterable via the metadata store's CONTAINS/IN/NIN list operators regardless
+        of value count. Each property is returned under a "smw_"-prefixed key to avoid
+        colliding with connector-owned metadata keys.
 
         Returns an empty dict if the query fails for any reason (SMW not installed,
         page has no semantic data, transient error) — ingestion of the page continues
@@ -397,7 +399,7 @@ class MediaWikiIngestionJob(IngestionJob):
             params = json.dumps({"subject": title, "ns": namespace, "iw": "", "subobject": ""})
             response = self._reader.site.get("smwbrowse", browse="subject", params=params, format="json")
 
-            properties: dict[str, str] = {}
+            properties: dict[str, list[str]] = {}
             for entry in response.get("query", {}).get("data", []):
                 property_key = entry.get("property", "")
                 if not property_key or property_key.startswith("_"):
@@ -406,7 +408,7 @@ class MediaWikiIngestionJob(IngestionJob):
                 if dataitems:
                     values = [self._decode_smw_dataitem_value(dataitem) for dataitem in dataitems]
                     normalized_key = self._normalize_property_key(property_key)
-                    properties[self._SMW_METADATA_PREFIX + normalized_key] = "; ".join(values)
+                    properties[self._SMW_METADATA_PREFIX + normalized_key] = values
             return properties
         except Exception:
             logger.warning(
