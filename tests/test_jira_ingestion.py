@@ -99,7 +99,7 @@ def _make_issue(
 class TestJiraIngestionJob(unittest.TestCase):
     def setUp(self):
         self.jira_patcher = patch("tasks.jira_ingestion.JIRA")
-        self.markitdown_patcher = patch("tasks.jira_ingestion.MarkItDown")
+        self.markitdown_patcher = patch("tasks.base.MarkItDown")
         self.mock_jira_class = self.jira_patcher.start()
         self.mock_md_class = self.markitdown_patcher.start()
 
@@ -109,6 +109,14 @@ class TestJiraIngestionJob(unittest.TestCase):
 
         self.mock_md = Mock()
         self.mock_md_class.return_value = self.mock_md
+
+        # By default, convert_stream returns the input text unchanged
+        def _passthrough(stream, **kwargs):
+            result = Mock()
+            result.markdown = stream.read().decode("utf-8")
+            return result
+
+        self.mock_md.convert_stream.side_effect = _passthrough
 
     def tearDown(self):
         self.jira_patcher.stop()
@@ -355,7 +363,7 @@ class TestJiraIngestionJob(unittest.TestCase):
 
         # MarkItDown passes text through (simulate)
         md_result = Mock()
-        md_result.text_content = "Some description text"
+        md_result.markdown = "Some description text"
         self.mock_md.convert_stream.return_value = md_result
 
         job = self._make_job()
@@ -369,7 +377,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         item = IngestionItem(id="jira:TEST-1", source_ref=issue)
 
         md_result = Mock()
-        md_result.text_content = "desc"
+        md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
         job = self._make_job()
@@ -403,7 +411,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         item = IngestionItem(id="jira:TEST-1", source_ref=issue)
 
         md_result = Mock()
-        md_result.text_content = "desc"
+        md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
         comment = Mock()
@@ -424,7 +432,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         item = IngestionItem(id="jira:TEST-1", source_ref=issue)
 
         md_result = Mock()
-        md_result.text_content = "desc"
+        md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
         job = self._make_job(load_comments=False)
@@ -437,18 +445,20 @@ class TestJiraIngestionJob(unittest.TestCase):
         item = IngestionItem(id="jira:TEST-1", source_ref=issue)
 
         md_result = Mock()
-        md_result.text_content = "desc"
+        md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
-        # 5 comments, but max_comments=2
-        comments = []
+        # 5 comments available; mock honours max_results as the real API would
+        all_comments = []
         for i in range(5):
             c = Mock()
             c.author = Mock(displayName=f"User{i}")
             c.created = "2024-06-01T10:00:00.000+0000"
             c.body = f"Comment {i}"
-            comments.append(c)
-        self.mock_jira.comments.return_value = comments
+            all_comments.append(c)
+        self.mock_jira.comments.side_effect = lambda issue, max_results=None, order_by=None: (
+            all_comments[:max_results] if max_results else all_comments
+        )
 
         job = self._make_job(load_comments=True, max_comments=2)
         content = job.get_raw_content(item)
@@ -457,12 +467,50 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.assertIn("Comment 1", content)
         self.assertNotIn("Comment 2", content)
 
+    def test_get_raw_content_requests_newest_comments_first(self):
+        issue = _make_issue(summary="Issue", description="desc")
+        item = IngestionItem(id="jira:TEST-1", source_ref=issue)
+
+        md_result = Mock()
+        md_result.markdown = "desc"
+        self.mock_md.convert_stream.return_value = md_result
+
+        comment = Mock()
+        comment.author = Mock(displayName="Charlie")
+        comment.created = "2024-06-01T10:00:00.000+0000"
+        comment.body = "Great issue!"
+        self.mock_jira.comments.return_value = [comment]
+
+        job = self._make_job(load_comments=True, max_comments=5)
+        job.get_raw_content(item)
+
+        self.mock_jira.comments.assert_called_once_with(issue, max_results=5, order_by="-created")
+
+    def test_get_raw_content_omits_comments_header_when_all_bodies_empty(self):
+        issue = _make_issue(summary="Issue", description="desc")
+        item = IngestionItem(id="jira:TEST-1", source_ref=issue)
+
+        md_result = Mock()
+        md_result.markdown = "desc"
+        self.mock_md.convert_stream.return_value = md_result
+
+        comment = Mock()
+        comment.author = Mock(displayName="Charlie")
+        comment.created = "2024-06-01T10:00:00.000+0000"
+        comment.body = "   "
+        self.mock_jira.comments.return_value = [comment]
+
+        job = self._make_job(load_comments=True, max_comments=5)
+        content = job.get_raw_content(item)
+
+        self.assertNotIn("## Comments", content)
+
     def test_get_raw_content_comment_fetch_failure_does_not_raise(self):
         issue = _make_issue(summary="Issue", description="desc")
         item = IngestionItem(id="jira:TEST-1", source_ref=issue)
 
         md_result = Mock()
-        md_result.text_content = "desc"
+        md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
         self.mock_jira.comments.side_effect = Exception("403 Forbidden")
@@ -540,104 +588,6 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.assertEqual(extra["url"], "")
 
     # ------------------------------------------------------------------
-    # _to_markdown helpers
-    # ------------------------------------------------------------------
-
-    def test_to_markdown_falls_back_on_empty_conversion(self):
-        md_result = Mock()
-        md_result.text_content = "   "
-        self.mock_md.convert_stream.return_value = md_result
-
-        job = self._make_job()
-        result = job._to_markdown("original text")
-
-        self.assertEqual(result, "original text")
-
-    def test_to_markdown_falls_back_on_conversion_error(self):
-        self.mock_md.convert_stream.side_effect = ValueError("bad")
-
-        job = self._make_job()
-        result = job._to_markdown("original text")
-
-        self.assertEqual(result, "original text")
-
-    def test_to_markdown_returns_empty_for_blank_input(self):
-        job = self._make_job()
-        self.assertEqual(job._to_markdown(""), "")
-        self.assertEqual(job._to_markdown("   "), "")
-
-    def test_to_markdown_handles_adf_dict(self):
-        adf = {
-            "type": "doc",
-            "content": [
-                {
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": "Hello ADF"}],
-                }
-            ],
-        }
-        job = self._make_job()
-        result = job._to_markdown(adf)
-        self.assertIn("Hello ADF", result)
-
-    # ------------------------------------------------------------------
-    # _extract_adf_text
-    # ------------------------------------------------------------------
-
-    def test_extract_adf_text_simple_paragraph(self):
-        adf = {
-            "type": "doc",
-            "content": [
-                {
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": "Simple text"}],
-                }
-            ],
-        }
-        job = self._make_job()
-        result = job._extract_adf_text(adf)
-        self.assertIn("Simple text", result)
-
-    def test_extract_adf_text_heading(self):
-        adf = {
-            "type": "doc",
-            "content": [
-                {
-                    "type": "heading",
-                    "attrs": {"level": 2},
-                    "content": [{"type": "text", "text": "Section Title"}],
-                }
-            ],
-        }
-        job = self._make_job()
-        result = job._extract_adf_text(adf)
-        self.assertIn("## Section Title", result)
-
-    def test_extract_adf_text_nested(self):
-        adf = {
-            "type": "doc",
-            "content": [
-                {
-                    "type": "bulletList",
-                    "content": [
-                        {
-                            "type": "listItem",
-                            "content": [
-                                {
-                                    "type": "paragraph",
-                                    "content": [{"type": "text", "text": "Item one"}],
-                                }
-                            ],
-                        }
-                    ],
-                }
-            ],
-        }
-        job = self._make_job()
-        result = job._extract_adf_text(adf)
-        self.assertIn("Item one", result)
-
-    # ------------------------------------------------------------------
     # Integration: process_item delegates to base with correct data
     # ------------------------------------------------------------------
 
@@ -650,7 +600,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         )
 
         md_result = Mock()
-        md_result.text_content = "desc"
+        md_result.markdown = "desc"
         self.mock_md.convert_stream.return_value = md_result
 
         job = self._make_job()
@@ -667,12 +617,72 @@ class TestJiraIngestionJob(unittest.TestCase):
             job.vector_manager.insert_documents.assert_called_once()
             mock_record.assert_called_once()
 
+    def test_get_raw_content_extracts_text_from_adf_description(self):
+        issue = _make_issue(
+            key="TEST-ADF-1",
+            description={
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": "ADF description text"}],
+                    }
+                ],
+            },
+        )
+        item = IngestionItem(id="jira:TEST-ADF-1", source_ref=issue)
+
+        job = self._make_job()
+        raw_content = job.get_raw_content(item)
+
+        self.assertIn("ADF description text", raw_content)
+
+    def test_get_raw_content_includes_adf_comment_body_when_comments_enabled(self):
+        issue = _make_issue(
+            key="TEST-ADF-2",
+            description={
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": "ADF issue description"}],
+                    }
+                ],
+            },
+        )
+
+        comment = Mock()
+        comment.author = Mock(displayName="Alice Example")
+        comment.created = "2024-06-15T10:30:00.000+0000"
+        comment.body = {
+            "type": "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type": "paragraph",
+                    "content": [{"type": "text", "text": "ADF comment body"}],
+                }
+            ],
+        }
+        self.mock_jira.comments.return_value = [comment]
+
+        item = IngestionItem(id="jira:TEST-ADF-2", source_ref=issue)
+        job = self._make_job(load_comments=True, max_comments=5)
+
+        raw_content = job.get_raw_content(item)
+
+        self.assertIn("ADF issue description", raw_content)
+        self.assertIn("ADF comment body", raw_content)
+        self.assertIn("Alice Example", raw_content)
+
     def test_process_item_skips_duplicate_checksum(self):
         issue = _make_issue(key="TEST-99", description="same content")
         item = IngestionItem(id="jira:TEST-99", source_ref=issue)
 
         md_result = Mock()
-        md_result.text_content = "same content"
+        md_result.markdown = "same content"
         self.mock_md.convert_stream.return_value = md_result
 
         job = self._make_job()
