@@ -308,13 +308,13 @@ class TestBookStackGetExtraMetadata(unittest.TestCase):
         self.assertEqual(meta["shelf_id"], "99")
 
     def test_no_reserved_keys_overwritten(self):
-        from tasks.base import IngestionJob
+        from tasks.schemas import BaseMetadataSchema
 
         job = _make_job()
         job._book_shelf_map = {}
         item = self._make_item_with_cache("books", {"id": 2, "name": "Book", "updated_at": None})
         meta = job.get_extra_metadata(item, "content", {})
-        for key in IngestionJob.RESERVED_METADATA_KEYS:
+        for key in BaseMetadataSchema.model_fields:
             self.assertNotIn(key, meta)
 
 
