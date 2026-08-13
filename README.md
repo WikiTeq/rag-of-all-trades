@@ -204,8 +204,9 @@ installed to attach each page's semantic properties as document metadata, each u
 key. The property name is lowercased and spaces are replaced with underscores (e.g. `Assigned editor`
 becomes `smw_assigned_editor`) to avoid colliding with the connector's own metadata fields and to give
 metadata filters a predictable name to construct. System properties (`_ASK`, `_INST`, `_SKEY`, etc.) and
-subobjects are excluded; every property is stored as a list of its values (even single-valued ones),
-filterable via the `/api/v1/query` metadata filter API's `CONTAINS`, `IN`, and `NIN` operators.
+subobjects are excluded; a single-valued property is stored as a plain value, and a multi-valued
+property is stored as a list, filterable via the `/api/v1/query` metadata filter API's `CONTAINS`,
+`IN`, and `NIN` operators.
 
 ```yaml
 # config.yaml

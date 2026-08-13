@@ -381,15 +381,15 @@ class MediaWikiIngestionJob(IngestionJob):
         """
         return property_key.strip().lower().replace(" ", "_")
 
-    def _load_semantic_properties(self, title: str, namespace: int) -> dict[str, list[str]]:
+    def _load_semantic_properties(self, title: str, namespace: int) -> dict[str, str | list[str]]:
         """Query Semantic MediaWiki for a page's properties via the smwbrowse API action.
 
         Excludes system properties (leading underscore, e.g. _ASK, _INST, _SKEY) and
-        subobjects (sobj). Each property is stored as a list of its decoded values —
-        even single-valued properties become a 1-item list — so the shape is uniform
-        and filterable via the metadata store's CONTAINS/IN/NIN list operators regardless
-        of value count. Each property is returned under a "smw_"-prefixed key to avoid
-        colliding with connector-owned metadata keys.
+        subobjects (sobj). A property with a single value is stored as a plain scalar;
+        a property with multiple values is stored as a list of its decoded values, so
+        it stays filterable via the metadata store's CONTAINS/IN/NIN list operators.
+        Each property is returned under a "smw_"-prefixed key to avoid colliding with
+        connector-owned metadata keys.
 
         Returns an empty dict if the query fails for any reason (SMW not installed,
         page has no semantic data, transient error) — ingestion of the page continues
@@ -399,7 +399,7 @@ class MediaWikiIngestionJob(IngestionJob):
             params = json.dumps({"subject": title, "ns": namespace, "iw": "", "subobject": ""})
             response = self._reader.site.get("smwbrowse", browse="subject", params=params, format="json")
 
-            properties: dict[str, list[str]] = {}
+            properties: dict[str, str | list[str]] = {}
             for entry in response.get("query", {}).get("data", []):
                 property_key = entry.get("property", "")
                 if not property_key or property_key.startswith("_"):
@@ -408,7 +408,7 @@ class MediaWikiIngestionJob(IngestionJob):
                 if dataitems:
                     values = [self._decode_smw_dataitem_value(dataitem) for dataitem in dataitems]
                     normalized_key = self._normalize_property_key(property_key)
-                    properties[self._SMW_METADATA_PREFIX + normalized_key] = values
+                    properties[self._SMW_METADATA_PREFIX + normalized_key] = values[0] if len(values) == 1 else values
             return properties
         except Exception:
             logger.warning(
