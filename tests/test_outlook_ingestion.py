@@ -9,6 +9,7 @@ from tasks.outlook_ingestion import OutlookIngestionJob
 
 RECEIVED = "2024-06-01T10:00:00Z"
 RECEIVED_DT = datetime(2024, 6, 1, 10, 0, 0, tzinfo=UTC)
+AUTH_HEADERS = {"Authorization": "Bearer test-token"}
 
 
 def _make_config(**overrides):
@@ -38,13 +39,19 @@ def _make_email(
     }
 
 
+def _token_response(access_token="test-token"):
+    """A mocked Graph token endpoint response."""
+    response = MagicMock()
+    response.json.return_value = {"access_token": access_token} if access_token else {}
+    return response
+
+
 def _make_job(config=None, **cfg_overrides):
     if config is None:
         config = _make_config(**cfg_overrides)
     with (
         patch("tasks.base.MetadataTracker"),
         patch("tasks.base.VectorStoreManager"),
-        patch("tasks.outlook_ingestion.OutlookEmailReader"),
     ):
         return OutlookIngestionJob(config)
 
@@ -70,17 +77,61 @@ class TestOutlookIngestionInit(unittest.TestCase):
         self.assertEqual(job.num_mails, 10)
 
 
+class TestOutlookGetAuthHeaders(unittest.TestCase):
+    def test_posts_client_credentials_form_to_token_endpoint(self):
+        job = _make_job()
+        job._session = MagicMock()
+        job._session.post.return_value = _token_response("abc123")
+
+        headers = job._get_auth_headers()
+
+        self.assertEqual(headers, {"Authorization": "Bearer abc123"})
+        job._session.post.assert_called_once()
+        call = job._session.post.call_args
+        self.assertEqual(call.args[0], "https://login.microsoftonline.com/tid/oauth2/v2.0/token")
+        self.assertEqual(
+            call.kwargs["data"],
+            {
+                "grant_type": "client_credentials",
+                "client_id": "cid",
+                "client_secret": "csecret",
+                "scope": "https://graph.microsoft.com/.default",
+            },
+        )
+        self.assertTrue(call.kwargs.get("retry"))
+
+    def test_raises_when_access_token_missing(self):
+        job = _make_job()
+        job._session = MagicMock()
+        job._session.post.return_value = _token_response(access_token=None)
+
+        with self.assertRaises(RuntimeError):
+            job._get_auth_headers()
+
+    def test_propagates_http_error_from_token_endpoint(self):
+        job = _make_job()
+        job._session = MagicMock()
+        response = MagicMock()
+        response.raise_for_status.side_effect = requests.HTTPError("token endpoint failed")
+        job._session.post.return_value = response
+
+        with self.assertRaises(requests.HTTPError):
+            job._get_auth_headers()
+
+
 class TestOutlookListItems(unittest.TestCase):
-    def _mock_reader(self, emails):
-        mock = MagicMock()
-        mock._fetch_emails.return_value = emails
-        mock._authorization_headers = {"Authorization": "Bearer token"}
-        return mock
+    def _job_with_mocked_session(self, **cfg_overrides):
+        job = _make_job(**cfg_overrides)
+        job._session = MagicMock()
+        job._get_auth_headers = MagicMock(return_value=AUTH_HEADERS)
+        return job
 
     def test_yields_correct_items(self):
         emails = [_make_email("id1"), _make_email("id2")]
-        job = _make_job()
-        job._reader = self._mock_reader(emails)
+        job = self._job_with_mocked_session()
+        messages_lookup = MagicMock()
+        messages_lookup.json.return_value = {"value": emails}
+        job._session.get.return_value = messages_lookup
 
         items = list(job.list_items())
 
@@ -91,46 +142,51 @@ class TestOutlookListItems(unittest.TestCase):
 
     def test_skips_email_without_id(self):
         emails = [{"subject": "No ID", "receivedDateTime": RECEIVED, "body": {"content": ""}}]
-        job = _make_job()
-        job._reader = self._mock_reader(emails)
+        job = self._job_with_mocked_session()
+        messages_lookup = MagicMock()
+        messages_lookup.json.return_value = {"value": emails}
+        job._session.get.return_value = messages_lookup
 
         items = list(job.list_items())
 
         self.assertEqual(len(items), 0)
 
-    def test_resolves_display_name_folder_when_graph_path_returns_400(self):
+    def test_well_known_folder_is_used_directly_without_resolution(self):
         email = _make_email("id1")
-        response_400 = MagicMock(status_code=400)
-        reader = self._mock_reader([])
-        reader._fetch_emails.side_effect = requests.HTTPError(response=response_400)
+        job = self._job_with_mocked_session(folder="Inbox")
+        messages_lookup = MagicMock()
+        messages_lookup.json.return_value = {"value": [email]}
+        job._session.get.return_value = messages_lookup
+
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        # Only the message fetch, no folder-tree walk for a well-known name.
+        self.assertEqual(job._session.get.call_count, 1)
+        called_url = job._session.get.call_args.args[0]
+        self.assertIn("/mailFolders/Inbox/messages", called_url)
+
+    def test_resolves_custom_display_name_folder_upfront(self):
+        email = _make_email("id1")
+        job = self._job_with_mocked_session(folder="Proba")
 
         folder_lookup = MagicMock()
         folder_lookup.json.return_value = {
             "value": [{"id": "folder-id-123", "displayName": "Proba", "childFolderCount": 0}]
         }
-
         messages_lookup = MagicMock()
         messages_lookup.json.return_value = {"value": [email]}
+        job._session.get.side_effect = [folder_lookup, messages_lookup]
 
-        job = _make_job(folder="Proba")
-        job._reader = reader
-
-        mock_session = MagicMock()
-        mock_session.__enter__ = lambda s: s
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.get.side_effect = [folder_lookup, messages_lookup]
-        with patch("tasks.outlook_ingestion.RetrySession", return_value=mock_session):
-            items = list(job.list_items())
+        items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].id, "outlook:id1")
-        self.assertEqual(mock_session.get.call_count, 2)
+        self.assertEqual(job._session.get.call_count, 2)
 
     def test_resolves_display_name_folder_across_paginated_folder_listing(self):
         email = _make_email("id1")
-        response_400 = MagicMock(status_code=400)
-        reader = self._mock_reader([])
-        reader._fetch_emails.side_effect = requests.HTTPError(response=response_400)
+        job = self._job_with_mocked_session(folder="Proba")
 
         page1 = MagicMock()
         page1.json.return_value = {
@@ -143,25 +199,16 @@ class TestOutlookListItems(unittest.TestCase):
         }
         messages_lookup = MagicMock()
         messages_lookup.json.return_value = {"value": [email]}
+        job._session.get.side_effect = [page1, page2, messages_lookup]
 
-        job = _make_job(folder="Proba")
-        job._reader = reader
-
-        mock_session = MagicMock()
-        mock_session.__enter__ = lambda s: s
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.get.side_effect = [page1, page2, messages_lookup]
-        with patch("tasks.outlook_ingestion.RetrySession", return_value=mock_session):
-            items = list(job.list_items())
+        items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].id, "outlook:id1")
 
     def test_resolves_display_name_folder_in_nested_child_folder(self):
         email = _make_email("id1")
-        response_400 = MagicMock(status_code=400)
-        reader = self._mock_reader([])
-        reader._fetch_emails.side_effect = requests.HTTPError(response=response_400)
+        job = self._job_with_mocked_session(folder="Proba")
 
         top_level = MagicMock()
         top_level.json.return_value = {
@@ -173,41 +220,43 @@ class TestOutlookListItems(unittest.TestCase):
         }
         messages_lookup = MagicMock()
         messages_lookup.json.return_value = {"value": [email]}
+        job._session.get.side_effect = [top_level, child_level, messages_lookup]
 
-        job = _make_job(folder="Proba")
-        job._reader = reader
-
-        mock_session = MagicMock()
-        mock_session.__enter__ = lambda s: s
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.get.side_effect = [top_level, child_level, messages_lookup]
-        with patch("tasks.outlook_ingestion.RetrySession", return_value=mock_session):
-            items = list(job.list_items())
+        items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].id, "outlook:id1")
 
-    def test_raises_original_error_when_folder_display_name_cannot_be_resolved(self):
-        response_400 = MagicMock(status_code=400)
-        reader = self._mock_reader([])
-        error = requests.HTTPError(response=response_400)
-        reader._fetch_emails.side_effect = error
+    def test_raises_clear_error_when_folder_display_name_cannot_be_resolved(self):
+        job = self._job_with_mocked_session(folder="Missing Folder")
 
         folder_lookup = MagicMock()
         folder_lookup.json.return_value = {"value": []}
+        job._session.get.return_value = folder_lookup
 
-        job = _make_job(folder="Missing Folder")
-        job._reader = reader
-
-        mock_session = MagicMock()
-        mock_session.__enter__ = lambda s: s
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.get.return_value = folder_lookup
-        with (
-            patch("tasks.outlook_ingestion.RetrySession", return_value=mock_session),
-            self.assertRaises(requests.HTTPError),
-        ):
+        with self.assertRaises(ValueError):
             list(job.list_items())
+
+        # Only the folder-tree lookup happened — no message fetch was attempted.
+        job._session.get.assert_called_once()
+
+    def test_resolved_folder_id_is_cached_across_calls(self):
+        email = _make_email("id1")
+        job = self._job_with_mocked_session(folder="Proba")
+
+        folder_lookup = MagicMock()
+        folder_lookup.json.return_value = {
+            "value": [{"id": "folder-id-123", "displayName": "Proba", "childFolderCount": 0}]
+        }
+        messages_lookup = MagicMock()
+        messages_lookup.json.return_value = {"value": [email]}
+        job._session.get.side_effect = [folder_lookup, messages_lookup, messages_lookup]
+
+        list(job.list_items())
+        list(job.list_items())
+
+        # First call: 1 folder lookup + 1 message fetch. Second call: message fetch only.
+        self.assertEqual(job._session.get.call_count, 3)
 
 
 class TestOutlookGetRawContent(unittest.TestCase):
@@ -308,21 +357,6 @@ class TestOutlookGetExtraMetadata(unittest.TestCase):
         item = IngestionItem(id="outlook:id1", source_ref=email)
         meta = _make_job().get_extra_metadata(item, "", {})
         self.assertEqual(meta["web_link"], "")
-
-
-class TestOutlookEmailReaderPrivateAPI(unittest.TestCase):
-    """Regression guard: fail loudly if the LlamaIndex OutlookEmailReader removes
-    or renames private members that the connector relies on."""
-
-    def test_required_private_symbols_exist(self):
-        from llama_index.readers.microsoft_outlook_emails import OutlookEmailReader
-
-        for symbol in ("_ensure_token", "_fetch_emails", "_authorization_headers"):
-            self.assertTrue(
-                hasattr(OutlookEmailReader, symbol),
-                f"OutlookEmailReader is missing required symbol {symbol!r} — "
-                "update the connector if the library changed its private API",
-            )
 
 
 if __name__ == "__main__":
