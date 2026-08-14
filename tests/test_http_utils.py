@@ -112,6 +112,20 @@ class TestRetrySession(unittest.TestCase):
         self.assertEqual(call_kwargs[0][0], "POST")
 
     @patch("utils.http.requests.Session")
+    def test_post_method_with_form_encoded_data(self, MockSession):
+        session = MockSession.return_value
+        session.request.return_value = _make_response(200)
+
+        rs = RetrySession()
+        resp = rs.post("http://example.com", data={"grant_type": "client_credentials"})
+
+        self.assertEqual(resp.status_code, 200)
+        call_kwargs = session.request.call_args
+        self.assertEqual(call_kwargs[0][0], "POST")
+        self.assertEqual(call_kwargs.kwargs["data"], {"grant_type": "client_credentials"})
+        self.assertIsNone(call_kwargs.kwargs["json"])
+
+    @patch("utils.http.requests.Session")
     def test_context_manager_closes_session(self, MockSession):
         session = MockSession.return_value
         session.request.return_value = _make_response(200)
