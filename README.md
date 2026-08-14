@@ -500,8 +500,8 @@ IMAP1_SCHEDULES=3600
 ### Outlook Connector
 
 The Outlook connector ingests emails from a Microsoft 365 mailbox via the Microsoft Graph API.
-Uses the [LlamaIndex OutlookEmailReader](https://llamahub.ai/l/readers/llama-index-readers-microsoft-outlook-emails)
-for authentication and email fetching.
+Authenticates directly against Microsoft Entra ID using the OAuth2 client credentials flow
+(app-only, non-interactive) and fetches messages via Graph.
 
 > **Note:** Client credentials authentication (app-only flow) is only supported for
 > **Microsoft 365 / Entra ID work or school accounts**. Personal Microsoft accounts are not supported.
@@ -518,7 +518,7 @@ sources:
       client_secret: "${OUTLOOK1_CLIENT_SECRET}"
       tenant_id: "${OUTLOOK1_TENANT_ID}"
       user_email: "${OUTLOOK1_USER_EMAIL}"
-      folder: "Inbox"           # optional, default Inbox
+      folder: "Inbox"           # optional, default Inbox; custom display names are resolved automatically
       num_mails: 100            # optional, default 10
       html_to_text: true        # optional, default true; set to false to keep raw HTML email bodies
       schedules: "${OUTLOOK1_SCHEDULES}"
