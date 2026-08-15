@@ -1,4 +1,5 @@
 import hashlib
+import unittest
 from datetime import datetime
 from unittest.mock import Mock, patch
 
@@ -277,6 +278,63 @@ class TestIngestionJob:
 
         assert result == "[test-source] Completed: 1 ingested, 1 skipped"
         assert job.process_item.call_count == 2
+
+
+class TestIngestionJobRunFatalErrors(unittest.TestCase):
+    """run() must propagate fatal errors from list_items() instead of swallowing them.
+
+    Written as unittest.TestCase (not the pytest-fixture style above) so it actually
+    executes under `python -m unittest discover` per the project's test runner.
+    """
+
+    def test_run_reraises_list_items_exception(self):
+        class FailingListItemsJob(IngestionJob):
+            @property
+            def source_type(self) -> str:
+                return "dummy"
+
+            def list_items(self):
+                raise ConnectionError("auth failed")
+                yield  # pragma: no cover — makes this a generator function
+
+            def get_raw_content(self, item):
+                return ""
+
+            def get_item_name(self, item):
+                return item.id
+
+        job = FailingListItemsJob({"name": "test-source"})
+
+        with self.assertRaises(ConnectionError):
+            job.run()
+
+    def test_run_does_not_swallow_fatal_error_into_return_string(self):
+        """A fatal list_items() error must not be caught and turned into a result string —
+        Celery's ignore_result=True means a returned string is silently discarded, so a
+        caught-and-stringified error looks identical to success."""
+
+        class FailingListItemsJob(IngestionJob):
+            @property
+            def source_type(self) -> str:
+                return "dummy"
+
+            def list_items(self):
+                raise RuntimeError("listing API is down")
+                yield  # pragma: no cover — makes this a generator function
+
+            def get_raw_content(self, item):
+                return ""
+
+            def get_item_name(self, item):
+                return item.id
+
+        job = FailingListItemsJob({"name": "test-source"})
+
+        try:
+            job.run()
+            self.fail("run() should have raised RuntimeError, not returned normally")
+        except RuntimeError as exc:
+            self.assertEqual(str(exc), "listing API is down")
 
 
 class TestIngestionJobMarkdownConversion:
