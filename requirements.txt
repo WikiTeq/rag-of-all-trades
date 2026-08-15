@@ -40,7 +40,7 @@ llama-index-readers-web==0.6.0
 slack-sdk==3.41.0
 
 # OneDrive connector
-llama-index-readers-microsoft-onedrive==0.5.0
+msal==1.37.0
 
 # Environment management
 python-dotenv==1.2.1
