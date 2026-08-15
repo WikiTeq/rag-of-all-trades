@@ -100,6 +100,26 @@ class TestRetrySession(unittest.TestCase):
         self.assertEqual(self.mock_sleep.call_count, 1)
 
     @patch("utils.http.requests.Session")
+    def test_get_stream_defaults_to_false(self, MockSession):
+        session = MockSession.return_value
+        session.request.return_value = _make_response(200)
+
+        rs = RetrySession()
+        rs.get("http://example.com")
+
+        self.assertEqual(session.request.call_args.kwargs["stream"], False)
+
+    @patch("utils.http.requests.Session")
+    def test_get_stream_true_is_forwarded(self, MockSession):
+        session = MockSession.return_value
+        session.request.return_value = _make_response(200)
+
+        rs = RetrySession()
+        rs.get("http://example.com", stream=True)
+
+        self.assertEqual(session.request.call_args.kwargs["stream"], True)
+
+    @patch("utils.http.requests.Session")
     def test_post_method(self, MockSession):
         session = MockSession.return_value
         session.request.return_value = _make_response(201)
