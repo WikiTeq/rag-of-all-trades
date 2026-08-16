@@ -219,11 +219,59 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertIn(":issue:", items[0].id)
 
     def test_list_items_issue_id_format(self):
+        # item.id uses the issue's API self-link ("url"), not the project-scoped
+        # iid, so that group-only ingestion doesn't collide across projects that
+        # share an iid (see discussion_r3760508294).
         self.mock_repo_reader.load_data.return_value = []
         self.mock_issues_reader.load_data.return_value = [_make_issue_doc("7")]
         job = self._make_job(project_id=12345, include_issues=True)
         items = list(job.list_items())
+        self.assertEqual(
+            items[0].id,
+            "gitlab:12345:issue:https://gitlab.com/api/v4/projects/12345/issues/7",
+        )
+
+    def test_list_items_issue_id_falls_back_to_iid_without_url(self):
+        self.mock_repo_reader.load_data.return_value = []
+        doc = _make_issue_doc("7")
+        del doc.metadata["url"]
+        self.mock_issues_reader.load_data.return_value = [doc]
+        job = self._make_job(project_id=12345, include_issues=True)
+        items = list(job.list_items())
         self.assertEqual(items[0].id, "gitlab:12345:issue:7")
+
+    def test_list_items_issue_id_falls_back_to_iid_with_empty_url(self):
+        # "url" present but empty ("") must fall back the same as a missing key.
+        self.mock_repo_reader.load_data.return_value = []
+        doc = _make_issue_doc("7")
+        doc.metadata["url"] = ""
+        self.mock_issues_reader.load_data.return_value = [doc]
+        job = self._make_job(project_id=12345, include_issues=True)
+        items = list(job.list_items())
+        self.assertEqual(items[0].id, "gitlab:12345:issue:7")
+
+    def test_issue_identity_logs_warning_on_missing_url(self):
+        doc = _make_issue_doc("7")
+        del doc.metadata["url"]
+        job = self._make_job(project_id=12345, include_issues=True)
+        with self.assertLogs("tasks.gitlab_ingestion", level="WARNING") as cm:
+            identity = job._issue_identity(doc)
+        self.assertEqual(identity, "7")
+        self.assertTrue(any("falling back to project-scoped iid" in msg for msg in cm.output))
+
+    def test_list_items_issue_id_no_collision_across_projects_in_group(self):
+        # Regression test: two projects in the same group can share an iid.
+        # Using the url keeps their item.id unique when only group_id is set.
+        self.mock_repo_reader.load_data.return_value = []
+        doc_a = _make_issue_doc("5")
+        doc_a.metadata["url"] = "https://gitlab.com/api/v4/projects/111/issues/5"
+        doc_b = _make_issue_doc("5")
+        doc_b.metadata["url"] = "https://gitlab.com/api/v4/projects/222/issues/5"
+        self.mock_issues_reader.load_data.return_value = [doc_a, doc_b]
+        job = self._make_job(project_id=None, group_id=999, include_issues=True)
+        items = list(job.list_items())
+        self.assertEqual(len(items), 2)
+        self.assertNotEqual(items[0].id, items[1].id)
 
     def test_list_items_issue_state_passed(self):
         self.mock_repo_reader.load_data.return_value = []
@@ -276,7 +324,19 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertEqual(job.get_item_name(item), "docs_guide.md")
 
     def test_get_item_name_issue(self):
+        # Mirrors the item.id fix: name is derived from the unique url, not the
+        # project-scoped iid, so it doesn't collide across projects in a group.
         doc = _make_issue_doc(iid="42")
+        item = IngestionItem(id="gitlab:12345:issue:42", source_ref=doc)
+        job = self._make_job(project_id=12345)
+        self.assertEqual(
+            job.get_item_name(item),
+            "gitlab_issue_12345_https___gitlab.com_api_v4_projects_12345_issues_42",
+        )
+
+    def test_get_item_name_issue_falls_back_to_iid_without_url(self):
+        doc = _make_issue_doc(iid="42")
+        del doc.metadata["url"]
         item = IngestionItem(id="gitlab:12345:issue:42", source_ref=doc)
         job = self._make_job(project_id=12345)
         self.assertEqual(job.get_item_name(item), "gitlab_issue_12345_42")
