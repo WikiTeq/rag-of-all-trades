@@ -30,6 +30,7 @@ class GitLabIngestionJob(IngestionJob):
         - config.group_id: GitLab group ID for issues (optional, mutually exclusive with project_id for repo)
         - config.ref: Branch or commit ref for repository files (optional, default "main")
         - config.path: Sub-directory path to limit repository file loading (optional)
+        - config.file_path: Single file path to load, instead of a directory (optional)
         - config.recursive: Whether to recurse into sub-directories (optional, default True)
         - config.files_iterator: Use iterator pagination for repository files to fetch all pages (optional, default True)
         - config.include_issues: Whether to ingest issues (optional, default False)
@@ -40,6 +41,15 @@ class GitLabIngestionJob(IngestionJob):
         - config.issues_milestone: Milestone title filter (optional)
         - config.issues_search: Free-text search filter (optional)
         - config.issues_get_all: Fetch all pages of issues (optional, default False)
+        - config.issues_confidential: Filter by confidential flag (optional)
+        - config.issues_created_after: Only issues created after this ISO-8601 timestamp (optional)
+        - config.issues_created_before: Only issues created before this ISO-8601 timestamp (optional)
+        - config.issues_updated_after: Only issues updated after this ISO-8601 timestamp (optional)
+        - config.issues_updated_before: Only issues updated before this ISO-8601 timestamp (optional)
+        - config.issues_iids: Filter by specific issue IIDs, list of integers (optional)
+        - config.issues_type: Issue type filter "issue"/"incident"/"test_case"/"task" (optional)
+        - config.issues_non_archived: Exclude issues from archived projects (optional)
+        - config.issues_scope: Scope filter "created_by_me"/"assigned_to_me"/"all" (optional)
     """
 
     @property
