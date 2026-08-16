@@ -252,6 +252,49 @@ class TestOneDriveListItems(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].id, "onedrive:drive-1:f1")
 
+    def test_list_items_skips_files_over_max_file_size_mb(self):
+        """A file whose known Graph `size` exceeds the cap is skipped at listing time —
+        not yielded and left to fail during a later streamed download, which would leave
+        its eTag out of the tracker and repeat the failure on every schedule."""
+        too_big = _make_graph_item(item_id="big1", size=200 * 1024 * 1024)
+        within_cap = _make_graph_item(item_id="f1", size=1024)
+        self.mock_graph.get_drive_root.return_value = {"id": "root-1"}
+        self.mock_graph.list_children.return_value = [too_big, within_cap]
+
+        job = self._make_job(max_file_size_mb=50)
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].id, "onedrive:drive-1:f1")
+
+    def test_list_items_does_not_skip_file_at_exact_cap_boundary(self):
+        """A file exactly at max_file_size_mb must be yielded — the check is a strict
+        greater-than, not greater-or-equal."""
+        exactly_at_cap = _make_graph_item(item_id="f1", size=50 * 1024 * 1024)
+        self.mock_graph.get_drive_root.return_value = {"id": "root-1"}
+        self.mock_graph.list_children.return_value = [exactly_at_cap]
+
+        job = self._make_job(max_file_size_mb=50)
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].id, "onedrive:drive-1:f1")
+
+    def test_list_items_does_not_skip_files_with_unknown_size(self):
+        """size=0 or a missing `size` key must not be treated as over the cap —
+        GraphClient's streamed download still enforces the cap as a backstop for
+        this case."""
+        zero_size = _make_graph_item(item_id="f1", size=0)
+        missing_size = _make_graph_item(item_id="f2")
+        del missing_size["size"]
+        self.mock_graph.get_drive_root.return_value = {"id": "root-1"}
+        self.mock_graph.list_children.return_value = [zero_size, missing_size]
+
+        job = self._make_job(max_file_size_mb=50)
+        items = list(job.list_items())
+
+        self.assertEqual({item.id for item in items}, {"onedrive:drive-1:f1", "onedrive:drive-1:f2"})
+
     def test_list_items_file_ids_scope(self):
         self.mock_graph.get_item.return_value = _make_graph_item(item_id="f1")
 

@@ -83,11 +83,13 @@ class OneDriveIngestionJob(IngestionJob):
         if max_file_size_mb <= 0:
             raise ValueError("max_file_size_mb must be > 0")
 
+        self._max_file_size_bytes = int(max_file_size_mb * 1024 * 1024)
+
         self._graph = GraphClient(
             client_id=self.client_id,
             client_secret=self.client_secret,
             tenant_id=self.tenant_id,
-            max_file_size_bytes=int(max_file_size_mb * 1024 * 1024),
+            max_file_size_bytes=self._max_file_size_bytes,
         )
 
         # Resolved lazily on first use in list_items() — requires an authenticated call.
@@ -215,6 +217,14 @@ class OneDriveIngestionJob(IngestionJob):
             seen_ids.add(item_key)
 
             if not self._mime_type_allowed(item):
+                continue
+
+            size = item.get("size", 0)
+            if size and size > self._max_file_size_bytes:
+                logger.warning(
+                    f"[{self.source_name}] item_id={item['id']!r} name={item.get('name')!r} "
+                    f"size={size} exceeds max_file_size_mb — skipping"
+                )
                 continue
 
             last_modified = parse_timestamp(item.get("lastModifiedDateTime"))
