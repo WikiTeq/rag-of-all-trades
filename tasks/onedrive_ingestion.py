@@ -155,16 +155,31 @@ class OneDriveIngestionJob(IngestionJob):
 
             for child in children:
                 if "remoteItem" in child:
-                    remote = child["remoteItem"]
-                    remote_parent = remote.get("parentReference", {})
+                    remote_stub = child["remoteItem"]
+                    remote_parent = remote_stub.get("parentReference", {})
                     remote_drive_id = remote_parent.get("driveId")
-                    remote_item_id = remote.get("id")
+                    remote_item_id = remote_stub.get("id")
                     if not remote_drive_id or not remote_item_id:
                         logger.debug(f"[{self.source_name}] Skipping remoteItem with no resolvable target")
                         continue
-                    if self.recursive and "folder" in remote:
+
+                    if self.recursive and "folder" in remote_stub:
                         stack.append((remote_drive_id, remote_item_id))
-                    elif self._is_downloadable_file(remote):
+                        continue
+
+                    # The remoteItem facet on a /children listing is a stub — it does not
+                    # reliably carry @microsoft.graph.downloadUrl, which is only
+                    # documented on the real DriveItem. Resolve it with the same GET
+                    # get_download_url uses before deciding whether it's downloadable.
+                    try:
+                        remote = self._graph.get_item(remote_drive_id, remote_item_id)
+                    except GraphItemNotFoundError:
+                        logger.warning(
+                            f"[{self.source_name}] remoteItem drive_id={remote_drive_id!r} "
+                            f"item_id={remote_item_id!r} no longer resolves — skipping"
+                        )
+                        continue
+                    if self._is_downloadable_file(remote):
                         yield (remote_drive_id, remote)
                     continue
 
@@ -256,7 +271,12 @@ class OneDriveIngestionJob(IngestionJob):
 
         if self.folder_id or self.folder_path or not (self.file_ids or self.file_paths):
             if self.folder_id:
-                root_item_id = self.folder_id
+                # Resolve explicitly so a missing/mistyped configured root fails the job
+                # (via GraphItemNotFoundError propagating past _walk_folder's own try/
+                # except, which only catches 404s discovered *during* the walk, not the
+                # very first root lookup) instead of silently completing with 0 files.
+                root = self._graph.get_item(drive_id, self.folder_id)
+                root_item_id = root["id"]
             elif self.folder_path:
                 root = self._graph.get_item_by_path(drive_id, self.folder_path)
                 root_item_id = root["id"]

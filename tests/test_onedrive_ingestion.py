@@ -164,7 +164,11 @@ class TestOneDriveListItems(unittest.TestCase):
         self.mock_graph.get_drive_root.assert_called_once_with("drive-1")
         self.mock_graph.list_children.assert_called_once_with("drive-1", "root-1")
 
-    def test_list_items_uses_folder_id_without_resolving_root(self):
+    def test_list_items_resolves_folder_id_before_walking(self):
+        """folder_id is resolved via get_item first, not used directly as root_item_id —
+        so a missing/mistyped folder_id fails the job instead of silently walking nothing
+        (see test_list_items_raises_when_folder_id_not_found)."""
+        self.mock_graph.get_item.return_value = _make_graph_item(item_id="folder-42", is_folder=True)
         self.mock_graph.list_children.return_value = [_make_graph_item(item_id="f1")]
 
         job = self._make_job(folder_id="folder-42")
@@ -172,7 +176,19 @@ class TestOneDriveListItems(unittest.TestCase):
 
         self.assertEqual(len(items), 1)
         self.mock_graph.get_drive_root.assert_not_called()
+        self.mock_graph.get_item.assert_called_once_with("drive-1", "folder-42")
         self.mock_graph.list_children.assert_called_once_with("drive-1", "folder-42")
+
+    def test_list_items_raises_when_folder_id_not_found(self):
+        """A mistyped or deleted configured folder_id must fail the job — not be treated
+        like a subfolder that disappeared mid-walk (which is safe to skip)."""
+        self.mock_graph.get_item.side_effect = GraphItemNotFoundError("folder not found")
+
+        job = self._make_job(folder_id="typo-folder-id")
+        with self.assertRaises(GraphItemNotFoundError):
+            list(job.list_items())
+
+        self.mock_graph.list_children.assert_not_called()
 
     def test_list_items_resolves_folder_path(self):
         self.mock_graph.get_item_by_path.return_value = {"id": "resolved-folder"}
@@ -334,27 +350,67 @@ class TestOneDriveListItems(unittest.TestCase):
         self.assertNotIn("@microsoft.graph.downloadUrl", items[0].source_ref)
 
     def test_list_items_resolves_remote_item(self):
-        remote_child = {
+        """The remoteItem facet on a listing is a stub — file/downloadUrl are not
+        trusted from it. The real item is fetched via get_item before being yielded."""
+        remote_stub = {
             "remoteItem": {
                 "id": "remote-file-1",
-                "name": "shared.pdf",
-                "file": {"mimeType": "application/pdf"},
-                "@microsoft.graph.downloadUrl": "https://download.example.com/remote-file-1",
-                "parentReference": {"driveId": "other-drive", "path": "/drive/root:"},
-                "webUrl": "https://example.com/shared.pdf",
-                "eTag": "etag-remote",
-                "size": 100,
-                "lastModifiedDateTime": "2024-01-01T00:00:00Z",
+                "parentReference": {"driveId": "other-drive"},
+                # Stub deliberately has no file/downloadUrl — real API doesn't reliably
+                # provide them here either.
             }
         }
+        resolved_remote_item = _make_graph_item(item_id="remote-file-1")
         self.mock_graph.get_drive_root.return_value = {"id": "root-1"}
-        self.mock_graph.list_children.return_value = [remote_child]
+        self.mock_graph.list_children.return_value = [remote_stub]
+        self.mock_graph.get_item.return_value = resolved_remote_item
 
         job = self._make_job()
         items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].id, "onedrive:other-drive:remote-file-1")
+        self.mock_graph.get_item.assert_called_once_with("other-drive", "remote-file-1")
+
+    def test_list_items_skips_remote_item_when_resolution_fails(self):
+        remote_stub = {
+            "remoteItem": {
+                "id": "remote-file-1",
+                "parentReference": {"driveId": "other-drive"},
+            }
+        }
+        self.mock_graph.get_drive_root.return_value = {"id": "root-1"}
+        self.mock_graph.list_children.return_value = [remote_stub]
+        self.mock_graph.get_item.side_effect = GraphItemNotFoundError("gone")
+
+        job = self._make_job()
+        items = list(job.list_items())
+
+        self.assertEqual(items, [])
+
+    def test_list_items_recurses_into_remote_folder(self):
+        """A remoteItem pointing at a folder is recursed into without an extra get_item
+        call — folder/file detection there is reliable, unlike downloadUrl on a file."""
+        remote_folder_stub = {
+            "remoteItem": {
+                "id": "remote-folder-1",
+                "folder": {},
+                "parentReference": {"driveId": "other-drive"},
+            }
+        }
+        file_in_remote_folder = _make_graph_item(item_id="f-remote")
+        self.mock_graph.get_drive_root.return_value = {"id": "root-1"}
+        self.mock_graph.list_children.side_effect = [
+            [remote_folder_stub],
+            [file_in_remote_folder],
+        ]
+
+        job = self._make_job()
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].id, "onedrive:other-drive:f-remote")
+        self.mock_graph.get_item.assert_not_called()
 
 
 class TestOneDriveGetItemChecksum(unittest.TestCase):
