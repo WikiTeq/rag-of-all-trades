@@ -177,11 +177,10 @@ class GitLabIngestionJob(IngestionJob):
                     non_archived=self.issues_non_archived,
                     scope=self.issues_scope,
                 )
+                scope = self.project_id or self.group_id
                 for doc in docs:
-                    # Prefer global id (unique across instance) over project-scoped iid
-                    issue_id = doc.metadata.get("id") or doc.doc_id
                     yield IngestionItem(
-                        id=f"gitlab:{self.project_id or self.group_id}:issue:{issue_id}",
+                        id=f"gitlab:{scope}:issue:{self._issue_identity(doc)}",
                         source_ref=doc,
                         last_modified=parse_timestamp(
                             doc.metadata.get("created_at")  # GitLabIssuesReader does not expose updated_at
@@ -190,6 +189,33 @@ class GitLabIngestionJob(IngestionJob):
             except Exception:
                 logger.exception("[%s] Failed to load issues", self.source_name)
                 raise
+
+    def _issue_identity(self, doc: Any) -> str:
+        """Return a stable, unique identifier for a GitLab issue document.
+
+        doc.doc_id is the GitLab iid, which is project-scoped: two projects in
+        the same group can share an iid, so it collides when only group_id is
+        configured. The reader does not expose GitLab's instance-global issue
+        id in metadata, but it does expose the API self-link ("url"), which is
+        unique per project+issue (e.g. ".../projects/<project_id>/issues/<id>")
+        and is safe to use as the identity key in both project- and
+        group-scoped ingestion. Used by both list_items() and get_item_name()
+        so item.id and item_name stay consistent for version tracking.
+
+        Falls back to doc.doc_id (the iid) if "url" is missing or empty; this
+        silently reintroduces the group-scoped collision this method exists to
+        prevent, so it's logged as a warning rather than passed through quietly.
+        """
+        issue_url = (doc.metadata or {}).get("url")
+        if not issue_url:
+            logger.warning(
+                "[%s] GitLab issue %s has no 'url' metadata; falling back to "
+                "project-scoped iid, which can collide across projects in group-scoped ingestion",
+                self.source_name,
+                doc.doc_id,
+            )
+            return doc.doc_id
+        return issue_url
 
     def get_raw_content(self, item: IngestionItem) -> str:
         doc = item.source_ref
@@ -200,8 +226,8 @@ class GitLabIngestionJob(IngestionJob):
         extra = doc.metadata or {}
 
         if ":issue:" in item.id:
-            iid = doc.doc_id
-            name = f"gitlab_issue_{self.project_id or self.group_id}_{iid}"
+            scope = self.project_id or self.group_id
+            name = f"gitlab_issue_{scope}_{slugify(self._issue_identity(doc))}"
         else:
             file_path = extra.get("file_path", doc.doc_id or "")
             name = slugify(file_path) if file_path else ""
