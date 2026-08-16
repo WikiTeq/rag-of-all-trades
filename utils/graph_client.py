@@ -98,9 +98,63 @@ class GraphClient:
         return resp.json()
 
     def get_user_drive_id(self, userprincipalname: str) -> str:
-        """Resolve a user's OneDrive drive ID from their user principal name (UPN/email)."""
-        drive = self._graph_get(f"/users/{quote(userprincipalname, safe='')}/drive")
-        return drive["id"]
+        """Resolve a user's OneDrive for Business drive ID from their user principal name.
+
+        Uses `GET /users/{UPN}/drives` (List drives), not the singular `GET /users/{UPN}/drive`
+        (Get drive) — Graph v1.0 documents application permissions as unsupported for the
+        singular endpoint, and this client always authenticates via client credentials
+        (app-only), so only the plural, app-permission-compatible endpoint matches the
+        documented contract.
+        """
+        drives = list(self._list_user_drives(userprincipalname))
+
+        business_drives = [d for d in drives if isinstance(d, dict) and d.get("driveType") == "business"]
+        if len(business_drives) == 1:
+            return self._require_drive_id(business_drives[0], userprincipalname)
+        if len(business_drives) > 1:
+            raise RuntimeError(
+                f"Multiple OneDrive for Business drives found for userprincipalname="
+                f"{userprincipalname!r} — cannot disambiguate: "
+                f"{[d.get('id') for d in business_drives]}"
+            )
+
+        # No drive tagged driveType == "business" — fall back to a single unambiguous
+        # drive only when its type is missing/empty, since some tenants surface the
+        # business drive without that tag. A single drive with an explicit non-business
+        # type (e.g. "personal", "documentLibrary") is not a match.
+        untyped_drives = [d for d in drives if isinstance(d, dict) and not d.get("driveType")]
+        if len(untyped_drives) == 1 and len(drives) == 1:
+            return self._require_drive_id(untyped_drives[0], userprincipalname)
+
+        raise RuntimeError(
+            f"No OneDrive for Business drive found for userprincipalname={userprincipalname!r} "
+            f"(found {len(drives)} drive(s), none tagged driveType=='business')"
+        )
+
+    def _list_user_drives(self, userprincipalname: str) -> Iterator[dict]:
+        """Yield every drive from `GET /users/{UPN}/drives`, following `@odata.nextLink`.
+
+        Mirrors list_children's pagination: the link is opaque and passed to _graph_get
+        unmodified so server-side skip tokens and query params survive intact.
+        """
+        next_url: str | None = f"/users/{quote(userprincipalname, safe='')}/drives"
+        while next_url:
+            page = self._graph_get(next_url)
+            value = page.get("value")
+            if not isinstance(value, list):
+                raise RuntimeError(
+                    f"Malformed List drives response for userprincipalname={userprincipalname!r}: "
+                    f"'value' is {type(value).__name__}, expected a list"
+                )
+            yield from value
+            next_url = page.get("@odata.nextLink")
+
+    @staticmethod
+    def _require_drive_id(drive: dict, userprincipalname: str) -> str:
+        drive_id = drive.get("id")
+        if not drive_id:
+            raise RuntimeError(f"Drive entry missing 'id' for userprincipalname={userprincipalname!r}: {drive!r}")
+        return drive_id
 
     def get_drive_root(self, drive_id: str) -> dict:
         """Fetch the root folder item of a drive."""

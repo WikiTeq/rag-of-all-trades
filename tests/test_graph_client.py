@@ -146,6 +146,143 @@ class TestGraphGet(unittest.TestCase):
             client._graph_get("/drives/x/items/missing")
 
 
+class TestGetUserDriveId(unittest.TestCase):
+    def setUp(self):
+        self.msal_patcher = patch("utils.graph_client.msal.ConfidentialClientApplication")
+        self.mock_msal_cls = self.msal_patcher.start()
+        self.mock_msal_cls.return_value.acquire_token_for_client.return_value = {"access_token": "tok-1"}
+
+        self.session_patcher = patch("utils.graph_client.RetrySession")
+        self.mock_session_cls = self.session_patcher.start()
+        self.mock_api_session = MagicMock()
+        self.mock_download_session = MagicMock()
+        self.mock_session_cls.side_effect = [self.mock_api_session, self.mock_download_session]
+
+    def tearDown(self):
+        self.msal_patcher.stop()
+        self.session_patcher.stop()
+
+    def _ok(self, body: dict) -> MagicMock:
+        resp = MagicMock(ok=True, status_code=200)
+        resp.json.return_value = body
+        return resp
+
+    def test_uses_list_drives_endpoint_not_singular_get_drive(self):
+        """GET /users/{UPN}/drive does not support application permissions per Graph
+        v1.0 docs — this client is always client-credentials (app-only), so it must use
+        the plural List drives endpoint instead."""
+        self.mock_api_session.get.return_value = self._ok({"value": [{"id": "drive-1", "driveType": "business"}]})
+
+        client = _make_client()
+        client.get_user_drive_id("user@example.com")
+
+        called_url = self.mock_api_session.get.call_args.args[0]
+        self.assertEqual(called_url, "https://graph.microsoft.com/v1.0/users/user%40example.com/drives")
+
+    def test_picks_the_business_drive_among_multiple_types(self):
+        self.mock_api_session.get.return_value = self._ok(
+            {
+                "value": [
+                    {"id": "personal-drive", "driveType": "personal"},
+                    {"id": "business-drive", "driveType": "business"},
+                ]
+            }
+        )
+
+        client = _make_client()
+        drive_id = client.get_user_drive_id("user@example.com")
+
+        self.assertEqual(drive_id, "business-drive")
+
+    def test_falls_back_to_single_drive_when_none_tagged_business(self):
+        self.mock_api_session.get.return_value = self._ok({"value": [{"id": "only-drive"}]})
+
+        client = _make_client()
+        drive_id = client.get_user_drive_id("user@example.com")
+
+        self.assertEqual(drive_id, "only-drive")
+
+    def test_falls_back_to_single_drive_with_empty_string_drive_type(self):
+        self.mock_api_session.get.return_value = self._ok({"value": [{"id": "only-drive", "driveType": ""}]})
+
+        client = _make_client()
+        drive_id = client.get_user_drive_id("user@example.com")
+
+        self.assertEqual(drive_id, "only-drive")
+
+    def test_rejects_single_drive_with_explicit_non_business_type(self):
+        """A single drive tagged e.g. 'personal' or 'documentLibrary' is not a fallback
+        match — only a drive with a missing/empty driveType qualifies."""
+        self.mock_api_session.get.return_value = self._ok({"value": [{"id": "only-drive", "driveType": "personal"}]})
+
+        client = _make_client()
+        with self.assertRaises(RuntimeError):
+            client.get_user_drive_id("user@example.com")
+
+    def test_raises_when_no_drives_found(self):
+        self.mock_api_session.get.return_value = self._ok({"value": []})
+
+        client = _make_client()
+        with self.assertRaises(RuntimeError):
+            client.get_user_drive_id("user@example.com")
+
+    def test_raises_when_multiple_business_drives_are_ambiguous(self):
+        self.mock_api_session.get.return_value = self._ok(
+            {
+                "value": [
+                    {"id": "drive-a", "driveType": "business"},
+                    {"id": "drive-b", "driveType": "business"},
+                ]
+            }
+        )
+
+        client = _make_client()
+        with self.assertRaises(RuntimeError):
+            client.get_user_drive_id("user@example.com")
+
+    def test_raises_when_multiple_untagged_drives_are_ambiguous(self):
+        self.mock_api_session.get.return_value = self._ok({"value": [{"id": "drive-a"}, {"id": "drive-b"}]})
+
+        client = _make_client()
+        with self.assertRaises(RuntimeError):
+            client.get_user_drive_id("user@example.com")
+
+    def test_follows_next_link_across_pages_to_find_business_drive(self):
+        """A business drive on a later page must still be found — only reading the
+        first page could miss it or misfire the untyped-fallback/ambiguity paths."""
+        page1 = self._ok(
+            {
+                "value": [{"id": "personal-drive", "driveType": "personal"}],
+                "@odata.nextLink": "https://graph.microsoft.com/v1.0/next?$skiptoken=xyz",
+            }
+        )
+        page2 = self._ok({"value": [{"id": "business-drive", "driveType": "business"}]})
+        self.mock_api_session.get.side_effect = [page1, page2]
+
+        client = _make_client()
+        drive_id = client.get_user_drive_id("user@example.com")
+
+        self.assertEqual(drive_id, "business-drive")
+        self.assertEqual(self.mock_api_session.get.call_count, 2)
+        second_call_url = self.mock_api_session.get.call_args_list[1].args[0]
+        # nextLink is passed through unmodified — not reconstructed
+        self.assertEqual(second_call_url, "https://graph.microsoft.com/v1.0/next?$skiptoken=xyz")
+
+    def test_raises_when_value_is_not_a_list(self):
+        self.mock_api_session.get.return_value = self._ok({"value": None})
+
+        client = _make_client()
+        with self.assertRaises(RuntimeError):
+            client.get_user_drive_id("user@example.com")
+
+    def test_raises_when_selected_drive_is_missing_id(self):
+        self.mock_api_session.get.return_value = self._ok({"value": [{"driveType": "business"}]})
+
+        client = _make_client()
+        with self.assertRaises(RuntimeError):
+            client.get_user_drive_id("user@example.com")
+
+
 class TestListChildren(unittest.TestCase):
     def setUp(self):
         self.msal_patcher = patch("utils.graph_client.msal.ConfidentialClientApplication")
