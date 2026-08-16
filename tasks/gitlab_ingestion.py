@@ -105,6 +105,11 @@ class GitLabIngestionJob(IngestionJob):
             )
 
         if self.include_issues:
+            # GitLabIssuesReader.load_data() requires project_id or group_id at
+            # call time, even though both are optional in its constructor
+            # signature. The check above (line 67-68) already guarantees at
+            # least one of self.project_id / self.group_id is set here, so
+            # this reader is never constructed with both None.
             self._issues_reader = GitLabIssuesReader(
                 gitlab_client=gl,
                 project_id=self.project_id if self.project_id else None,

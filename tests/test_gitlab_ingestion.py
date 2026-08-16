@@ -156,6 +156,20 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertIsNone(job.project_id)
         self.assertEqual(job.group_id, 999)
 
+    def test_issues_reader_never_constructed_with_both_project_and_group_none(self):
+        # Regression test for discussion_r3760429901: GitLabIssuesReader.load_data()
+        # produces zero results if neither project_id nor group_id is passed. The
+        # __init__ guard (test_missing_project_and_group_raises) should make that
+        # combination unreachable whenever include_issues=True; assert it directly
+        # against the reader's actual constructor call, not just via config validation.
+        self._make_job(project_id=12345, group_id=None, include_issues=True)
+        _, kwargs = self.mock_issues_reader_class.call_args
+        self.assertFalse(kwargs["project_id"] is None and kwargs["group_id"] is None)
+
+        self._make_job(project_id=None, group_id=999, include_issues=True)
+        _, kwargs = self.mock_issues_reader_class.call_args
+        self.assertFalse(kwargs["project_id"] is None and kwargs["group_id"] is None)
+
     # ------------------------------------------------------------------
     # list_items — files
     # ------------------------------------------------------------------
