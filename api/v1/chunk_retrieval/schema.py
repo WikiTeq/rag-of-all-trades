@@ -21,7 +21,7 @@ def _validate_value(v: str) -> str:
 
 class ScalarMetadataFilter(BaseModel):
     name: str
-    operator: Literal["EQ", "NE", "GT", "GTE", "LT", "LTE", "TEXT_MATCH"]
+    operator: Literal["EQ", "NE", "GT", "GTE", "LT", "LTE", "TEXT_MATCH", "CONTAINS"]
     value: str | int | float
 
     @field_validator("name")

@@ -26,6 +26,7 @@ _OPERATOR_MAP: dict[str, FilterOperator] = {
     "ANY": FilterOperator.ANY,
     "ALL": FilterOperator.ALL,
     "TEXT_MATCH": FilterOperator.TEXT_MATCH,
+    "CONTAINS": FilterOperator.CONTAINS,
 }
 
 

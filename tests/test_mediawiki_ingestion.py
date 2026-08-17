@@ -1,5 +1,6 @@
 """Tests for MediaWikiIngestionJob (Pytest version)."""
 
+import json
 import sys
 from datetime import datetime
 from types import SimpleNamespace
@@ -538,6 +539,297 @@ class TestGetExtraMetadata:
         assert extra["page_id"] == 10
         assert extra["namespace"] == 0
 
+    def test_load_semantics_disabled_by_default(self):
+        job, _ = _make_job()
+        assert job.load_semantics is False
+
+    def test_load_semantics_not_queried_when_disabled(self, base_wiki_job):
+        job, reader = base_wiki_job
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        job.get_extra_metadata(item=item, content="content", metadata={})
+
+        reader.site.get.assert_not_called()
+
+    def test_load_semantics_queries_smwbrowse_with_expected_args(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = {"query": {"data": []}, "meta": {"type": "subject"}}
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        job.get_extra_metadata(item=item, content="content", metadata={})
+
+        reader.site.get.assert_called_once_with(
+            "smwbrowse",
+            browse="subject",
+            params=ANY,
+            format="json",
+        )
+        _, kwargs = reader.site.get.call_args
+        assert json.loads(kwargs["params"]) == {"subject": "Test Page", "ns": 0, "iw": "", "subobject": ""}
+
+    def test_load_semantics_merges_regular_properties(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {"property": "Sitename", "dataitem": [{"type": 2, "item": "Some Value"}], "direction": "direct"},
+                    {"property": "Is_discontinued", "dataitem": [{"type": 1, "item": "false"}], "direction": "direct"},
+                ],
+                "sobj": [{"data": [{"property": "Should_be_ignored", "dataitem": [{"type": 2, "item": "x"}]}]}],
+            },
+            "meta": {"type": "subject"},
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_sitename"] == "Some Value"
+        assert extra["smw_is_discontinued"] == "false"
+        assert "smw_should_be_ignored" not in extra
+        assert "Should_be_ignored" not in extra
+
+    def test_load_semantics_skips_system_properties(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {"property": "_ASK", "dataitem": [{"type": 2, "item": "x"}], "direction": "direct"},
+                    {"property": "_INST", "dataitem": [{"type": 2, "item": "y"}], "direction": "direct"},
+                    {"property": "_SKEY", "dataitem": [{"type": 2, "item": "z"}], "direction": "direct"},
+                    {"property": "Sitename", "dataitem": [{"type": 2, "item": "Some Value"}], "direction": "direct"},
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert "_ASK" not in extra
+        assert "_INST" not in extra
+        assert "_SKEY" not in extra
+        assert "smw__ASK" not in extra
+        assert "smw__INST" not in extra
+        assert "smw__SKEY" not in extra
+        assert extra["smw_sitename"] == "Some Value"
+
+    def test_load_semantics_keeps_all_values_for_multi_valued_property(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {
+                        "property": "Tags",
+                        "dataitem": [
+                            {"type": 2, "item": "first"},
+                            {"type": 2, "item": "second"},
+                            {"type": 2, "item": "third"},
+                        ],
+                        "direction": "direct",
+                    }
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_tags"] == ["first", "second", "third"]
+
+    def test_load_semantics_decodes_wikipage_type_values(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {
+                        "property": "Sitename",
+                        "dataitem": [{"type": 9, "item": "Test_Wiki#0##"}],
+                        "direction": "direct",
+                    },
+                    {
+                        "property": "Tags",
+                        "dataitem": [{"type": 9, "item": "First_tag#0##"}, {"type": 9, "item": "Second_tag#0##"}],
+                        "direction": "direct",
+                    },
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_sitename"] == "Test Wiki"
+        assert extra["smw_tags"] == ["First tag", "Second tag"]
+
+    def test_load_semantics_resolves_wikipage_namespace_prefix(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.namespaces = {0: "", 2: "User"}
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {
+                        "property": "Additional_contributor",
+                        "dataitem": [{"type": 9, "item": "Dan.Mummert.AAO#2##"}],
+                        "direction": "direct",
+                    },
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_additional_contributor"] == "User:Dan.Mummert.AAO"
+
+    def test_load_semantics_wikipage_unknown_namespace_falls_back_to_title(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.namespaces = {0: ""}
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {
+                        "property": "Additional_contributor",
+                        "dataitem": [{"type": 9, "item": "Dan.Mummert.AAO#2##"}],
+                        "direction": "direct",
+                    },
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_additional_contributor"] == "Dan.Mummert.AAO"
+
+    def test_load_semantics_decodes_date_type_values(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {
+                        "property": "SomeDataProp",
+                        "dataitem": [{"type": 6, "item": "1/2021/12/4/3/37/15/0"}],
+                        "direction": "direct",
+                    },
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_somedataprop"] == "2021-12-04T03:37:15"
+
+    @pytest.mark.parametrize(
+        "raw_item,expected",
+        [
+            ("1/2021", "2021"),
+            ("1/2021/12", "2021-12"),
+            ("1/2021/12/4", "2021-12-04"),
+            ("1/2021/12/4/3/37/15", "2021-12-04T03:37:15"),
+            ("1/2021/12/4/3/37/15/0", "2021-12-04T03:37:15"),
+        ],
+    )
+    def test_load_semantics_decodes_date_type_values_at_partial_precision(self, raw_item, expected):
+        """SMW date values may be stored at less than full (year..second) precision;
+
+        the decoded metadata value should reflect only the fields actually present
+        rather than falling back to the raw, undecoded SMW serialization string.
+        """
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {
+                        "property": "SomeDataProp",
+                        "dataitem": [{"type": 6, "item": raw_item}],
+                        "direction": "direct",
+                    },
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_somedataprop"] == expected
+
+    def test_load_semantics_date_type_value_falls_back_to_raw_when_unparseable(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {
+                        "property": "SomeDataProp",
+                        "dataitem": [{"type": 6, "item": "not-a-date"}],
+                        "direction": "direct",
+                    },
+                ]
+            }
+        }
+        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["smw_somedataprop"] == "not-a-date"
+
+    def test_load_semantics_does_not_clobber_connector_metadata(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = {
+            "query": {
+                "data": [
+                    {"property": "Title", "dataitem": [{"type": 2, "item": "Fake Title Collision"}]},
+                    {"property": "Page_id", "dataitem": [{"type": 2, "item": "999"}]},
+                ]
+            }
+        }
+        item = _make_item(
+            "Test Page",
+            last_modified=datetime(2024, 1, 1, 12, 0, 0),
+            pageid=10,
+            namespace=0,
+            url="https://example.com/wiki/Test_Page",
+        )
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["title"] == "Test Page"
+        assert extra["page_id"] == 10
+        assert extra["smw_title"] == "Fake Title Collision"
+        assert extra["smw_page_id"] == "999"
+
+    def test_load_semantics_failure_does_not_raise_and_omits_semantic_metadata(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.side_effect = Exception("boom")
+        item = _make_item(
+            "Test Page",
+            last_modified=datetime(2024, 1, 1, 12, 0, 0),
+            pageid=10,
+            namespace=0,
+            url="https://example.com/wiki/Test_Page",
+        )
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["title"] == "Test Page"
+        assert extra["url"] == "https://example.com/wiki/Test_Page"
+
+    def test_load_semantics_malformed_response_does_not_raise(self):
+        job, reader = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        reader.site.get.return_value = None
+        item = _make_item(
+            "Test Page",
+            last_modified=datetime(2024, 1, 1, 12, 0, 0),
+            pageid=10,
+            namespace=0,
+            url="https://example.com/wiki/Test_Page",
+        )
+
+        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+
+        assert extra["title"] == "Test Page"
+        assert extra["url"] == "https://example.com/wiki/Test_Page"
+        assert not any(key.startswith("smw_") for key in extra)
+
 
 # ---------------------------------------------------------------------------
 # process_item
@@ -613,3 +905,26 @@ class TestGetItemChecksum:
         job, _ = base_wiki_job
         item = _make_item("Page", revision=revision)
         assert job.get_item_checksum(item) == expected
+
+    def test_get_item_checksum_load_semantics_disabled_is_backward_compatible(self):
+        """With load_semantics off (the default), the checksum is the bare revision
+        string, unchanged from before load_semantics existed — so enabling this PR's
+        code on a wiki that doesn't use the flag never spuriously re-ingests pages.
+        """
+        job, _ = _make_job(config=_default_config(host="example.com", load_semantics=False))
+        item = _make_item("Page", revision=98765)
+
+        assert job.get_item_checksum(item) == "98765"
+
+    def test_get_item_checksum_load_semantics_enabled_adds_prefix(self):
+        job, _ = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        item = _make_item("Page", revision=98765)
+
+        assert job.get_item_checksum(item) == "smw:98765"
+
+    def test_get_item_checksum_changes_when_load_semantics_toggled(self):
+        job_off, _ = _make_job(config=_default_config(host="example.com", load_semantics=False))
+        job_on, _ = _make_job(config=_default_config(host="example.com", load_semantics=True))
+        item = _make_item("Page", revision=98765)
+
+        assert job_off.get_item_checksum(item) != job_on.get_item_checksum(item)
