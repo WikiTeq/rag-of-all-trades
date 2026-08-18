@@ -61,6 +61,13 @@ def validate_configuration():
     if settings.env.MCP_ENABLE and not settings.env.MCP_API_KEY:
         errors.append("MCP_API_KEY not configured (required when MCP_ENABLE=1)")
 
+    # Validate dashboard credentials (only if dashboard is enabled)
+    if settings.env.ENABLE_DASHBOARD:
+        if not settings.env.DASHBOARD_USER:
+            errors.append("DASHBOARD_USER must be set when ENABLE_DASHBOARD=1")
+        if not settings.env.DASHBOARD_PASS:
+            errors.append("DASHBOARD_PASS must be set when ENABLE_DASHBOARD=1")
+
     if errors:
         error_msg = "Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
         logger.error(error_msg)

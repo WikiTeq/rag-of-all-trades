@@ -95,6 +95,7 @@ def serialize_ingestion_run(run: IngestionRun) -> dict:
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         "duration_ms": duration_ms,
         "duration_human": format_duration_ms(duration_ms),
+        "error_message": run.error_message,
     }
 
 
@@ -127,8 +128,15 @@ def get_dashboard_stats():
 
     with get_db_session() as db:
         vector_items_count = db.execute(
-            text(f"SELECT COUNT(*) FROM {schema_sql}.{table_sql}")
-        ).scalar_one()
+            text(
+                """
+                SELECT COALESCE(c.reltuples::bigint, 0)
+                FROM pg_class c
+                WHERE c.oid = to_regclass(:relation_name)
+                """
+            ),
+            {"relation_name": f"public.{vector_table_name}"},
+        ).scalar_one() or 0
         vector_db_size_bytes = db.execute(
             text("SELECT pg_total_relation_size(to_regclass(:relation_name))"),
             {"relation_name": f"public.{vector_table_name}"},
@@ -155,8 +163,17 @@ def get_dashboard_stats():
 
 
 def verify_dashboard_auth(credentials: HTTPBasicCredentials = Depends(dashboard_security)):
-    correct_username = secrets.compare_digest(credentials.username, settings.env.DASHBOARD_USER)
-    correct_password = secrets.compare_digest(credentials.password, settings.env.DASHBOARD_PASS)
+    username = settings.env.DASHBOARD_USER
+    password = settings.env.DASHBOARD_PASS
+    if not username or not password:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Unauthorized",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    correct_username = secrets.compare_digest(credentials.username, username)
+    correct_password = secrets.compare_digest(credentials.password, password)
 
     if not (correct_username and correct_password):
         raise HTTPException(

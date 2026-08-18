@@ -57,7 +57,13 @@
     .runs-table {
       width: 100%;
       border-collapse: collapse;
-      min-width: 780px;
+      min-width: 900px;
+    }
+    .runs-table td:last-child {
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .runs-table th,
     .runs-table td {
@@ -275,11 +281,12 @@
               <th>Duration</th>
               <th>Ingested</th>
               <th>Skipped</th>
+              <th>Error</th>
             </tr>
           </thead>
           <tbody id="ingestion-runs-body">
             <tr>
-              <td colspan="6" class="small">Loading...</td>
+              <td colspan="7" class="small">Loading...</td>
             </tr>
           </tbody>
         </table>
@@ -401,8 +408,7 @@
       if (!runs.length) {
         const row = document.createElement('tr');
         const cell = document.createElement('td');
-        cell.colSpan = 6;
-        cell.className = 'small';
+        cell.colSpan = 7;
         cell.textContent = 'No ingestion runs logged yet';
         row.appendChild(cell);
         body.appendChild(row);
@@ -434,12 +440,17 @@
         const skipped = document.createElement('td');
         skipped.textContent = (run.items_skipped ?? 0).toLocaleString();
 
+        const error = document.createElement('td');
+        error.textContent = run.error_message ? run.error_message.slice(0, 80) : '';
+        error.title = run.error_message || '';
+
         row.appendChild(started);
         row.appendChild(connector);
         row.appendChild(status);
         row.appendChild(duration);
         row.appendChild(ingested);
         row.appendChild(skipped);
+        row.appendChild(error);
         body.appendChild(row);
       });
 

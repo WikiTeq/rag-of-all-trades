@@ -1,7 +1,7 @@
 """add ingestion runs table
 
 Revision ID: 2c5cc8f11250
-Revises: 1a19b9367fce
+Revises: 5feb1e3a07ce
 Create Date: 2026-02-24 03:20:00.000000
 
 """
@@ -34,7 +34,6 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_ingestion_runs_id"), "ingestion_runs", ["id"], unique=False)
     op.create_index(op.f("ix_ingestion_runs_connector_name"), "ingestion_runs", ["connector_name"], unique=False)
     op.create_index(op.f("ix_ingestion_runs_connector_type"), "ingestion_runs", ["connector_type"], unique=False)
     op.create_index(op.f("ix_ingestion_runs_started_at"), "ingestion_runs", ["started_at"], unique=False)
@@ -46,5 +45,4 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_ingestion_runs_started_at"), table_name="ingestion_runs")
     op.drop_index(op.f("ix_ingestion_runs_connector_type"), table_name="ingestion_runs")
     op.drop_index(op.f("ix_ingestion_runs_connector_name"), table_name="ingestion_runs")
-    op.drop_index(op.f("ix_ingestion_runs_id"), table_name="ingestion_runs")
     op.drop_table("ingestion_runs")
