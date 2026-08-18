@@ -566,6 +566,7 @@ sources:
       integration_token: "${NOTION1_INTEGRATION_TOKEN}"
       page_ids: "${NOTION1_PAGE_IDS}"          # optional: comma-separated page IDs
       database_ids: "${NOTION1_DATABASE_IDS}"  # optional: comma-separated database IDs
+      request_delay: 0.3                       # optional: delay between API calls in seconds
       schedules: "${NOTION1_SCHEDULES}"
 ```
 
