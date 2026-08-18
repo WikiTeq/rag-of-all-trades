@@ -3,6 +3,7 @@ import logging
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 # Third-party imports
 import gitlab
@@ -122,12 +123,18 @@ class GitLabIngestionJob(IngestionJob):
 
         self._repo_reader: GitLabRepositoryReader | None = None
         self._issues_reader: GitLabIssuesReader | None = None
+        # GitLabRepositoryReader's Document.extra_info never exposes the project's
+        # web_url/path_with_namespace, only the numeric project_id (not a valid
+        # browse-URL path segment) — fetch it once here so get_extra_metadata() can
+        # build a real browse URL instead of the reader's broken raw API link.
+        self._project_web_url: str | None = None
 
         if self.project_id:
             self._repo_reader = GitLabRepositoryReader(
                 gitlab_client=gl,
                 project_id=self.project_id,
             )
+            self._project_web_url = gl.projects.get(self.project_id).web_url
 
         if self.include_issues:
             # GitLabIssuesReader.load_data() requires project_id or group_id at
@@ -292,16 +299,43 @@ class GitLabIngestionJob(IngestionJob):
             if extra.get("closed_at"):
                 result["closed_at"] = extra["closed_at"]
         else:
+            file_path = extra.get("file_path", "")
             result.update(
                 {
                     "item_type": "file",
-                    "file_path": extra.get("file_path", ""),
-                    "file_name": extra.get("file_name", item_name),
-                    "url": extra.get("url", ""),
+                    "file_path": file_path,
+                    # "file_name" is reserved by BaseMetadataSchema; process_item()
+                    # overwrites it from get_item_name() and silently drops this
+                    # extra, so the real basename never lands in the vector. Use a
+                    # non-reserved key instead, same fix as OneDrive's
+                    # "onedrive_file_name".
+                    "gitlab_file_name": extra.get("file_name", item_name),
+                    "url": self._file_browse_url(file_path),
                 }
             )
 
         return result
+
+    def _file_browse_url(self, file_path: str) -> str:
+        """Build a browsable GitLab blob URL for a repository file.
+
+        GitLabRepositoryReader's Document.extra_info only ever sets a broken raw
+        API path (extra "/projects" segment, no ref, path unencoded) as "url" —
+        not useful as citation metadata. Build a real "-/blob/<ref>/<path>" URL
+        against the project's web_url instead, same idea as the Jira connector's
+        issue_url/source fields. Falls back to the raw project_id-based URL if the
+        project's web_url could not be resolved (should not normally happen, since
+        it's fetched once in __init__ whenever project_id is set).
+        """
+        if not file_path:
+            return ""
+        base = self._project_web_url or f"{self.gitlab_url}/{self.project_id}"
+        # Percent-encode "/" in the ref (safe="") so a ref like "feature/x" can't
+        # be misread as extra path segments against the file path that follows;
+        # the file path itself keeps "/" unescaped since those are real separators.
+        encoded_ref = quote(self.ref, safe="")
+        encoded_path = quote(file_path)
+        return f"{base}/-/blob/{encoded_ref}/{encoded_path}"
 
     # ------------------------------------------------------------------
     # Helpers
