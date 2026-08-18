@@ -1,4 +1,5 @@
 import unittest
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -317,6 +318,25 @@ class TestNotionGetItemName(unittest.TestCase):
         long_id = "a" * 300
         item = IngestionItem(id=f"notion:{long_id}", source_ref=long_id)
         self.assertLessEqual(len(job.get_item_name(item)), 255)
+
+
+class TestNotionGetItemChecksum(unittest.TestCase):
+    def setUp(self):
+        self.mock_client = MagicMock()
+
+    def test_derives_checksum_from_last_modified(self):
+        job = _make_job(self.mock_client)
+        item = IngestionItem(
+            id="notion:page-1",
+            source_ref="page-1",
+            last_modified=datetime(2024, 1, 1, tzinfo=UTC),
+        )
+        self.assertEqual(job.get_item_checksum(item), "page-1:2024-01-01T00:00:00+00:00")
+
+    def test_returns_none_when_last_modified_missing(self):
+        job = _make_job(self.mock_client)
+        item = IngestionItem(id="notion:page-1", source_ref="page-1")
+        self.assertIsNone(job.get_item_checksum(item))
 
 
 class TestNotionGetDocumentMetadata(unittest.TestCase):
