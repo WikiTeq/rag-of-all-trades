@@ -232,19 +232,18 @@ class GitLabIngestionJob(IngestionJob):
         group-scoped ingestion. Used by both list_items() and get_item_name()
         so item.id and item_name stay consistent for version tracking.
 
-        Falls back to doc.doc_id (the iid) if "url" is missing or empty; this
-        silently reintroduces the group-scoped collision this method exists to
-        prevent, so it's logged as a warning rather than passed through quietly.
+        Raises if "url" is missing or empty rather than falling back to
+        doc.doc_id (the iid): that fallback would silently reintroduce the
+        group-scoped collision this method exists to prevent, so a missing
+        url must fail the item instead of passing through quietly.
         """
         issue_url = (doc.metadata or {}).get("url")
         if not issue_url:
-            logger.warning(
-                "[%s] GitLab issue %s has no 'url' metadata; falling back to "
-                "project-scoped iid, which can collide across projects in group-scoped ingestion",
-                self.source_name,
-                doc.doc_id,
+            raise ValueError(
+                f"[{self.source_name}] GitLab issue {doc.doc_id!r} has no 'url' metadata; "
+                "cannot build a stable identity without it (project-scoped iid alone can "
+                "collide across projects in group-scoped ingestion)"
             )
-            return doc.doc_id
         return issue_url
 
     def get_raw_content(self, item: IngestionItem) -> str:
@@ -272,9 +271,14 @@ class GitLabIngestionJob(IngestionJob):
         result: dict[str, Any] = {"gitlab_url": self.gitlab_url}
 
         if ":issue:" in item.id:
+            # The reader embeds "{title}\n{description}" as doc.text and does not
+            # expose the title in metadata separately; extract it here so citations
+            # and filters get a human-readable name, same pattern as Jira's "title".
+            title = (doc.text or "").split("\n", 1)[0]
             result.update(
                 {
                     "item_type": "issue",
+                    "title": title,
                     "issue_number": doc.doc_id,
                     "state": extra.get("state", ""),
                     "labels": extra.get("labels", []),
