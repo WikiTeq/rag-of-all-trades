@@ -556,7 +556,13 @@ ONEDRIVE1_SCHEDULES=3600
 The GitLab connector ingests repository files and optionally issues from a GitLab project or group.
 Uses [LlamaIndex GitLab readers](https://llamahub.ai/l/readers/llama-index-readers-gitlab) for all
 discovery and content fetching. Supports both GitLab.com and self-hosted instances via a Personal
-Access Token with `read_repository` and `read_api` scopes.
+Access Token with the `read_api` scope — it covers both the repository files and issues APIs that this
+connector uses.
+
+> **Known limitation:** `GitLabRepositoryReader.load_data()` re-downloads all repository file content on
+> every scheduled run; ROAT's vector checksum skip does not reduce GitLab API calls for the files
+> connector. This is a limitation of the underlying LlamaIndex reader, not this connector, for the
+> current iteration.
 
 ```yaml
 # config.yaml
