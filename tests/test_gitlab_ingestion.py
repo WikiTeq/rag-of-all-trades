@@ -29,7 +29,8 @@ def _make_config(
     issues_author=None,
     issues_milestone=None,
     issues_search=None,
-    issues_get_all=False,
+    issues_get_all=True,
+    issues_iids=None,
 ):
     return {
         "name": "test_gitlab",
@@ -50,6 +51,7 @@ def _make_config(
             "issues_milestone": issues_milestone,
             "issues_search": issues_search,
             "issues_get_all": issues_get_all,
+            "issues_iids": issues_iids,
         },
     }
 
@@ -137,6 +139,21 @@ class TestGitLabIngestionJob(unittest.TestCase):
                     "config": {
                         "gitlab_url": "https://gitlab.com",
                         "personal_token": "t",
+                    },
+                }
+            )
+
+    def test_project_and_group_both_set_raises(self):
+        with self.assertRaises(ValueError):
+            GitLabIngestionJob(
+                {
+                    "name": "x",
+                    "config": {
+                        "gitlab_url": "https://gitlab.com",
+                        "personal_token": "t",
+                        "project_id": 12345,
+                        "group_id": 999,
+                        "include_issues": True,
                     },
                 }
             )
@@ -561,6 +578,18 @@ class TestGitLabIngestionJob(unittest.TestCase):
         call_kwargs = self.mock_issues_reader.load_data.call_args.kwargs
         self.assertEqual(call_kwargs["iids"], [1, 2, 3])
 
+    def test_issues_iids_parses_comma_separated_string(self):
+        job = self._make_job(include_issues=True, issues_iids="1,2,3")
+        self.assertEqual(job.issues_iids, [1, 2, 3])
+
+    def test_issues_iids_parses_yaml_list(self):
+        job = self._make_job(include_issues=True, issues_iids=[1, 2, 3])
+        self.assertEqual(job.issues_iids, [1, 2, 3])
+
+    def test_issues_iids_empty_is_none(self):
+        job = self._make_job(include_issues=True, issues_iids=None)
+        self.assertIsNone(job.issues_iids)
+
     def test_list_items_issue_confidential_passed(self):
         self.mock_repo_reader.load_data.return_value = []
         self.mock_issues_reader.load_data.return_value = []
@@ -595,7 +624,11 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertFalse(job.include_issues)
 
     def test_parse_bool_flows_through_issues_get_all(self):
-        job = self._make_job(issues_get_all="true")
+        job = self._make_job(issues_get_all="false")
+        self.assertFalse(job.issues_get_all)
+
+    def test_issues_get_all_defaults_true(self):
+        job = self._make_job(issues_get_all=None)
         self.assertTrue(job.issues_get_all)
 
     # ------------------------------------------------------------------
