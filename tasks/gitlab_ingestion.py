@@ -1,5 +1,6 @@
 # Standard library imports
 import logging
+import re
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -262,13 +263,39 @@ class GitLabIngestionJob(IngestionJob):
         extra = doc.metadata or {}
 
         if ":issue:" in item.id:
-            scope = self.project_id or self.group_id
-            name = f"gitlab_issue_{scope}_{slugify(self._issue_identity(doc))}"
+            # _issue_short_id() embeds project_id, which disambiguates within a
+            # single GitLab instance, but two configured sources pointed at
+            # different instances (e.g. gitlab.com and a self-hosted server)
+            # can have the same project_id — prefix with source_name too, same
+            # pattern as the Slack connector's get_item_name().
+            name = f"gitlab_issue_{self.source_name}_{slugify(self._issue_short_id(doc))}"
         else:
             file_path = extra.get("file_path", doc.doc_id or "")
             name = slugify(file_path) if file_path else ""
 
         return name[:255] if name else item.id[:255]
+
+    _ISSUE_URL_RE = re.compile(r"/projects/(?P<project_id>\d+)/issues/(?P<iid>\d+)/?$")
+
+    def _issue_short_id(self, doc: Any) -> str:
+        """Return a short, human-readable, still-unique issue id for get_item_name().
+
+        _issue_identity() returns the full API self-link (e.g.
+        ".../projects/12345/issues/7") for use as the stable tracker key in
+        item.id. Using that same full URL for get_item_name() via
+        slugify(full_url) produces an ugly, hard-to-read name — but the id
+        must still be unique across projects, which the iid alone is not in
+        group-scoped ingestion (two projects in one group can both have issue
+        #7). Extract "<project_id>_<iid>" from the URL instead: short and
+        readable, but still unique per project+issue regardless of scope
+        mode. Falls back to the full identity if the URL doesn't match the
+        expected GitLab API shape.
+        """
+        identity = self._issue_identity(doc)
+        match = self._ISSUE_URL_RE.search(identity)
+        if not match:
+            return identity
+        return f"{match['project_id']}_{match['iid']}"
 
     def get_extra_metadata(self, item: IngestionItem, _content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         doc = item.source_ref
