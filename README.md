@@ -557,7 +557,7 @@ The Dropbox connector ingests files from Dropbox using the [official Dropbox Pyt
 Supports ingesting from specific paths or the entire account root, with optional extension and directory filters.
 Content is extracted with [MarkItDown](https://github.com/microsoft/markitdown) and falls back to raw text.
 
-Authentication requires a [Dropbox access token](https://www.dropbox.com/developers/apps) with `files.content.read` scope.
+Authentication requires a [Dropbox access token](https://www.dropbox.com/developers/apps) with `files.content.read` and `files.metadata.read` scopes.
 
 ```yaml
 # config.yaml
