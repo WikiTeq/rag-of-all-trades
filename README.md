@@ -30,6 +30,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Pipedrive
 * Slack
 * IMAP
+* OneDrive (OneDrive for Business — App authentication)
 
 ## Embeddings support
 
@@ -504,6 +505,48 @@ IMAP1_USERNAME=your-email@gmail.com
 IMAP1_PASSWORD=your-app-specific-password
 IMAP1_MAILBOXES=INBOX,Sent
 IMAP1_SCHEDULES=3600
+```
+
+### OneDrive Connector
+
+The OneDrive connector ingests files from Microsoft OneDrive for Business (Microsoft 365) using App
+authentication (client credentials). Files can be selected by folder ID, folder path, file IDs, or file
+paths. Recursive subfolder traversal and MIME type filtering are supported.
+
+> **Note:** Only OneDrive for Business is supported. OneDrive Personal accounts are not supported.
+
+The Azure app registration needs the **application** permission `Files.Read.All` with admin consent
+granted. Without it, Graph API calls fail with a 403 error.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "onedrive"
+    name: "onedrive1"
+    config:
+      client_id: "${ONEDRIVE1_CLIENT_ID}"
+      client_secret: "${ONEDRIVE1_CLIENT_SECRET}"
+      tenant_id: "${ONEDRIVE1_TENANT_ID}"
+      userprincipalname: "${ONEDRIVE1_USER_PRINCIPAL_NAME}"
+      folder_path: "Documents/Reports"  # optional: hardcode directly in config
+      folder_id:                        # optional: OneDrive folder ID
+      file_ids:                         # optional: comma-separated file IDs
+      file_paths:                       # optional: comma-separated file paths
+      mime_types:                       # optional: comma-separated MIME types to filter
+      recursive: true                   # optional, default true
+      max_file_size_mb: 50              # optional, default 50; files larger than this are skipped
+      schedules: "${ONEDRIVE1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+ONEDRIVE1_CLIENT_ID=your-azure-app-client-id
+ONEDRIVE1_CLIENT_SECRET=your-azure-app-client-secret
+ONEDRIVE1_TENANT_ID=your-azure-tenant-id
+ONEDRIVE1_USER_PRINCIPAL_NAME=user@your-org.onmicrosoft.com
+ONEDRIVE1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`

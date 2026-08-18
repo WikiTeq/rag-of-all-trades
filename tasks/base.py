@@ -313,32 +313,34 @@ class IngestionJob(ABC):
 
         Discovers all items using list_items(), processes each one through process_item(),
         and provides comprehensive progress tracking and error reporting. Continues
-        processing even if individual items fail.
+        processing even if individual items fail — but a fatal error while discovering
+        items (list_items() itself raising, e.g. an auth or listing-API failure) is not
+        swallowed: it propagates so the Celery task is marked FAILED instead of silently
+        "succeeding" with an error logged nobody reads (the task result is discarded via
+        ignore_result=True).
 
         Returns:
-            str: Summary message indicating total items processed, skipped, and any errors
+            str: Summary message indicating total items processed and skipped
+
+        Raises:
+            Exception: Any exception raised while iterating list_items() or otherwise
+                outside process_item()'s own per-item error handling.
         """
         total = 0
         skipped = 0
 
         logger.info(f"[{self.source_name}] Starting ingestion job")
 
-        try:
-            for item in self.list_items():
-                count = self.process_item(item)
-                if count == 0:
-                    skipped += 1
-                    continue
+        for item in self.list_items():
+            count = self.process_item(item)
+            if count == 0:
+                skipped += 1
+                continue
 
-                total += count
-                if self.request_delay > 0:
-                    time.sleep(self.request_delay)
+            total += count
+            if self.request_delay > 0:
+                time.sleep(self.request_delay)
 
-            result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
-            logger.info(result_msg)
-            return result_msg
-
-        except Exception as e:
-            error_msg = f"[{self.source_name}] Job failed: {e}"
-            logger.exception(error_msg)
-            return f"{error_msg}. Partial results: {total} ingested, {skipped} skipped"
+        result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
+        logger.info(result_msg)
+        return result_msg

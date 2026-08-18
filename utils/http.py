@@ -23,8 +23,10 @@ class RetrySession:
         self.timeout = timeout
         self._session = requests.Session()
 
-    def get(self, url: str, *, params: Any = None, headers: dict | None = None) -> requests.Response:
-        return self._request("GET", url, params=params, headers=headers)
+    def get(
+        self, url: str, *, params: Any = None, headers: dict | None = None, stream: bool = False
+    ) -> requests.Response:
+        return self._request("GET", url, params=params, headers=headers, stream=stream)
 
     def post(
         self, url: str, *, json: Any = None, headers: dict | None = None, retry: bool = False
