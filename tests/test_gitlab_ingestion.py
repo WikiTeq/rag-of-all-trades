@@ -22,6 +22,7 @@ def _make_config(
     path=None,
     file_path=None,
     recursive=True,
+    files_iterator=True,
     include_issues=False,
     issues_state="opened",
     issues_labels="",
@@ -43,6 +44,7 @@ def _make_config(
             "path": path,
             "file_path": file_path,
             "recursive": recursive,
+            "files_iterator": files_iterator,
             "include_issues": include_issues,
             "issues_state": issues_state,
             "issues_labels": issues_labels,
@@ -247,6 +249,24 @@ class TestGitLabIngestionJob(unittest.TestCase):
         call_kwargs = self.mock_repo_reader.load_data.call_args.kwargs
         self.assertEqual(call_kwargs["path"], "docs")
         self.assertFalse(call_kwargs["recursive"])
+
+    def test_list_items_passes_iterator_default_true(self):
+        # files_iterator=None so the key round-trips through config as unset
+        # (dict.get returns None either way), exercising the connector's actual
+        # parse_bool(..., default=True) path rather than just echoing back a
+        # value _make_config() supplied.
+        self.mock_repo_reader.load_data.return_value = []
+        job = self._make_job(files_iterator=None)
+        list(job.list_items())
+        call_kwargs = self.mock_repo_reader.load_data.call_args.kwargs
+        self.assertTrue(call_kwargs["iterator"])
+
+    def test_list_items_passes_iterator_false(self):
+        self.mock_repo_reader.load_data.return_value = []
+        job = self._make_job(files_iterator=False)
+        list(job.list_items())
+        call_kwargs = self.mock_repo_reader.load_data.call_args.kwargs
+        self.assertFalse(call_kwargs["iterator"])
 
     def test_list_items_file_error_raises(self):
         self.mock_repo_reader.load_data.side_effect = Exception("API error")
