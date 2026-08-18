@@ -104,6 +104,16 @@ class NotionIngestionJob(IngestionJob):
         name = title if title else item.source_ref
         return slugify(name)
 
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        """Return a checksum derived from the page's last-edited time, so unchanged
+        pages skip the block walk in get_raw_content().
+
+        Returns None when last_modified is unavailable, falling back to content-based MD5.
+        """
+        if item.last_modified is None:
+            return None
+        return f"{item.source_ref}:{item.last_modified.isoformat()}"
+
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return Notion-specific metadata fields."""
         page_id: str = item.source_ref
