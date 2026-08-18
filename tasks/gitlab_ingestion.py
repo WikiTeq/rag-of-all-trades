@@ -26,8 +26,13 @@ class GitLabIngestionJob(IngestionJob):
     Configuration (config.yaml):
         - config.gitlab_url: GitLab server URL (required, e.g. "https://gitlab.com")
         - config.personal_token: GitLab personal access token (required)
-        - config.project_id: GitLab project ID, integer (required unless group_id set)
-        - config.group_id: GitLab group ID for issues (optional, mutually exclusive with project_id for repo)
+        - config.project_id: GitLab project ID, integer. Mutually exclusive with
+          group_id — one of the two is required. Ingests repository files (and,
+          if include_issues is set, that project's issues only).
+        - config.group_id: GitLab group ID, integer. Mutually exclusive with
+          project_id — one of the two is required. Ingests issues across every
+          project in the group (include_issues must be set; repository files
+          are not supported in group mode).
         - config.ref: Branch or commit ref for repository files (optional, default "main")
         - config.path: Sub-directory path to limit repository file loading (optional)
         - config.file_path: Single file path to load, instead of a directory (optional)
@@ -40,13 +45,15 @@ class GitLabIngestionJob(IngestionJob):
         - config.issues_author: Author username or ID filter (optional)
         - config.issues_milestone: Milestone title filter (optional)
         - config.issues_search: Free-text search filter (optional)
-        - config.issues_get_all: Fetch all pages of issues (optional, default False)
+        - config.issues_get_all: Fetch all pages of issues (optional, default True;
+          set to False to cap at the first page, GitLab's default page size of 20)
         - config.issues_confidential: Filter by confidential flag (optional)
         - config.issues_created_after: Only issues created after this ISO-8601 timestamp (optional)
         - config.issues_created_before: Only issues created before this ISO-8601 timestamp (optional)
         - config.issues_updated_after: Only issues updated after this ISO-8601 timestamp (optional)
         - config.issues_updated_before: Only issues updated before this ISO-8601 timestamp (optional)
-        - config.issues_iids: Filter by specific issue IIDs, list of integers (optional)
+        - config.issues_iids: Filter by specific issue IIDs (optional); a YAML list
+          of integers or a comma-separated string ("1,2,3"), like issues_labels
         - config.issues_type: Issue type filter "issue"/"incident"/"test_case"/"task" (optional)
         - config.issues_non_archived: Exclude issues from archived projects (optional)
         - config.issues_scope: Scope filter "created_by_me"/"assigned_to_me"/"all" (optional)
@@ -77,6 +84,14 @@ class GitLabIngestionJob(IngestionJob):
         if not self.project_id and not self.group_id:
             raise ValueError("At least one of project_id or group_id is required in GitLab connector config")
 
+        if self.project_id and self.group_id:
+            raise ValueError(
+                "project_id and group_id are mutually exclusive in GitLab connector config: "
+                "repository files only ever come from project_id, while issues would silently "
+                "switch to all group issues (overwriting project-scoped results) if group_id is "
+                "also set. Configure one connector per scope instead."
+            )
+
         # Repository options
         self.ref: str = str(cfg.get("ref", "main"))
         self.path: str | None = cfg.get("path") or None
@@ -92,13 +107,13 @@ class GitLabIngestionJob(IngestionJob):
         self.issues_author: str | None = cfg.get("issues_author") or None
         self.issues_milestone: str | None = cfg.get("issues_milestone") or None
         self.issues_search: str | None = cfg.get("issues_search") or None
-        self.issues_get_all: bool = parse_bool(cfg.get("issues_get_all"), default=False)
+        self.issues_get_all: bool = parse_bool(cfg.get("issues_get_all"), default=True)
         self.issues_confidential: bool | None = self._parse_bool_optional(cfg.get("issues_confidential"))
         self.issues_created_after: datetime | None = parse_timestamp(cfg.get("issues_created_after"))
         self.issues_created_before: datetime | None = parse_timestamp(cfg.get("issues_created_before"))
         self.issues_updated_after: datetime | None = parse_timestamp(cfg.get("issues_updated_after"))
         self.issues_updated_before: datetime | None = parse_timestamp(cfg.get("issues_updated_before"))
-        self.issues_iids: list[int] | None = cfg.get("issues_iids") or None
+        self.issues_iids: list[int] | None = self._parse_int_list(cfg.get("issues_iids"))
         self.issues_type: GitLabIssuesReader.IssueType | None = self._resolve_issue_type_enum(cfg.get("issues_type"))
         self.issues_non_archived: bool | None = self._parse_bool_optional(cfg.get("issues_non_archived"))
         self.issues_scope: GitLabIssuesReader.Scope | None = self._resolve_scope_enum(cfg.get("issues_scope"))
@@ -294,6 +309,16 @@ class GitLabIngestionJob(IngestionJob):
         if value is None:
             return None
         return parse_bool(value)
+
+    @staticmethod
+    def _parse_int_list(value: Any) -> list[int] | None:
+        """Parse a YAML list or comma-separated string of issue IIDs into ints.
+
+        Mirrors issues_labels' use of parse_list() so a comma-separated/
+        env-substituted string ("1,2,3") works the same as a native YAML list.
+        """
+        items = parse_list(value)
+        return [int(v) for v in items] or None
 
     @staticmethod
     def _resolve_enum(enum_class, value, default=None):
