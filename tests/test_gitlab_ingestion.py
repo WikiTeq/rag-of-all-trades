@@ -262,33 +262,34 @@ class TestGitLabIngestionJob(unittest.TestCase):
             "gitlab:12345:issue:https://gitlab.com/api/v4/projects/12345/issues/7",
         )
 
-    def test_list_items_issue_id_falls_back_to_iid_without_url(self):
+    def test_list_items_issue_missing_url_raises(self):
+        # Falling back to doc_id (the project-scoped iid) would silently
+        # reintroduce the group-scoped collision _issue_identity exists to
+        # prevent, so a missing "url" must fail the item, not fall back.
         self.mock_repo_reader.load_data.return_value = []
         doc = _make_issue_doc("7")
         del doc.metadata["url"]
         self.mock_issues_reader.load_data.return_value = [doc]
         job = self._make_job(project_id=12345, include_issues=True)
-        items = list(job.list_items())
-        self.assertEqual(items[0].id, "gitlab:12345:issue:7")
+        with self.assertRaises(ValueError):
+            list(job.list_items())
 
-    def test_list_items_issue_id_falls_back_to_iid_with_empty_url(self):
-        # "url" present but empty ("") must fall back the same as a missing key.
+    def test_list_items_issue_empty_url_raises(self):
+        # "url" present but empty ("") must fail the same as a missing key.
         self.mock_repo_reader.load_data.return_value = []
         doc = _make_issue_doc("7")
         doc.metadata["url"] = ""
         self.mock_issues_reader.load_data.return_value = [doc]
         job = self._make_job(project_id=12345, include_issues=True)
-        items = list(job.list_items())
-        self.assertEqual(items[0].id, "gitlab:12345:issue:7")
+        with self.assertRaises(ValueError):
+            list(job.list_items())
 
-    def test_issue_identity_logs_warning_on_missing_url(self):
+    def test_issue_identity_raises_on_missing_url(self):
         doc = _make_issue_doc("7")
         del doc.metadata["url"]
         job = self._make_job(project_id=12345, include_issues=True)
-        with self.assertLogs("tasks.gitlab_ingestion", level="WARNING") as cm:
-            identity = job._issue_identity(doc)
-        self.assertEqual(identity, "7")
-        self.assertTrue(any("falling back to project-scoped iid" in msg for msg in cm.output))
+        with self.assertRaises(ValueError):
+            job._issue_identity(doc)
 
     def test_list_items_issue_id_no_collision_across_projects_in_group(self):
         # Regression test: two projects in the same group can share an iid.
@@ -365,12 +366,13 @@ class TestGitLabIngestionJob(unittest.TestCase):
             "gitlab_issue_12345_https___gitlab.com_api_v4_projects_12345_issues_42",
         )
 
-    def test_get_item_name_issue_falls_back_to_iid_without_url(self):
+    def test_get_item_name_issue_missing_url_raises(self):
         doc = _make_issue_doc(iid="42")
         del doc.metadata["url"]
         item = IngestionItem(id="gitlab:12345:issue:42", source_ref=doc)
         job = self._make_job(project_id=12345)
-        self.assertEqual(job.get_item_name(item), "gitlab_issue_12345_42")
+        with self.assertRaises(ValueError):
+            job.get_item_name(item)
 
     def test_get_item_name_file_no_doc_id_or_file_path_falls_back_to_item_id(self):
         doc = Mock()
@@ -413,6 +415,23 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertEqual(meta["state"], "opened")
         self.assertIn("bug", meta["labels"])
         self.assertIn("gitlab.com", meta["url"])
+
+    def test_get_extra_metadata_issue_title_extracted_from_text(self):
+        # The reader embeds "{title}\n{description}" as doc.text and never
+        # exposes title in metadata separately (see _make_issue_doc's default
+        # text="Issue title\nIssue body").
+        doc = _make_issue_doc(iid="7")
+        item = IngestionItem(id="gitlab:12345:issue:7", source_ref=doc)
+        job = self._make_job(project_id=12345, include_issues=True)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["title"], "Issue title")
+
+    def test_get_extra_metadata_issue_title_empty_text(self):
+        doc = _make_issue_doc(iid="7", text="")
+        item = IngestionItem(id="gitlab:12345:issue:7", source_ref=doc)
+        job = self._make_job(project_id=12345, include_issues=True)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["title"], "")
 
     def test_get_extra_metadata_issue_assignee_present(self):
         doc = _make_issue_doc(iid="8")
