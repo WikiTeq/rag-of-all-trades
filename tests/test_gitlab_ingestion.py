@@ -104,6 +104,12 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.mock_repo_reader_class.return_value = self.mock_repo_reader
         self.mock_issues_reader_class.return_value = self.mock_issues_reader
 
+        # __init__ fetches the project's web_url via gl.projects.get(project_id)
+        # to build browse URLs in get_extra_metadata(); give it a real string so
+        # tests exercise the actual URL-building logic, not a Mock's repr.
+        self.mock_gitlab_client = self.mock_gitlab_class.return_value
+        self.mock_gitlab_client.projects.get.return_value.web_url = "https://gitlab.com/mygroup/myrepo"
+
     def tearDown(self):
         self._gitlab_patcher.stop()
         self._repo_reader_patcher.stop()
@@ -118,6 +124,26 @@ class TestGitLabIngestionJob(unittest.TestCase):
 
     def test_source_type(self):
         self.assertEqual(self._make_job().source_type, "gitlab")
+
+    def test_init_fetches_project_web_url_when_project_id_set(self):
+        job = self._make_job(project_id=12345)
+        self.mock_gitlab_client.projects.get.assert_called_once_with(12345)
+        self.assertEqual(job._project_web_url, "https://gitlab.com/mygroup/myrepo")
+
+    def test_init_skips_web_url_fetch_in_group_only_mode(self):
+        job = GitLabIngestionJob(
+            {
+                "name": "x",
+                "config": {
+                    "gitlab_url": "https://gitlab.com",
+                    "personal_token": "t",
+                    "group_id": 999,
+                    "include_issues": True,
+                },
+            }
+        )
+        self.mock_gitlab_client.projects.get.assert_not_called()
+        self.assertIsNone(job._project_web_url)
 
     # ------------------------------------------------------------------
     # Validation
@@ -400,6 +426,53 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertEqual(meta["item_type"], "file")
         self.assertEqual(meta["file_path"], "README.md")
         self.assertEqual(meta["gitlab_url"], "https://gitlab.com")
+
+    def test_get_extra_metadata_file_name_not_reserved_key(self):
+        # BaseMetadataSchema reserves "file_name"; process_item() overwrites it
+        # from get_item_name() and silently drops any extra with that key, so
+        # the real basename must live under a non-reserved key instead.
+        doc = _make_file_doc(file_path="docs/README.md")
+        item = IngestionItem(id="gitlab:12345:file:docs/README.md", source_ref=doc)
+        job = self._make_job(project_id=12345)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertNotIn("file_name", meta)
+        self.assertEqual(meta["gitlab_file_name"], "README.md")
+
+    def test_get_extra_metadata_file_url_is_browse_url(self):
+        doc = _make_file_doc(file_path="docs/guide.md")
+        item = IngestionItem(id="gitlab:12345:file:docs/guide.md", source_ref=doc)
+        job = self._make_job(project_id=12345, ref="main")
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["url"], "https://gitlab.com/mygroup/myrepo/-/blob/main/docs/guide.md")
+
+    def test_get_extra_metadata_file_url_encodes_special_characters(self):
+        # The file path keeps "/" unescaped (those are real path separators),
+        # but ref slashes are percent-encoded so a branch like "feature/x" can't
+        # be misread as extra path segments against the file path that follows.
+        doc = _make_file_doc(file_path="docs/a b#c.md")
+        item = IngestionItem(id="gitlab:12345:file:docs/a b#c.md", source_ref=doc)
+        job = self._make_job(project_id=12345, ref="feature/x")
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(
+            meta["url"],
+            "https://gitlab.com/mygroup/myrepo/-/blob/feature%2Fx/docs/a%20b%23c.md",
+        )
+
+    def test_get_extra_metadata_file_url_empty_when_no_file_path(self):
+        doc = _make_file_doc(file_path="")
+        doc.metadata["file_path"] = ""
+        item = IngestionItem(id="gitlab:12345:file:empty", source_ref=doc)
+        job = self._make_job(project_id=12345)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["url"], "")
+
+    def test_get_extra_metadata_file_url_falls_back_without_web_url(self):
+        doc = _make_file_doc(file_path="README.md")
+        item = IngestionItem(id="gitlab:12345:file:README.md", source_ref=doc)
+        job = self._make_job(project_id=12345, ref="main")
+        job._project_web_url = None
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["url"], "https://gitlab.com/12345/-/blob/main/README.md")
 
     # ------------------------------------------------------------------
     # get_extra_metadata — issues
