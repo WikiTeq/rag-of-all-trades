@@ -351,6 +351,36 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertEqual(len(items), 2)
         self.assertNotEqual(items[0].id, items[1].id)
 
+    def test_get_item_name_issue_no_collision_across_projects_in_group(self):
+        # Regression test for the same iid-collision class, but for
+        # get_item_name() (the metadata-tracker key) rather than item.id:
+        # _issue_short_id() embeds project_id from the url, so two projects
+        # in the same group sharing an iid still get distinct tracker keys.
+        doc_a = _make_issue_doc("5")
+        doc_a.metadata["url"] = "https://gitlab.com/api/v4/projects/111/issues/5"
+        doc_b = _make_issue_doc("5")
+        doc_b.metadata["url"] = "https://gitlab.com/api/v4/projects/222/issues/5"
+        job = self._make_job(project_id=None, group_id=999, include_issues=True)
+        item_a = IngestionItem(id="gitlab:999:issue:a", source_ref=doc_a)
+        item_b = IngestionItem(id="gitlab:999:issue:b", source_ref=doc_b)
+        self.assertNotEqual(job.get_item_name(item_a), job.get_item_name(item_b))
+        self.assertEqual(job.get_item_name(item_a), "gitlab_issue_test_gitlab_111_5")
+        self.assertEqual(job.get_item_name(item_b), "gitlab_issue_test_gitlab_222_5")
+
+    def test_get_item_name_issue_no_collision_across_sources(self):
+        # Two configured sources on different GitLab instances can share the
+        # same numeric project_id + iid; source_name in the key keeps their
+        # tracker entries from colliding (matches the Slack connector's
+        # get_item_name() pattern for the same reason).
+        doc = _make_issue_doc("7")
+        doc.metadata["url"] = "https://gitlab.com/api/v4/projects/123/issues/7"
+        item = IngestionItem(id="gitlab:123:issue:7", source_ref=doc)
+        job_a = self._make_job()
+        job_a.source_name = "gitlab_com_source"
+        job_b = self._make_job()
+        job_b.source_name = "self_hosted_source"
+        self.assertNotEqual(job_a.get_item_name(item), job_b.get_item_name(item))
+
     def test_list_items_issue_state_passed(self):
         self.mock_repo_reader.load_data.return_value = []
         self.mock_issues_reader.load_data.return_value = []
@@ -402,15 +432,21 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertEqual(job.get_item_name(item), "docs_guide.md")
 
     def test_get_item_name_issue(self):
-        # Mirrors the item.id fix: name is derived from the unique url, not the
-        # project-scoped iid, so it doesn't collide across projects in a group.
+        # Name uses a short "<project_id>_<iid>" extracted from the unique url
+        # (not slugify(full_url), which is unreadable, and not the bare iid,
+        # which collides across projects in a group) — per review feedback.
+        # source_name is prefixed too, since project_id alone can also collide
+        # across different GitLab instances configured as separate sources.
         doc = _make_issue_doc(iid="42")
         item = IngestionItem(id="gitlab:12345:issue:42", source_ref=doc)
         job = self._make_job(project_id=12345)
-        self.assertEqual(
-            job.get_item_name(item),
-            "gitlab_issue_12345_https___gitlab.com_api_v4_projects_12345_issues_42",
-        )
+        self.assertEqual(job.get_item_name(item), "gitlab_issue_test_gitlab_12345_42")
+
+    def test_issue_short_id_falls_back_to_full_identity_on_unexpected_url_shape(self):
+        doc = _make_issue_doc(iid="42")
+        doc.metadata["url"] = "https://gitlab.com/some/other/shape"
+        job = self._make_job(project_id=12345)
+        self.assertEqual(job._issue_short_id(doc), "https://gitlab.com/some/other/shape")
 
     def test_get_item_name_issue_missing_url_raises(self):
         doc = _make_issue_doc(iid="42")
