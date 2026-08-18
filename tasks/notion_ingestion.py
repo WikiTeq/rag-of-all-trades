@@ -206,32 +206,36 @@ class NotionIngestionJob(IngestionJob):
 
         for db_id in self.database_ids:
             try:
-                db_page_ids = self._query_database(db_id)
-                logger.info(f"[{self.source_name}] Database {db_id}: found {len(db_page_ids)} page(s)")
-                for pid in db_page_ids:
-                    try:
-                        page = self._client.pages.retrieve(page_id=pid)
-                        item = self._page_to_item(page)
-                        if item:
-                            yield item
-                    except APIResponseError as e:
-                        logger.error(f"[{self.source_name}] Failed to fetch page {pid}: {e}")
+                pages = list(self._query_database(db_id))
             except APIResponseError as e:
                 logger.error(f"[{self.source_name}] Failed to query database {db_id}: {e}")
+                continue
+            logger.info(f"[{self.source_name}] Database {db_id}: found {len(pages)} page(s)")
+            for page in pages:
+                item = self._page_to_item(page)
+                if item:
+                    yield item
 
-    def _query_database(self, database_id: str) -> list[str]:
-        """Return all page IDs from a Notion database."""
-        page_ids = []
-        kwargs: dict[str, Any] = {"page_size": 100}
-        while True:
-            data = self._client.data_sources.query(database_id, **kwargs)
-            for result in data.get("results", []):
-                if result.get("object") == "page":
-                    page_ids.append(result["id"])
-            if not data.get("has_more"):
-                break
-            kwargs["start_cursor"] = data["next_cursor"]
-        return page_ids
+    def _query_database(self, database_id: str) -> Iterator[dict[str, Any]]:
+        """Yield all page objects contained in a Notion database.
+
+        A database id is not queryable directly under Notion-Version 2025-09-03 —
+        it must first be resolved to its underlying data source id(s) via
+        `databases.retrieve`, and each data source queried in turn.
+        """
+        db = self._client.databases.retrieve(database_id=database_id)
+        data_source_ids = [ds["id"] for ds in db.get("data_sources", [])]
+
+        for data_source_id in data_source_ids:
+            kwargs: dict[str, Any] = {"page_size": 100}
+            while True:
+                data = self._client.data_sources.query(data_source_id, **kwargs)
+                for result in data.get("results", []):
+                    if result.get("object") == "page":
+                        yield result
+                if not data.get("has_more"):
+                    break
+                kwargs["start_cursor"] = data["next_cursor"]
 
     def _page_to_item(self, page: dict[str, Any]) -> IngestionItem | None:
         """Convert a Notion page object to an IngestionItem, or None if trashed."""

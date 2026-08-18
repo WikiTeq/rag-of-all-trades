@@ -104,32 +104,58 @@ class TestNotionListItemsSelective(unittest.TestCase):
         self.assertEqual(items, [])
 
     def test_resolves_database_ids(self):
+        self.mock_client.databases.retrieve.return_value = {"data_sources": [{"id": "ds-1"}]}
         self.mock_client.data_sources.query.return_value = {
-            "results": [{"object": "page", "id": "db-page-1"}],
+            "results": [_make_page("db-page-1")],
             "has_more": False,
         }
-        self.mock_client.pages.retrieve.side_effect = lambda page_id: _make_page(page_id)
         job = _make_job(self.mock_client, database_ids="db-1")
         items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].id, "notion:db-page-1")
+        self.mock_client.databases.retrieve.assert_called_once_with(database_id="db-1")
+        self.mock_client.data_sources.query.assert_called_once_with("ds-1", page_size=100)
+        self.mock_client.pages.retrieve.assert_not_called()
+
+    def test_database_retrieve_error_continues(self):
+        self.mock_client.databases.retrieve.side_effect = _api_error(404, "Not found", "object_not_found")
+        job = _make_job(self.mock_client, database_ids="db-bad")
+        items = list(job.list_items())
+        self.assertEqual(items, [])
 
     def test_database_query_error_continues(self):
+        self.mock_client.databases.retrieve.return_value = {"data_sources": [{"id": "ds-1"}]}
         self.mock_client.data_sources.query.side_effect = _api_error(404, "Not found", "object_not_found")
         job = _make_job(self.mock_client, database_ids="db-bad")
         items = list(job.list_items())
         self.assertEqual(items, [])
 
     def test_database_query_paginates(self):
+        self.mock_client.databases.retrieve.return_value = {"data_sources": [{"id": "ds-1"}]}
         self.mock_client.data_sources.query.side_effect = [
-            {"results": [{"object": "page", "id": "db-page-1"}], "has_more": True, "next_cursor": "cursor-1"},
-            {"results": [{"object": "page", "id": "db-page-2"}], "has_more": False},
+            {"results": [_make_page("db-page-1")], "has_more": True, "next_cursor": "cursor-1"},
+            {"results": [_make_page("db-page-2")], "has_more": False},
         ]
-        self.mock_client.pages.retrieve.side_effect = lambda page_id: _make_page(page_id)
         job = _make_job(self.mock_client, database_ids="db-1")
         items = list(job.list_items())
         self.assertEqual(len(items), 2)
+
+    def test_queries_all_data_sources_in_database(self):
+        self.mock_client.databases.retrieve.return_value = {
+            "data_sources": [{"id": "ds-1"}, {"id": "ds-2"}],
+        }
+        self.mock_client.data_sources.query.side_effect = [
+            {"results": [_make_page("db-page-1")], "has_more": False},
+            {"results": [_make_page("db-page-2")], "has_more": False},
+        ]
+        job = _make_job(self.mock_client, database_ids="db-1")
+        items = list(job.list_items())
+        self.assertEqual(len(items), 2)
+        self.assertEqual(
+            [call.args[0] for call in self.mock_client.data_sources.query.call_args_list],
+            ["ds-1", "ds-2"],
+        )
 
     def test_skips_trashed_pages(self):
         self.mock_client.pages.retrieve.return_value = _make_page(in_trash=True)
