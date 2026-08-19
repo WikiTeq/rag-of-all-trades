@@ -235,6 +235,12 @@ class NotionIngestionJob(IngestionJob):
         """
         db = self._client.databases.retrieve(database_id=database_id)
         data_source_ids = [ds["id"] for ds in db.get("data_sources", [])]
+        if not data_source_ids:
+            logger.warning(
+                f"[{self.source_name}] Database {database_id} resolved to zero data sources; "
+                "skipping query. This may indicate an empty database, a truncated API response, "
+                "or an unsupported Notion-Version."
+            )
 
         for data_source_id in data_source_ids:
             kwargs: dict[str, Any] = {"page_size": 100}
