@@ -125,6 +125,15 @@ class TestNotionListItemsSelective(unittest.TestCase):
         items = list(job.list_items())
         self.assertEqual(items, [])
 
+    def test_database_with_no_data_sources_warns(self):
+        self.mock_client.databases.retrieve.return_value = {"data_sources": []}
+        job = _make_job(self.mock_client, database_ids="db-1")
+        with self.assertLogs("tasks.notion_ingestion", level="WARNING") as cm:
+            items = list(job.list_items())
+        self.assertEqual(items, [])
+        self.mock_client.data_sources.query.assert_not_called()
+        self.assertTrue(any("zero data sources" in msg for msg in cm.output))
+
     def test_database_query_error_continues(self):
         self.mock_client.databases.retrieve.return_value = {"data_sources": [{"id": "ds-1"}]}
         self.mock_client.data_sources.query.side_effect = _api_error(404, "Not found", "object_not_found")
