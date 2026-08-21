@@ -123,8 +123,6 @@ def get_recent_ingestion_runs(limit: int = 10) -> list[dict]:
 
 def get_dashboard_stats():
     vector_table_name = resolve_vector_table_name()
-    schema_sql = quote_sql_identifier("public")
-    table_sql = quote_sql_identifier(vector_table_name)
 
     with get_db_session() as db:
         vector_items_count = db.execute(
