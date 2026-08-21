@@ -1,9 +1,8 @@
 import logging
 import re
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -67,7 +66,7 @@ def get_running_celery_jobs() -> int:
         return 0
 
 
-def format_duration_ms(duration_ms: Optional[int]) -> str:
+def format_duration_ms(duration_ms: int | None) -> str:
     if duration_ms is None:
         return "-"
     if duration_ms < 1000:
@@ -103,18 +102,10 @@ def get_recent_ingestion_runs(limit: int = 10) -> list[dict]:
     try:
         with get_db_session() as db:
             inspector = inspect(db.bind)
-            if not (
-                inspector.has_table("ingestion_runs", schema="public")
-                or inspector.has_table("ingestion_runs")
-            ):
+            if not (inspector.has_table("ingestion_runs", schema="public") or inspector.has_table("ingestion_runs")):
                 return []
 
-            runs = (
-                db.query(IngestionRun)
-                .order_by(IngestionRun.started_at.desc())
-                .limit(limit)
-                .all()
-            )
+            runs = db.query(IngestionRun).order_by(IngestionRun.started_at.desc()).limit(limit).all()
             return [serialize_ingestion_run(run) for run in runs]
     except Exception:
         logger.exception("Failed to fetch ingestion run records")
@@ -125,20 +116,26 @@ def get_dashboard_stats():
     vector_table_name = resolve_vector_table_name()
 
     with get_db_session() as db:
-        vector_items_count = db.execute(
-            text(
-                """
+        vector_items_count = (
+            db.execute(
+                text(
+                    """
                 SELECT COALESCE(c.reltuples::bigint, 0)
                 FROM pg_class c
                 WHERE c.oid = to_regclass(:relation_name)
                 """
-            ),
-            {"relation_name": f"public.{vector_table_name}"},
-        ).scalar_one() or 0
-        vector_db_size_bytes = db.execute(
-            text("SELECT pg_total_relation_size(to_regclass(:relation_name))"),
-            {"relation_name": f"public.{vector_table_name}"},
-        ).scalar_one() or 0
+                ),
+                {"relation_name": f"public.{vector_table_name}"},
+            ).scalar_one()
+            or 0
+        )
+        vector_db_size_bytes = (
+            db.execute(
+                text("SELECT pg_total_relation_size(to_regclass(:relation_name))"),
+                {"relation_name": f"public.{vector_table_name}"},
+            ).scalar_one()
+            or 0
+        )
 
     return {
         "vector_table": vector_table_name,
@@ -156,7 +153,7 @@ def get_dashboard_stats():
             for source in settings.SOURCES
         ],
         "recent_ingestion_runs": get_recent_ingestion_runs(),
-        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_at": datetime.now(UTC).isoformat(),
     }
 
 
