@@ -49,7 +49,6 @@ msal==1.37.0
 llama-index-readers-microsoft-sharepoint==0.8.1
 
 # Database connector (MySQL + PostgreSQL)
-llama-index-readers-database==0.5.1
 pymysql==1.1.1
 
 # Environment management
