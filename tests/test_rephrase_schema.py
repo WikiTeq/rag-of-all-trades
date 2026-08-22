@@ -1,3 +1,5 @@
+import unittest
+
 import pytest
 from pydantic import ValidationError
 
@@ -33,7 +35,8 @@ def test_empty_query_raises(query):
         QueryRequest(query=query)
 
 
-def test_top_k_bounds_exported_to_json_schema():
-    top_k_schema = QueryRequest.model_json_schema()["properties"]["top_k"]
-    assert top_k_schema["minimum"] == 1
-    assert top_k_schema["maximum"] == 100
+class TestRephraseSchemaTopKBounds(unittest.TestCase):
+    def test_top_k_bounds_exported_to_json_schema(self):
+        top_k_schema = QueryRequest.model_json_schema()["properties"]["top_k"]
+        self.assertEqual(top_k_schema["minimum"], 1)
+        self.assertEqual(top_k_schema["maximum"], 100)
