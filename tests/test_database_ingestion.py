@@ -1,6 +1,6 @@
 import unittest
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from tasks.database_ingestion import DatabaseIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -111,6 +111,12 @@ class TestDatabaseIngestionJobInit(unittest.TestCase):
         self.assertEqual(self._job().metadata_columns, [])
 
 
+def _rows_generator(rows):
+    """Wrap a list of rows in a real generator, matching _fetch_rows()'s
+    actual return type (a generator, which supports .close())."""
+    yield from rows
+
+
 class TestDatabaseIngestionJobListItems(unittest.TestCase):
     def _job(self, rows=None, overrides=None):
         config = {
@@ -123,7 +129,7 @@ class TestDatabaseIngestionJobListItems(unittest.TestCase):
             },
         }
         job = DatabaseIngestionJob(config)
-        job._fetch_rows = MagicMock(return_value=rows if rows is not None else SAMPLE_ROWS)
+        job._fetch_rows = MagicMock(side_effect=lambda: _rows_generator(rows if rows is not None else SAMPLE_ROWS))
         return job
 
     def test_yields_correct_count(self):
@@ -146,17 +152,127 @@ class TestDatabaseIngestionJobListItems(unittest.TestCase):
     def test_empty_result(self):
         self.assertEqual(list(self._job(rows=[]).list_items()), [])
 
-    def test_missing_required_column_raises(self):
-        bad_rows = [{"id": 1, "title": "X", "updated_at": None}]  # missing content
-        job = self._job(rows=bad_rows)
-        with self.assertRaises(ValueError, msg="missing required columns"):
-            list(job.list_items())
-
     def test_fetch_error_raises(self):
+        """_fetch_rows() is a generator: calling it never raises, only
+        iterating it does (e.g. once execute() runs on first next()). Model
+        that accurately rather than raising from the call itself."""
+
+        def _raising_generator():
+            raise Exception("connection failed")
+            yield  # pragma: no cover - makes this a generator function
+
         job = self._job()
-        job._fetch_rows = MagicMock(side_effect=Exception("connection failed"))
+        job._fetch_rows = MagicMock(side_effect=_raising_generator)
         with self.assertRaises(Exception):
             list(job.list_items())
+
+
+class TestDatabaseIngestionJobFetchRows(unittest.TestCase):
+    """Tests for `_fetch_rows()`'s SQLAlchemy execution: streaming, column
+    validation against the result's column names, and engine disposal."""
+
+    def _job(self):
+        config = {
+            "name": "testdb",
+            "config": {
+                "type": "postgres",
+                "connection_string": "postgresql+psycopg2://user:pass@localhost/db",
+                "query": "SELECT id, title, updated_at, content FROM books",
+            },
+        }
+        return DatabaseIngestionJob(config)
+
+    def _mock_engine(self, keys, rows):
+        """Build a create_engine() mock whose connect().execute() returns a
+        mock SQLAlchemy Result with the given column names and row tuples."""
+        result = MagicMock()
+        result.keys.return_value = keys
+        result.__iter__.return_value = iter(rows)
+
+        conn = MagicMock()
+        conn.execute.return_value = result
+        conn.__enter__.return_value = conn
+        conn.__exit__.return_value = False
+
+        engine = MagicMock()
+        engine.connect.return_value = conn
+        return engine
+
+    def test_streams_rows_without_fetchall(self):
+        job = self._job()
+        engine = self._mock_engine(
+            keys=["id", "title", "updated_at", "content"],
+            rows=[(1, "Book One", "2024-01-01", "Content one")],
+        )
+        with patch("tasks.database_ingestion.create_engine", return_value=engine):
+            rows = list(job._fetch_rows())
+        self.assertEqual(rows, [{"id": 1, "title": "Book One", "updated_at": "2024-01-01", "content": "Content one"}])
+        engine.connect.return_value.execute.return_value.fetchall.assert_not_called()
+
+    def test_missing_required_column_raises_on_empty_result(self):
+        """An empty result set must still be validated against result.keys()."""
+        job = self._job()
+        engine = self._mock_engine(keys=["id", "title", "updated_at"], rows=[])  # missing content
+        with patch("tasks.database_ingestion.create_engine", return_value=engine):
+            with self.assertRaises(ValueError):
+                list(job._fetch_rows())
+
+    def test_missing_required_column_raises_with_rows(self):
+        job = self._job()
+        engine = self._mock_engine(keys=["id", "title", "updated_at"], rows=[(1, "X", None)])
+        with patch("tasks.database_ingestion.create_engine", return_value=engine):
+            with self.assertRaises(ValueError):
+                list(job._fetch_rows())
+
+    def test_engine_disposed_on_success(self):
+        job = self._job()
+        engine = self._mock_engine(
+            keys=["id", "title", "updated_at", "content"],
+            rows=[(1, "Book One", "2024-01-01", "Content one")],
+        )
+        with patch("tasks.database_ingestion.create_engine", return_value=engine):
+            list(job._fetch_rows())
+        engine.dispose.assert_called_once()
+
+    def test_engine_disposed_on_error(self):
+        job = self._job()
+        engine = self._mock_engine(keys=["id"], rows=[])  # missing columns -> raises
+        with patch("tasks.database_ingestion.create_engine", return_value=engine):
+            with self.assertRaises(ValueError):
+                list(job._fetch_rows())
+        engine.dispose.assert_called_once()
+
+    def test_engine_disposed_on_early_close(self):
+        """Explicitly closing the _fetch_rows() generator (e.g. via GC or an
+        explicit .close()) triggers its `finally: engine.dispose()`."""
+        job = self._job()
+        engine = self._mock_engine(
+            keys=["id", "title", "updated_at", "content"],
+            rows=[(1, "A", "2024-01-01", "x"), (2, "B", "2024-01-01", "y")],
+        )
+        with patch("tasks.database_ingestion.create_engine", return_value=engine):
+            gen = job._fetch_rows()
+            next(gen)
+            gen.close()
+        engine.dispose.assert_called_once()
+
+    def test_list_items_disposes_engine_on_early_close(self):
+        """The real caller path: closing job.list_items() itself (e.g. via an
+        explicit .close(), or GC finalizing an abandoned generator) closes
+        its inner _fetch_rows() generator in `finally`, disposing the engine
+        promptly. Note this is distinct from a bare `break` out of a `for row
+        in job.list_items(): ...` loop, which does not call .close() on the
+        iterator per Python's iterator protocol."""
+        job = self._job()
+        engine = self._mock_engine(
+            keys=["id", "title", "updated_at", "content"],
+            rows=[(1, "A", "2024-01-01", "x"), (2, "B", "2024-01-01", "y")],
+        )
+        with patch("tasks.database_ingestion.create_engine", return_value=engine):
+            gen = job.list_items()
+            next(gen)
+            gen.close()
+        engine.dispose.assert_called_once()
 
 
 class TestDatabaseIngestionJobContent(unittest.TestCase):
