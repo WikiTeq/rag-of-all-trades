@@ -128,6 +128,18 @@ class TestWebIngestionInit(_WebIngestionTestCase):
         job = self._make_job(urls=["https://example.com"], max_pages=10)
         self.assertEqual(job.max_pages, 10)
 
+    def test_depth_none_defaults_zero(self):
+        job = self._make_job(urls=["https://example.com"], depth=None)
+        self.assertEqual(job.depth, 0)
+
+    def test_depth_negative_raises(self):
+        with self.assertRaises(ValueError):
+            self._make_job(urls=["https://example.com"], depth=-1)
+
+    def test_same_domain_only_string_off(self):
+        job = self._make_job(urls=["https://example.com"], same_domain_only="off")
+        self.assertFalse(job.same_domain_only)
+
 
 class TestWebIngestionListItemsUrls(_WebIngestionTestCase):
     def test_yields_one_item_per_url(self):

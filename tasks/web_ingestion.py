@@ -107,9 +107,11 @@ class WebIngestionJob(IngestionJob):
         self.include_prefix: str | None = cfg.get("include_prefix", "").strip() or None
         self.html_to_text = parse_bool(cfg.get("html_to_text"), default=True)
 
-        self.depth: int = int(cfg.get("depth", 0))
-        _sdonly = cfg.get("same_domain_only", True)
-        self.same_domain_only: bool = str(_sdonly).lower() not in ("false", "0", "no")
+        _depth = cfg.get("depth")
+        self.depth: int = int(_depth) if _depth is not None else 0
+        if self.depth < 0:
+            raise ValueError("depth must be a non-negative integer")
+        self.same_domain_only: bool = parse_bool(cfg.get("same_domain_only"), default=True)
         _max = cfg.get("max_pages")
         if _max is not None:
             _max = int(_max)
