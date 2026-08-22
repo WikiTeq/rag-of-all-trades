@@ -222,9 +222,14 @@ class WebIngestionJob(IngestionJob):
 
         headers = {"User-Agent": "Mozilla/5.0 (compatible; rag-of-all-trades-bot/1.0)"}
 
-        for _ in range(self.depth):
+        # Fetch levels 0..depth inclusive so leaf pages at the configured depth are
+        # actually scraped/cached, not just discovered. Children are only enqueued
+        # while current_depth < self.depth so we never fetch beyond depth+1.
+        for current_depth in range(self.depth + 1):
             next_frontier: list[str] = []
             for url in frontier:
+                if self.max_pages and len(crawled) >= self.max_pages:
+                    break
                 try:
                     resp = requests.get(url, timeout=10, headers=headers, allow_redirects=True)
                     resp.raise_for_status()
@@ -242,6 +247,11 @@ class WebIngestionJob(IngestionJob):
                         "_crawl_title": meta.get("title", ""),
                     }
                     crawled[url] = None
+
+                    if current_depth >= self.depth:
+                        # At the last level we still scrape the page, but we don't
+                        # discover/enqueue its children — they'd be one hop too deep.
+                        continue
 
                     # Resolve relative links against the final response URL (after
                     # redirects) so relative hrefs are correct when the server
@@ -270,15 +280,18 @@ class WebIngestionJob(IngestionJob):
                     if self.request_delay:
                         time.sleep(self.request_delay)
 
+            if self.max_pages and len(crawled) >= self.max_pages:
+                break
+
             # Advance one BFS level; stop early if no new URLs were discovered.
             frontier = next_frontier
             if not frontier:
                 break
 
-        result = list(seen)
-        if self.max_pages:
-            result = result[: self.max_pages]
-        return result
+        # Only successfully-fetched HTML pages become ingestion items; URLs that
+        # were merely discovered (non-HTML, unfetched leaves, failed requests)
+        # are excluded so they never turn into IngestionItems downstream.
+        return list(crawled)
 
     def _discover_sitemap_urls(self) -> list[str]:
         """Parse the configured sitemap and return matching URLs."""

@@ -414,9 +414,47 @@ class TestWebIngestionCrawl(_WebIngestionTestCase):
         with patch("tasks.web_ingestion.requests.get", side_effect=_get):
             urls = job._crawl(["https://example.com"])
 
-        # css URL is discovered as a link but when fetched it's skipped from further parsing
-        # it may appear in visited since it's added before fetching; what matters is it wasn't parsed
         self.assertIn("https://example.com", urls)
+        # Non-HTML assets are discovered as links but must never become ingestion
+        # items, even though depth=1 means they're never fetched to check Content-Type.
+        self.assertNotIn("https://example.com/style.css", urls)
+
+    def test_crawl_fetches_leaf_urls_at_depth(self):
+        """Leaf URLs at the configured depth must be fetched and cached, not just discovered."""
+        job = self._make_crawl_job(depth=1)
+        html_root = _make_html(links=["https://example.com/leaf"])
+        job._crawl_cache = {}
+        with patch(
+            "tasks.web_ingestion.requests.get",
+            side_effect=_mock_get({"https://example.com": html_root, "https://example.com/leaf": "<html></html>"}),
+        ):
+            urls = job._crawl(["https://example.com"])
+        self.assertIn("https://example.com/leaf", urls)
+        self.assertIn("https://example.com/leaf", job._crawl_cache)
+
+    def test_crawl_max_pages_caps_http_requests(self):
+        """max_pages must stop fetching, not just truncate the returned list after the fact."""
+        job = self._make_crawl_job(depth=2, max_pages=2)
+        html_root = _make_html(links=["https://example.com/a", "https://example.com/b"])
+        html_a = _make_html(links=["https://example.com/c"])
+        url_map = {
+            "https://example.com": html_root,
+            "https://example.com/a": html_a,
+            "https://example.com/b": "<html></html>",
+            "https://example.com/c": "<html></html>",
+        }
+        job._crawl_cache = {}
+        get = _mock_get(url_map)
+        calls = []
+
+        def _counting_get(url, **kwargs):
+            calls.append(url)
+            return get(url, **kwargs)
+
+        with patch("tasks.web_ingestion.requests.get", side_effect=_counting_get):
+            urls = job._crawl(["https://example.com"])
+        self.assertLessEqual(len(calls), 2)
+        self.assertLessEqual(len(urls), 2)
 
     def test_crawl_base_href_resolution(self):
         job = self._make_crawl_job(depth=1)
