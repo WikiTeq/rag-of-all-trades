@@ -89,32 +89,48 @@ class DatabaseIngestionJob(IngestionJob):
         )
 
     def list_items(self) -> Iterator[IngestionItem]:
-        """Execute the configured SQL query and yield one IngestionItem per row."""
+        """Execute the configured SQL query and yield one IngestionItem per row.
+
+        Rows are streamed row-by-row from the SQLAlchemy result cursor rather
+        than materialized with ``fetchall()``, so the whole result set is
+        never held in memory as a Python list at once (note: this is
+        client-side iteration, not necessarily a server-side streaming
+        cursor — that depends on driver-level configuration, which is out of
+        scope here). Required-column validation runs against the result's
+        column names immediately after ``execute()``, so it still catches a
+        mis-aliased query even when the query returns zero rows.
+
+        The inner ``_fetch_rows()`` generator is held in a local variable and
+        explicitly closed in ``finally`` so the underlying DB connection and
+        engine are disposed promptly whenever *this* generator (``list_items()``
+        itself) is closed or garbage-collected — e.g. via an explicit
+        ``.close()`` on it, or the interpreter finalizing it once nothing
+        references it anymore. Note this is not the same as the caller simply
+        `break`-ing out of a ``for row in job.list_items(): ...`` loop: a bare
+        `break` does not call ``.close()`` on the iterator per Python's
+        iterator protocol, so cleanup in that case still depends on when
+        ``list_items()`` itself gets finalized (typically prompt under
+        CPython's refcounting, but not a language guarantee).
+        """
         logger.info(f"[{self.source_name}] Executing query: {self.query!r}")
 
+        count = 0
+        rows = None
         try:
             rows = self._fetch_rows()
-        except Exception as e:
-            logger.exception(f"[{self.source_name}] Failed to execute query: {e}")
-            raise
-
-        if rows:
-            missing = REQUIRED_COLUMNS - set(rows[0].keys())
-            if missing:
-                raise ValueError(
-                    f"Query result is missing required columns: {sorted(missing)}. "
-                    f"The query must return: {sorted(REQUIRED_COLUMNS)}. "
-                    f"Use SQL AS aliases to map your schema."
+            for row in rows:
+                yield IngestionItem(
+                    id=f"database:{self.source_name}:{row['id']}",
+                    source_ref=row,
+                    last_modified=parse_timestamp(row.get("updated_at")),
                 )
-
-        count = 0
-        for row in rows:
-            yield IngestionItem(
-                id=f"database:{self.source_name}:{row['id']}",
-                source_ref=row,
-                last_modified=parse_timestamp(row.get("updated_at")),
-            )
-            count += 1
+                count += 1
+        except Exception:
+            logger.exception(f"[{self.source_name}] Failed to execute query")
+            raise
+        finally:
+            if rows is not None:
+                rows.close()
 
         logger.info(f"[{self.source_name}] Found {count} row(s)")
 
@@ -149,13 +165,36 @@ class DatabaseIngestionJob(IngestionJob):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _fetch_rows(self) -> list[dict[str, Any]]:
-        """Execute the SQL query and return rows as a list of dicts."""
+    def _fetch_rows(self) -> Iterator[dict[str, Any]]:
+        """Execute the SQL query and yield rows as dicts, one at a time.
+
+        Validates required columns from the result's column names right
+        after ``execute()``, before consuming any rows, so an empty result
+        set still catches a mis-aliased query. The engine is disposed in
+        ``finally`` so this runs whether the generator is fully consumed,
+        errors out, or is closed early — ``list_items()`` explicitly closes
+        this generator in its own ``finally``, so disposal happens promptly
+        on that path rather than only whenever this generator eventually
+        gets garbage-collected.
+        """
         engine = create_engine(self.connection_string)
-        with engine.connect() as conn:
-            result = conn.execute(text(self.query))
-            keys = list(result.keys())
-            return [dict(zip(keys, row)) for row in result.fetchall()]
+        try:
+            with engine.connect() as conn:
+                result = conn.execute(text(self.query))
+                keys = list(result.keys())
+
+                missing = REQUIRED_COLUMNS - set(keys)
+                if missing:
+                    raise ValueError(
+                        f"Query result is missing required columns: {sorted(missing)}. "
+                        f"The query must return: {sorted(REQUIRED_COLUMNS)}. "
+                        f"Use SQL AS aliases to map your schema."
+                    )
+
+                for row in result:
+                    yield dict(zip(keys, row, strict=True))
+        finally:
+            engine.dispose()
 
     @staticmethod
     def _validate_select_query(query: str) -> None:
