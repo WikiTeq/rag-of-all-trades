@@ -134,6 +134,7 @@ components:
           - LT
           - LTE
           - TEXT_MATCH
+          - CONTAINS
           title: Operator
         value:
           anyOf:
@@ -230,6 +231,7 @@ components:
                 mapping:
                   ALL: '#/components/schemas/ListMetadataFilter'
                   ANY: '#/components/schemas/ListMetadataFilter'
+                  CONTAINS: '#/components/schemas/ScalarMetadataFilter'
                   EQ: '#/components/schemas/ScalarMetadataFilter'
                   GT: '#/components/schemas/ScalarMetadataFilter'
                   GTE: '#/components/schemas/ScalarMetadataFilter'
