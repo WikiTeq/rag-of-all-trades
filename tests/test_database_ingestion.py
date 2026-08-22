@@ -99,6 +99,34 @@ class TestDatabaseIngestionJobInit(unittest.TestCase):
         job = self._job({"query": "/* comment */ SELECT id, title, updated_at, content FROM books"})
         self.assertIn("SELECT", job.query)
 
+    def test_cte_query_allowed(self):
+        """A WITH ... SELECT CTE is a valid read query and must not be
+        rejected just because its leading token isn't SELECT."""
+        job = self._job(
+            {"query": ("WITH recent AS (SELECT id, title, updated_at, content FROM books) SELECT * FROM recent")}
+        )
+        self.assertTrue(job.query.upper().startswith("WITH"))
+
+    def test_recursive_cte_query_allowed(self):
+        job = self._job(
+            {
+                "query": (
+                    "WITH RECURSIVE recent AS (SELECT id, title, updated_at, content FROM books) SELECT * FROM recent"
+                )
+            }
+        )
+        self.assertTrue(job.query.upper().startswith("WITH"))
+
+    def test_validate_select_query_does_not_block_stacked_statements(self):
+        """_validate_select_query() only inspects the leading keyword — this
+        documents current, honest behavior (it is NOT a SQL-injection guard)
+        rather than asserting a protection it doesn't provide. Read-only DB
+        credentials are the real safeguard against a stacked statement like
+        this; this test exists so a future change doesn't silently start
+        claiming to block what it still can't parse."""
+        job = self._job({"query": "SELECT id, title, updated_at, content FROM books; DROP TABLE books"})
+        self.assertTrue(job.query.upper().startswith("SELECT"))
+
     def test_metadata_columns_from_string(self):
         job = self._job({"metadata_columns": "author, year, "})
         self.assertEqual(job.metadata_columns, ["author", "year"])
