@@ -126,7 +126,7 @@ class TestBuildFilterObject:
         assert result is not None
         assert result.filters[0].operator == _OPERATOR_MAP[operator]
 
-    @pytest.mark.parametrize("operator", ["IN", "NIN"])
+    @pytest.mark.parametrize("operator", ["IN", "NIN", "ANY", "ALL"])
     def test_list_operators_map_correctly(self, operator):
         engine = _make_engine()
         item = _filter_adapter.validate_python({"name": "tags", "operator": operator, "value": ["a", "b"]})
@@ -134,7 +134,7 @@ class TestBuildFilterObject:
         assert result.filters[0].operator == _OPERATOR_MAP[operator]
 
     def test_all_operators_covered_in_map(self):
-        expected = {"EQ", "NE", "GT", "GTE", "LT", "LTE", "IN", "NIN", "TEXT_MATCH", "CONTAINS"}
+        expected = {"EQ", "NE", "GT", "GTE", "LT", "LTE", "IN", "NIN", "ANY", "ALL", "TEXT_MATCH", "CONTAINS"}
         assert set(_OPERATOR_MAP.keys()) == expected
 
     def test_condition_is_and(self):
