@@ -42,7 +42,6 @@ slack-sdk==3.41.0
 # OneDrive connector
 msal==1.37.0
 # Database connector (MySQL + PostgreSQL)
-llama-index-readers-database==0.5.1
 pymysql==1.1.1
 
 # Environment management
