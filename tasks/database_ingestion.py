@@ -54,7 +54,10 @@ class DatabaseIngestionJob(IngestionJob):
                                     use a read-only DB account
         - config.query:             SQL SELECT statement (required); must return
                                     id, title, updated_at, content columns;
-                                    non-SELECT statements are rejected at startup
+                                    non-SELECT/WITH statements are rejected at
+                                    startup as a best-effort check, not a full
+                                    SQL-injection guard — see
+                                    _validate_select_query's docstring
         - config.metadata_columns:  Comma-separated extra columns to store as
                                     metadata (optional)
     """
@@ -288,12 +291,36 @@ class DatabaseIngestionJob(IngestionJob):
 
     @staticmethod
     def _validate_select_query(query: str) -> None:
-        """Reject any query that is not a SELECT statement."""
+        """Best-effort check that the query's leading keyword is ``SELECT``
+        or ``WITH``, so an obviously wrong config.query (e.g. one that
+        starts with ``INSERT``/``UPDATE``/``DELETE``/DDL) fails fast at
+        startup rather than at query time.
+
+        This is NOT a SQL-injection guard and provides no real enforcement
+        beyond that first token:
+
+        - It does not stop stacked statements (e.g.
+          ``SELECT 1; DROP TABLE x``).
+        - Accepting ``WITH`` does not guarantee the query is read-only: a
+          data-modifying CTE can still mutate data while the statement as a
+          whole ends in a top-level SELECT, e.g.
+          ``WITH deleted AS (DELETE FROM books RETURNING id, title,
+          updated_at, content) SELECT * FROM deleted`` — this check has no
+          way to see the DELETE inside the CTE body.
+
+        This method intentionally does not attempt to parse CTE internals,
+        comments, or full SQL grammar to close these gaps — the real
+        safeguard against both is running this connector with read-only
+        database credentials, so even a config.query that slips past this
+        check (or is later edited to something destructive) cannot mutate
+        data at the DB level.
+        """
         stripped = re.sub(r"/\*.*?\*/", " ", query, flags=re.DOTALL)
         stripped = re.sub(r"--[^\n]*", " ", stripped)
         first_token = stripped.split()[0].upper() if stripped.split() else ""
-        if first_token != "SELECT":
+        if first_token not in ("SELECT", "WITH"):
             raise ValueError(
-                "config.query must be a SELECT statement. "
-                "Use read-only database credentials to enforce this at the DB level."
+                "config.query must be a SELECT statement (or a WITH ... SELECT CTE). "
+                "This check only inspects the leading keyword — use read-only database "
+                "credentials to actually enforce read-only access at the DB level."
             )
