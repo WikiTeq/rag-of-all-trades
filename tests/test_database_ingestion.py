@@ -1,6 +1,6 @@
 import unittest
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from tasks.database_ingestion import DatabaseIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -36,8 +36,7 @@ SAMPLE_ROWS = [
 
 
 def _make_job(config=None):
-    with patch("tasks.database_ingestion.DatabaseReader"):
-        return DatabaseIngestionJob(config or BASE_CONFIG)
+    return DatabaseIngestionJob(config or BASE_CONFIG)
 
 
 class TestDatabaseIngestionJobInit(unittest.TestCase):
@@ -51,8 +50,7 @@ class TestDatabaseIngestionJobInit(unittest.TestCase):
                 **(overrides or {}),
             },
         }
-        with patch("tasks.database_ingestion.DatabaseReader"):
-            return DatabaseIngestionJob(config)
+        return DatabaseIngestionJob(config)
 
     def test_source_type(self):
         self.assertEqual(self._job().source_type, "database")
@@ -72,16 +70,14 @@ class TestDatabaseIngestionJobInit(unittest.TestCase):
             self._job({"type": ""})
 
     def test_missing_connection_string_raises(self):
-        with patch("tasks.database_ingestion.DatabaseReader"):
-            with self.assertRaises(ValueError):
-                DatabaseIngestionJob({"name": "x", "config": {"type": "postgres", "query": "SELECT 1"}})
+        with self.assertRaises(ValueError):
+            DatabaseIngestionJob({"name": "x", "config": {"type": "postgres", "query": "SELECT 1"}})
 
     def test_missing_query_raises(self):
-        with patch("tasks.database_ingestion.DatabaseReader"):
-            with self.assertRaises(ValueError):
-                DatabaseIngestionJob(
-                    {"name": "x", "config": {"type": "postgres", "connection_string": "postgresql+psycopg2://x/y"}}
-                )
+        with self.assertRaises(ValueError):
+            DatabaseIngestionJob(
+                {"name": "x", "config": {"type": "postgres", "connection_string": "postgresql+psycopg2://x/y"}}
+            )
 
     def test_non_select_query_raises(self):
         with self.assertRaises(ValueError):
@@ -126,8 +122,7 @@ class TestDatabaseIngestionJobListItems(unittest.TestCase):
                 **(overrides or {}),
             },
         }
-        with patch("tasks.database_ingestion.DatabaseReader"):
-            job = DatabaseIngestionJob(config)
+        job = DatabaseIngestionJob(config)
         job._fetch_rows = MagicMock(return_value=rows if rows is not None else SAMPLE_ROWS)
         return job
 
@@ -175,8 +170,7 @@ class TestDatabaseIngestionJobContent(unittest.TestCase):
                 "metadata_columns": metadata_columns,
             },
         }
-        with patch("tasks.database_ingestion.DatabaseReader"):
-            return DatabaseIngestionJob(config)
+        return DatabaseIngestionJob(config)
 
     def _item(self, row):
         return IngestionItem(

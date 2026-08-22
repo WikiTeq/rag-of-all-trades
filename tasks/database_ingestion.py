@@ -1,7 +1,12 @@
 """Database ingestion connector for MySQL and PostgreSQL.
 
-Uses SQLAlchemy to execute a pre-configured SQL SELECT query and ingest each
-row as a document into the vector store.
+Uses SQLAlchemy directly to execute a pre-configured SQL SELECT query and
+ingest each row as a document into the vector store. This connector does
+NOT use LlamaIndex's ``DatabaseReader``: that reader joins every returned
+column into a single ``Document`` text blob (e.g. ``"id: 1, title: ..."``),
+which doesn't map onto the per-column ``id``/``title``/``updated_at``/
+``content`` fields an ``IngestionItem`` needs, so raw SQLAlchemy execution is
+used instead.
 
 The query MUST return the following columns (use SQL AS aliases if needed):
     - id:         Unique row identifier
@@ -22,7 +27,6 @@ import re
 from collections.abc import Iterator
 from typing import Any
 
-from llama_index.readers.database import DatabaseReader
 from sqlalchemy import create_engine, text
 
 from tasks.base import IngestionJob
@@ -77,8 +81,6 @@ class DatabaseIngestionJob(IngestionJob):
         self._validate_select_query(self.query)
 
         self.metadata_columns: list[str] = parse_list(cfg.get("metadata_columns", ""))
-
-        self._reader = DatabaseReader(uri=self.connection_string)
 
         logger.info(
             f"[{self.source_name}] Initialized database connector "
