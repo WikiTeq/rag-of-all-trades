@@ -22,6 +22,7 @@ Example:
     FROM employees
 """
 
+import hashlib
 import logging
 import re
 from collections.abc import Iterator
@@ -139,11 +140,100 @@ class DatabaseIngestionJob(IngestionJob):
         row = item.source_ref
         return str(row.get("content", "") or "")
 
-    def get_item_name(self, item: IngestionItem) -> str:
-        """Return a filesystem-safe name derived from the row title."""
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        """Return ``"{id}:{updated_at}"`` as a pre-computed checksum.
+
+        Note on what this actually saves for this connector: unlike an
+        API-based connector where ``get_raw_content()`` makes a network call,
+        this connector's ``list_items()`` already selects ``content`` as part
+        of the row and stores it on ``item.source_ref`` — so
+        ``get_raw_content()`` here is a free dict lookup, not an extra fetch.
+        What this checksum actually avoids is computing an MD5 hash over
+        ``content`` locally on every run for every row (real, if modest, CPU
+        cost at scale); it does not avoid a DB round-trip.
+
+        Returns ``None`` (falling back to the base class's content-hash
+        checksum) when ``id`` or ``updated_at`` is missing/null, rather than
+        building an ambiguous checksum like ``"None:None"`` — every such row
+        would otherwise collapse onto the same checksum and be treated as
+        unchanged after the first one is seen, regardless of actual content.
+
+        Caveat: even with both fields present, this assumes the source
+        table's ``updated_at`` always changes whenever ``content`` changes.
+        If a source table can update ``content`` without bumping
+        ``updated_at`` (e.g. it's set by a trigger that's inconsistently
+        applied), this connector will silently skip re-embedding a genuinely
+        changed row. That's a real risk with this approach — the
+        alternative, always returning ``None`` to force the base class's
+        content-hash checksum, is always correct but re-hashes every row's
+        content on every run. If your source table's ``updated_at`` isn't
+        trustworthy, that tradeoff is worth making deliberately rather than
+        assuming this checksum is safe by default.
+        """
         row = item.source_ref
+        row_id = row.get("id")
+        updated_at = row.get("updated_at")
+        if row_id is None or updated_at is None:
+            return None
+        return f"{row_id}:{updated_at}"
+
+    # Fixed budget reserved for the id suffix in get_item_name(), so the
+    # 255-char total is a real invariant regardless of what the row id looks
+    # like (long string id, non-numeric id, etc.) rather than depending on
+    # ids happening to be short. 32 hex chars covers a full MD5 digest.
+    _ID_SUFFIX_MAX_LEN = 32
+
+    def get_item_name(self, item: IngestionItem) -> str:
+        """Return a filesystem-safe, unique name derived from the source
+        name, row title, and row id.
+
+        ``process_item`` keys the metadata tracker's dedup/versioning
+        globally on this name (``MetadataTracker.get_latest_record()``
+        filters only on this key, not per-connector-instance), so:
+
+        - The source name is always included, so two configured database
+          sources returning the same row id (e.g. ``id=1`` from both a
+          ``postgres1`` and a ``mysql1`` source) don't collide on the same
+          dedup/versioning key.
+        - The row id is always included, so a title-only name would make two
+          rows sharing the same title in the same source silently overwrite
+          each other's embeddings.
+
+        The source name and id are appended *after* truncating the title
+        portion (rather than slugifying the whole combined string and
+        truncating that), so a long title can never push them past the
+        255-char limit and truncate them away.
+
+        The id component is capped to ``_ID_SUFFIX_MAX_LEN`` chars and falls
+        back to a ``h_``-prefixed full MD5 hash of the *raw* (un-slugified)
+        id when either the slugified id would exceed that budget or the raw
+        id contains characters ``slugify()`` normalizes away (e.g. ``"A/B"``
+        and ``"A B"`` would otherwise both slugify to ``"A_B"`` and
+        collide). The ``h_`` prefix ensures a hashed id can never collide
+        with a literal id that happens to look like a hash.
+        """
+        row = item.source_ref
+        raw_id = str(row.get("id", ""))
+        slug_id = slugify(raw_id, max_len=self._ID_SUFFIX_MAX_LEN)
+        if slug_id and slug_id == raw_id:
+            row_id = slug_id
+        elif raw_id:
+            # Raw id doesn't survive slugify()/length round-trip as-is
+            # (lossy normalization or too long) — use a stable hash of the
+            # raw id instead so distinct ids can't collide on the suffix.
+            row_id = "h_" + hashlib.md5(raw_id.encode("utf-8"), usedforsecurity=False).hexdigest()
+        else:
+            row_id = ""
+
+        source = slugify(str(self.source_name or ""), max_len=64)
         title = str(row.get("title", "") or item.id)
-        return slugify(title)
+
+        # Reserve room for "_<source>_<row_id>" so both always survive
+        # truncation of the title portion.
+        parts = [p for p in (source, row_id) if p]
+        suffix = ("_" + "_".join(parts)) if parts else ""
+        title_max_len = max(255 - len(suffix), 1)
+        return (slugify(title, max_len=title_max_len) + suffix)[:255]
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return extra metadata fields: title, id, db_type, and any configured extra columns."""
