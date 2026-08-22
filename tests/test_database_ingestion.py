@@ -276,9 +276,9 @@ class TestDatabaseIngestionJobFetchRows(unittest.TestCase):
 
 
 class TestDatabaseIngestionJobContent(unittest.TestCase):
-    def _job(self, metadata_columns=""):
+    def _job(self, metadata_columns="", name="testdb"):
         config = {
-            "name": "testdb",
+            "name": name,
             "config": {
                 "type": "postgres",
                 "connection_string": "postgresql+psycopg2://user:pass@localhost/db",
@@ -305,6 +305,35 @@ class TestDatabaseIngestionJobContent(unittest.TestCase):
         item = self._item({"id": 1, "title": "T", "updated_at": None, "content": None})
         self.assertEqual(job.get_raw_content(item), "")
 
+    def test_get_item_checksum_format(self):
+        job = self._job()
+        item = self._item(SAMPLE_ROWS[0])
+        self.assertEqual(job.get_item_checksum(item), "1:2024-01-01T00:00:00")
+
+    def test_get_item_checksum_changes_with_updated_at(self):
+        job = self._job()
+        row_a = {"id": 1, "title": "T", "updated_at": "2024-01-01", "content": "old"}
+        row_b = {"id": 1, "title": "T", "updated_at": "2024-02-01", "content": "new"}
+        self.assertNotEqual(job.get_item_checksum(self._item(row_a)), job.get_item_checksum(self._item(row_b)))
+
+    def test_get_item_checksum_stable_when_unchanged(self):
+        job = self._job()
+        row = {"id": 1, "title": "T", "updated_at": "2024-01-01", "content": "same"}
+        self.assertEqual(job.get_item_checksum(self._item(row)), job.get_item_checksum(self._item(dict(row))))
+
+    def test_get_item_checksum_none_when_updated_at_missing(self):
+        """A missing/null updated_at must fall back to None (base class's
+        content-hash checksum), not build an ambiguous 'id:None' string that
+        would collapse every such row onto the same checksum."""
+        job = self._job()
+        row = {"id": 1, "title": "T", "updated_at": None, "content": "x"}
+        self.assertIsNone(job.get_item_checksum(self._item(row)))
+
+    def test_get_item_checksum_none_when_id_missing(self):
+        job = self._job()
+        row = {"id": None, "title": "T", "updated_at": "2024-01-01", "content": "x"}
+        self.assertIsNone(job.get_item_checksum(self._item(row)))
+
     def test_get_item_name_sanitizes(self):
         job = self._job()
         item = self._item({"id": 1, "title": "My Book: Vol. 1!", "updated_at": None, "content": ""})
@@ -312,10 +341,56 @@ class TestDatabaseIngestionJobContent(unittest.TestCase):
         self.assertNotIn(":", name)
         self.assertNotIn("!", name)
 
-    def test_get_item_name_truncates(self):
+    def test_get_item_name_includes_row_id(self):
+        """Two rows with the same title must get distinct names, since
+        process_item keys dedup/versioning on get_item_name()."""
         job = self._job()
-        item = self._item({"id": 1, "title": "A" * 300, "updated_at": None, "content": ""})
-        self.assertEqual(len(job.get_item_name(item)), 255)
+        item1 = self._item({"id": 1, "title": "Same Title", "updated_at": None, "content": ""})
+        item2 = self._item({"id": 2, "title": "Same Title", "updated_at": None, "content": ""})
+        name1 = job.get_item_name(item1)
+        name2 = job.get_item_name(item2)
+        self.assertNotEqual(name1, name2)
+        self.assertTrue(name1.endswith("_1"))
+        self.assertTrue(name2.endswith("_2"))
+
+    def test_get_item_name_truncates_but_preserves_id_suffix(self):
+        """A long title must not push the row id past the 255-char limit and
+        truncate it away — the id suffix must always survive."""
+        job = self._job()
+        item = self._item({"id": 12345, "title": "A" * 300, "updated_at": None, "content": ""})
+        name = job.get_item_name(item)
+        self.assertEqual(len(name), 255)
+        self.assertTrue(name.endswith("_12345"), name)
+
+    def test_get_item_name_stays_within_255_with_long_string_id(self):
+        """The 255-char total must hold even when the id itself is long or
+        non-numeric (e.g. a UUID or composite key), not just short int ids."""
+        job = self._job()
+        long_id = "x" * 300  # longer than _ID_SUFFIX_MAX_LEN even after slugifying
+        item = self._item({"id": long_id, "title": "A" * 300, "updated_at": None, "content": ""})
+        name = job.get_item_name(item)
+        self.assertLessEqual(len(name), 255)
+
+    def test_get_item_name_lossy_slugify_ids_do_not_collide(self):
+        """Distinct ids that slugify() would normalize to the same string
+        (e.g. 'A/B' and 'A B' both -> 'A_B') must still produce distinct
+        item names, since get_item_name() is the dedup/versioning key."""
+        job = self._job()
+        item1 = self._item({"id": "A/B", "title": "Same Title", "updated_at": None, "content": ""})
+        item2 = self._item({"id": "A B", "title": "Same Title", "updated_at": None, "content": ""})
+        self.assertNotEqual(job.get_item_name(item1), job.get_item_name(item2))
+
+    def test_get_item_name_includes_source_name(self):
+        """MetadataTracker.get_latest_record() filters globally on this key,
+        not per-connector-instance, so two configured database sources
+        returning the same row id (e.g. id=1 from both a postgres1 and a
+        mysql1 source) must not produce the same item name."""
+        job_a = self._job(name="postgres1")
+        job_b = self._job(name="mysql1")
+        row = {"id": 1, "title": "Same Title", "updated_at": None, "content": ""}
+        item_a = IngestionItem(id=f"database:postgres1:{row['id']}", source_ref=row, last_modified=None)
+        item_b = IngestionItem(id=f"database:mysql1:{row['id']}", source_ref=row, last_modified=None)
+        self.assertNotEqual(job_a.get_item_name(item_a), job_b.get_item_name(item_b))
 
     def test_get_item_name_falls_back_to_id(self):
         job = self._job()
@@ -324,6 +399,7 @@ class TestDatabaseIngestionJobContent(unittest.TestCase):
             source_ref={"id": 99, "title": "", "updated_at": None, "content": ""},
         )
         self.assertIn("testdb", job.get_item_name(item))
+        self.assertTrue(job.get_item_name(item).endswith("_99"))
 
     def test_get_extra_metadata_base_fields(self):
         job = self._job()
