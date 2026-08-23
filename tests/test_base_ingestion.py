@@ -315,13 +315,16 @@ class TestIngestionJob:
 
 
 class TestIngestionJobRunFatalErrors(unittest.TestCase):
-    """run() must propagate fatal errors from list_items() instead of swallowing them.
+    """A fatal error while discovering items (list_items() itself raising, e.g. an
+    auth or listing-API failure) must not crash run() — it's caught, recorded on the
+    run tracker with status "error", and reported back as part of the returned
+    summary string, same as any other job failure.
 
     Written as unittest.TestCase (not the pytest-fixture style above) so it actually
     executes under `python -m unittest discover` per the project's test runner.
     """
 
-    def test_run_reraises_list_items_exception(self):
+    def test_run_catches_list_items_exception_and_records_error_status(self):
         class FailingListItemsJob(IngestionJob):
             @property
             def source_type(self) -> str:
@@ -338,14 +341,26 @@ class TestIngestionJobRunFatalErrors(unittest.TestCase):
                 return item.id
 
         job = FailingListItemsJob({"name": "test-source"})
+        job.run_tracker = Mock()
+        job.run_tracker.create_run.return_value = 7
 
-        with self.assertRaises(ConnectionError):
-            job.run()
+        result = job.run()
 
-    def test_run_does_not_swallow_fatal_error_into_return_string(self):
-        """A fatal list_items() error must not be caught and turned into a result string —
-        Celery's ignore_result=True means a returned string is silently discarded, so a
-        caught-and-stringified error looks identical to success."""
+        self.assertIn("[test-source] Job failed: auth failed", result)
+        job.run_tracker.complete_run.assert_called_once_with(
+            run_id=7,
+            status="error",
+            items_ingested=0,
+            items_skipped=0,
+            completed_at=unittest.mock.ANY,
+            duration_ms=unittest.mock.ANY,
+            error_message="auth failed",
+        )
+
+    def test_run_does_not_crash_on_fatal_error(self):
+        """A fatal list_items() error must not propagate out of run() — it's turned
+        into a result string instead, with the run tracker (not a raised exception)
+        as the source of truth for job failures."""
 
         class FailingListItemsJob(IngestionJob):
             @property
@@ -363,12 +378,12 @@ class TestIngestionJobRunFatalErrors(unittest.TestCase):
                 return item.id
 
         job = FailingListItemsJob({"name": "test-source"})
+        job.run_tracker = Mock()
+        job.run_tracker.create_run.return_value = 8
 
-        try:
-            job.run()
-            self.fail("run() should have raised RuntimeError, not returned normally")
-        except RuntimeError as exc:
-            self.assertEqual(str(exc), "listing API is down")
+        result = job.run()
+
+        self.assertIn("[test-source] Job failed: listing API is down", result)
 
 
 class TestIngestionJobMarkdownConversion:
