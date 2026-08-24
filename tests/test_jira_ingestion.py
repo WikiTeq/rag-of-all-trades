@@ -587,6 +587,33 @@ class TestJiraIngestionJob(unittest.TestCase):
 
         self.assertEqual(extra["url"], "")
 
+    def test_get_document_metadata_conforms_to_schema(self):
+        """Extra metadata must validate against JiraMetadataSchema."""
+        from tasks.schemas import BaseMetadataSchema, JiraMetadataSchema
+
+        issue = _make_issue(
+            key="TEST-4",
+            issue_id="10004",
+            summary="Schema Issue",
+            status="Done",
+            assignee_name="Alice",
+            reporter_name="Bob",
+            labels=["bug"],
+            project_name="Test Project",
+            priority_name="High",
+        )
+        item = IngestionItem(id="jira:TEST-4", source_ref=issue)
+        object.__setattr__(item, "_metadata_cache", {"issue_url": "https://jira.example.com/browse/TEST-4"})
+
+        job = self._make_job()
+        extra = job.get_extra_metadata(item=item, content="", metadata={})
+
+        validated = JiraMetadataSchema(**extra)
+        self.assertEqual(validated.id, "10004")
+        self.assertEqual(validated.labels, ["bug"])
+        # Schema fields must not collide with the reserved base metadata keys
+        self.assertTrue(set(JiraMetadataSchema.model_fields).isdisjoint(BaseMetadataSchema.model_fields))
+
     # ------------------------------------------------------------------
     # Integration: process_item delegates to base with correct data
     # ------------------------------------------------------------------

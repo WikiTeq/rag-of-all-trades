@@ -221,6 +221,23 @@ class TestWebIngestionGetDocumentMetadata(_WebIngestionTestCase):
         self.assertEqual(extra["url"], "")
         self.assertEqual(extra["title"], "")
 
+    def test_metadata_conforms_to_schema(self):
+        """Extra metadata must validate against WebMetadataSchema."""
+        from tasks.schemas import BaseMetadataSchema, WebMetadataSchema
+
+        job = self._make_job(urls=["https://example.com"])
+        item = IngestionItem(id="web:https://example.com/p", source_ref="https://example.com/p")
+        item._metadata_cache["url"] = "https://example.com/p"
+        item._metadata_cache["title"] = "My Page"
+
+        extra = job.get_extra_metadata(item=item, content="", metadata={})
+
+        validated = WebMetadataSchema(**extra)
+        self.assertEqual(validated.url, "https://example.com/p")
+        self.assertEqual(validated.title, "My Page")
+        # Schema fields must not collide with the reserved base metadata keys
+        self.assertTrue(set(WebMetadataSchema.model_fields).isdisjoint(BaseMetadataSchema.model_fields))
+
 
 if __name__ == "__main__":
     unittest.main()
