@@ -568,8 +568,11 @@ class TestGetExtraMetadata:
         job, _ = _make_job()
         item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
 
-        extra = job.get_extra_metadata(item=item, content="content", metadata={})
+        with patch("tasks.mediawiki_ingestion.logger.warning") as mock_warning:
+            extra = job.get_extra_metadata(item=item, content="content", metadata={})
 
+        mock_warning.assert_called_once()
+        assert "URL not found" in mock_warning.call_args[0][0]
         assert "url" not in extra
         validated = MediaWikiMetadataSchema(**extra)
         assert validated.url is None

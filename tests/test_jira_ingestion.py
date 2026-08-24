@@ -614,6 +614,21 @@ class TestJiraIngestionJob(unittest.TestCase):
         # Schema fields must not collide with the reserved base metadata keys
         self.assertTrue(set(JiraMetadataSchema.model_fields).isdisjoint(BaseMetadataSchema.model_fields))
 
+    def test_get_document_metadata_coerces_numeric_issue_id(self):
+        """Non-cloud Jira SDKs expose issue.id as int; schema must not reject it."""
+        from tasks.schemas import JiraMetadataSchema
+
+        issue = _make_issue(key="TEST-5", issue_id=12345)
+        item = IngestionItem(id="jira:TEST-5", source_ref=issue)
+        object.__setattr__(item, "_metadata_cache", {"issue_url": "https://jira.example.com/browse/TEST-5"})
+
+        job = self._make_job()
+        extra = job.get_extra_metadata(item=item, content="", metadata={})
+
+        validated = JiraMetadataSchema(**extra)
+        self.assertEqual(validated.id, "12345")
+        self.assertIsInstance(validated.id, str)
+
     # ------------------------------------------------------------------
     # Integration: process_item delegates to base with correct data
     # ------------------------------------------------------------------

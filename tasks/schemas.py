@@ -15,7 +15,7 @@ class BaseMetadataSchema(BaseModel):
 class JiraMetadataSchema(BaseModel):
     url: str = Field(description="Browse URL of the Jira issue")
     title: str = Field(description="Issue summary")
-    id: str = Field(description="Numeric Jira issue ID")
+    id: str = Field(coerce_numbers_to_str=True, description="Numeric Jira issue ID")
     assignee: str = Field(description="Display name of the issue assignee, empty when unassigned")
     reporter: str = Field(description="Display name of the issue reporter")
     status: str = Field(description="Workflow status name")
