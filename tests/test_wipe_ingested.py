@@ -104,7 +104,9 @@ class TestWipe(unittest.TestCase):
             wipe("pipedrive1", "entity_type", "note")
         self.assertEqual(session.execute.call_count, 2)
         sqls = [str(c.args[0]) for c in session.execute.call_args_list]
-        self.assertTrue(any(":fk" in s for s in sqls))
+        emb_sql, meta_sql = sqls
+        self.assertIn(":fk", emb_sql)
+        self.assertNotIn(":fk", meta_sql)
 
     def test_no_matching_records_prints_message(self):
         session = _mock_session([0, 0])
