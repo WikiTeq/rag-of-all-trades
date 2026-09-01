@@ -41,6 +41,10 @@ slack-sdk==3.41.0
 
 # OneDrive connector
 msal==1.37.0
+# SharePoint connector
+# Pinned to 0.8.1 — 0.9.x bumps llama-index-embeddings-openai floor to >=0.6.0,
+# which conflicts with llama-index==0.14.6 (requires <0.6). No functional changes in 0.9.x.
+llama-index-readers-microsoft-sharepoint==0.8.1
 
 # Environment management
 python-dotenv==1.2.1
