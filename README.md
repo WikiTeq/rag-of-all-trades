@@ -16,6 +16,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
 * Slack ingestion from channels by ID or name/regex pattern, with thread reply support
+* Confluence ingestion from Cloud and Server/Data Center instances via LlamaIndex reader
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -26,6 +27,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * MediaWiki
 * SerpAPI
 * Jira
+* Confluence
 * Web
 * Pipedrive
 * Slack
@@ -547,6 +549,63 @@ ONEDRIVE1_CLIENT_SECRET=your-azure-app-client-secret
 ONEDRIVE1_TENANT_ID=your-azure-tenant-id
 ONEDRIVE1_USER_PRINCIPAL_NAME=user@your-org.onmicrosoft.com
 ONEDRIVE1_SCHEDULES=3600
+```
+
+### Confluence Connector
+
+The Confluence connector ingests pages from Atlassian Confluence Cloud or Server / Data Center using the
+[LlamaIndex Confluence reader](https://llamahub.ai/l/readers/llama-index-readers-confluence).
+Metadata collected per page includes: page_id, title, url, space_key.
+
+Exactly one discovery mode is required per source:
+- `space_key` — all pages in a space
+- `page_ids` — comma-separated list of specific page IDs
+- `page_label` — all pages with a given label
+- `cql` — arbitrary CQL query
+- `folder_id` — all pages inside a folder
+
+Supported auth (mutually exclusive):
+- `api_token` alone — Bearer token (Server / Data Center PAT, requires `cloud: false`)
+- `username` + `api_token` — basic auth (Cloud: email + API token)
+- `username` + `password` — basic auth (Server / Data Center)
+- `oauth2` — Atlassian OAuth 2.0 dict: `{client_id: "...", token: {access_token: "...", token_type: "..."}}`
+- `cookies` — browser session cookies dict (e.g. exported via `atlassian.utils.parse_cookie_file()`)
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "confluence"
+    name: "confluence1"
+    config:
+      base_url: "${CONFLUENCE1_BASE_URL}"           # e.g. https://yoursite.atlassian.net/wiki
+      # Auth: use api_token (recommended for Cloud) OR username+password (Server/Data Center)
+      username: "${CONFLUENCE1_USERNAME}"           # optional
+      api_token: "${CONFLUENCE1_API_TOKEN}"         # mutually exclusive with password
+      # password: "${CONFLUENCE1_PASSWORD}"         # mutually exclusive with api_token
+      cloud: true                                   # true for Cloud, false for Server/DC (default true)
+      # Discovery mode: exactly one of the following is required
+      space_key: "${CONFLUENCE1_SPACE_KEY}"         # load all pages from a space
+      # page_ids: "${CONFLUENCE1_PAGE_IDS}"         # comma-separated page IDs
+      # page_label: "${CONFLUENCE1_PAGE_LABEL}"     # pages with a given label
+      # cql: "${CONFLUENCE1_CQL}"                   # CQL query
+      # folder_id: "${CONFLUENCE1_FOLDER_ID}"       # pages inside a folder
+      page_status: "current"                        # optional; filter by status (space_key mode only)
+      include_children: false                       # optional; recurse into children (page_ids mode only)
+      max_pages: 50                                 # optional, default 50
+      schedules: "${CONFLUENCE1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+# Confluence Cloud: use username (email) + api_token
+# Confluence Server / Data Center: use username + password
+CONFLUENCE1_BASE_URL=https://your-org.atlassian.net/wiki
+CONFLUENCE1_USERNAME=your-email@example.com
+CONFLUENCE1_API_TOKEN=your-api-token
+CONFLUENCE1_SPACE_KEY=ENG
+CONFLUENCE1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
