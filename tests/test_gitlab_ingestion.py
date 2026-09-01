@@ -1,0 +1,835 @@
+import unittest
+from datetime import UTC, datetime
+from unittest.mock import Mock, patch
+
+from llama_index.readers.gitlab import GitLabIssuesReader
+
+from tasks.gitlab_ingestion import GitLabIngestionJob
+from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.parse import parse_bool, parse_list, parse_timestamp
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_config(
+    gitlab_url="https://gitlab.com",
+    personal_token=None,
+    project_id=12345,
+    group_id=None,
+    ref="main",
+    path=None,
+    file_path=None,
+    recursive=True,
+    files_iterator=True,
+    include_issues=False,
+    issues_state="opened",
+    issues_labels="",
+    issues_assignee=None,
+    issues_author=None,
+    issues_milestone=None,
+    issues_search=None,
+    issues_get_all=True,
+    issues_iids=None,
+):
+    return {
+        "name": "test_gitlab",
+        "config": {
+            "gitlab_url": gitlab_url,
+            "personal_token": personal_token or "test_token",
+            "project_id": project_id,
+            "group_id": group_id,
+            "ref": ref,
+            "path": path,
+            "file_path": file_path,
+            "recursive": recursive,
+            "files_iterator": files_iterator,
+            "include_issues": include_issues,
+            "issues_state": issues_state,
+            "issues_labels": issues_labels,
+            "issues_assignee": issues_assignee,
+            "issues_author": issues_author,
+            "issues_milestone": issues_milestone,
+            "issues_search": issues_search,
+            "issues_get_all": issues_get_all,
+            "issues_iids": issues_iids,
+        },
+    }
+
+
+def _make_file_doc(file_path="README.md", text="File content"):
+    doc = Mock()
+    doc.doc_id = "abc123"
+    doc.text = text
+    doc.metadata = {"file_path": file_path, "file_name": file_path.split("/")[-1], "url": ""}
+    return doc
+
+
+def _make_issue_doc(iid="42", text="Issue title\nIssue body", state="opened", labels=None):
+    doc = Mock()
+    doc.doc_id = iid
+    doc.text = text
+    doc.metadata = {
+        "state": state,
+        "labels": labels or [],
+        "created_at": "2024-01-15T10:00:00Z",
+        "closed_at": None,
+        "url": f"https://gitlab.com/api/v4/projects/12345/issues/{iid}",
+        "source": f"https://gitlab.com/mygroup/myrepo/-/issues/{iid}",
+    }
+    return doc
+
+
+# ---------------------------------------------------------------------------
+# Test class
+# ---------------------------------------------------------------------------
+
+
+class TestGitLabIngestionJob(unittest.TestCase):
+    def setUp(self):
+        self._gitlab_patcher = patch("tasks.gitlab_ingestion.gitlab.Gitlab")
+        self._repo_reader_patcher = patch("tasks.gitlab_ingestion.GitLabRepositoryReader")
+        self._issues_reader_patcher = patch("tasks.gitlab_ingestion.GitLabIssuesReader")
+
+        self.mock_gitlab_class = self._gitlab_patcher.start()
+        self.mock_repo_reader_class = self._repo_reader_patcher.start()
+        self.mock_issues_reader_class = self._issues_reader_patcher.start()
+
+        # Restore real enums on the mocked class so connector and tests use the same values
+        self.mock_issues_reader_class.IssueState = GitLabIssuesReader.IssueState
+        self.mock_issues_reader_class.Scope = GitLabIssuesReader.Scope
+        self.mock_issues_reader_class.IssueType = GitLabIssuesReader.IssueType
+
+        self.mock_repo_reader = Mock()
+        self.mock_issues_reader = Mock()
+        self.mock_repo_reader_class.return_value = self.mock_repo_reader
+        self.mock_issues_reader_class.return_value = self.mock_issues_reader
+
+        # __init__ fetches the project's web_url via gl.projects.get(project_id)
+        # to build browse URLs in get_extra_metadata(); give it a real string so
+        # tests exercise the actual URL-building logic, not a Mock's repr.
+        self.mock_gitlab_client = self.mock_gitlab_class.return_value
+        self.mock_gitlab_client.projects.get.return_value.web_url = "https://gitlab.com/mygroup/myrepo"
+
+    def tearDown(self):
+        self._gitlab_patcher.stop()
+        self._repo_reader_patcher.stop()
+        self._issues_reader_patcher.stop()
+
+    def _make_job(self, **kwargs):
+        return GitLabIngestionJob(_make_config(**kwargs))
+
+    # ------------------------------------------------------------------
+    # source_type
+    # ------------------------------------------------------------------
+
+    def test_source_type(self):
+        self.assertEqual(self._make_job().source_type, "gitlab")
+
+    def test_init_fetches_project_web_url_when_project_id_set(self):
+        job = self._make_job(project_id=12345)
+        self.mock_gitlab_client.projects.get.assert_called_once_with(12345)
+        self.assertEqual(job._project_web_url, "https://gitlab.com/mygroup/myrepo")
+
+    def test_init_skips_web_url_fetch_in_group_only_mode(self):
+        job = GitLabIngestionJob(
+            {
+                "name": "x",
+                "config": {
+                    "gitlab_url": "https://gitlab.com",
+                    "personal_token": "t",
+                    "group_id": 999,
+                    "include_issues": True,
+                },
+            }
+        )
+        self.mock_gitlab_client.projects.get.assert_not_called()
+        self.assertIsNone(job._project_web_url)
+
+    # ------------------------------------------------------------------
+    # Validation
+    # ------------------------------------------------------------------
+
+    def test_missing_gitlab_url_raises(self):
+        with self.assertRaises(ValueError):
+            GitLabIngestionJob({"name": "x", "config": {"personal_token": "t", "project_id": 1}})
+
+    def test_missing_personal_token_raises(self):
+        with self.assertRaises(ValueError):
+            GitLabIngestionJob({"name": "x", "config": {"gitlab_url": "https://gitlab.com", "project_id": 1}})
+
+    def test_missing_project_and_group_raises(self):
+        with self.assertRaises(ValueError):
+            GitLabIngestionJob(
+                {
+                    "name": "x",
+                    "config": {
+                        "gitlab_url": "https://gitlab.com",
+                        "personal_token": "t",
+                    },
+                }
+            )
+
+    def test_project_and_group_both_set_raises(self):
+        with self.assertRaises(ValueError):
+            GitLabIngestionJob(
+                {
+                    "name": "x",
+                    "config": {
+                        "gitlab_url": "https://gitlab.com",
+                        "personal_token": "t",
+                        "project_id": 12345,
+                        "group_id": 999,
+                        "include_issues": True,
+                    },
+                }
+            )
+
+    def test_group_id_only_with_issues_is_valid(self):
+        job = GitLabIngestionJob(
+            {
+                "name": "x",
+                "config": {
+                    "gitlab_url": "https://gitlab.com",
+                    "personal_token": "t",
+                    "group_id": 999,
+                    "include_issues": True,
+                },
+            }
+        )
+        self.assertIsNone(job.project_id)
+        self.assertEqual(job.group_id, 999)
+
+    def test_issues_reader_never_constructed_with_both_project_and_group_none(self):
+        # Regression test for discussion_r3760429901: GitLabIssuesReader.load_data()
+        # produces zero results if neither project_id nor group_id is passed. The
+        # __init__ guard (test_missing_project_and_group_raises) should make that
+        # combination unreachable whenever include_issues=True; assert it directly
+        # against the reader's actual constructor call, not just via config validation.
+        self._make_job(project_id=12345, group_id=None, include_issues=True)
+        _, kwargs = self.mock_issues_reader_class.call_args
+        self.assertFalse(kwargs["project_id"] is None and kwargs["group_id"] is None)
+
+        self._make_job(project_id=None, group_id=999, include_issues=True)
+        _, kwargs = self.mock_issues_reader_class.call_args
+        self.assertFalse(kwargs["project_id"] is None and kwargs["group_id"] is None)
+
+    # ------------------------------------------------------------------
+    # list_items — files
+    # ------------------------------------------------------------------
+
+    def test_list_items_yields_file_items(self):
+        self.mock_repo_reader.load_data.return_value = [
+            _make_file_doc("README.md"),
+            _make_file_doc("src/main.py"),
+        ]
+        job = self._make_job()
+        items = list(job.list_items())
+        self.assertEqual(len(items), 2)
+        self.assertIn(":file:", items[0].id)
+
+    def test_list_items_file_id_format(self):
+        self.mock_repo_reader.load_data.return_value = [_make_file_doc("docs/guide.md")]
+        job = self._make_job(project_id=12345, ref="main")
+        items = list(job.list_items())
+        self.assertEqual(items[0].id, "gitlab:12345:main:file:docs/guide.md")
+
+    def test_list_items_passes_ref_to_reader(self):
+        self.mock_repo_reader.load_data.return_value = []
+        job = self._make_job(ref="develop")
+        list(job.list_items())
+        call_kwargs = self.mock_repo_reader.load_data.call_args.kwargs
+        self.assertEqual(call_kwargs["ref"], "develop")
+
+    def test_list_items_passes_path_and_recursive(self):
+        self.mock_repo_reader.load_data.return_value = []
+        job = self._make_job(path="docs", recursive=False)
+        list(job.list_items())
+        call_kwargs = self.mock_repo_reader.load_data.call_args.kwargs
+        self.assertEqual(call_kwargs["path"], "docs")
+        self.assertFalse(call_kwargs["recursive"])
+
+    def test_list_items_passes_iterator_default_true(self):
+        # files_iterator=None so the key round-trips through config as unset
+        # (dict.get returns None either way), exercising the connector's actual
+        # parse_bool(..., default=True) path rather than just echoing back a
+        # value _make_config() supplied.
+        self.mock_repo_reader.load_data.return_value = []
+        job = self._make_job(files_iterator=None)
+        list(job.list_items())
+        call_kwargs = self.mock_repo_reader.load_data.call_args.kwargs
+        self.assertTrue(call_kwargs["iterator"])
+
+    def test_list_items_passes_iterator_false(self):
+        self.mock_repo_reader.load_data.return_value = []
+        job = self._make_job(files_iterator=False)
+        list(job.list_items())
+        call_kwargs = self.mock_repo_reader.load_data.call_args.kwargs
+        self.assertFalse(call_kwargs["iterator"])
+
+    def test_list_items_file_error_raises(self):
+        self.mock_repo_reader.load_data.side_effect = Exception("API error")
+        job = self._make_job()
+        with self.assertRaisesRegex(Exception, "API error"):
+            list(job.list_items())
+
+    # ------------------------------------------------------------------
+    # list_items — issues
+    # ------------------------------------------------------------------
+
+    def test_list_items_no_issues_when_disabled(self):
+        self.mock_repo_reader.load_data.return_value = []
+        job = self._make_job(include_issues=False)
+        list(job.list_items())
+        self.mock_issues_reader.load_data.assert_not_called()
+
+    def test_list_items_yields_issue_items(self):
+        self.mock_repo_reader.load_data.return_value = []
+        self.mock_issues_reader.load_data.return_value = [
+            _make_issue_doc("1"),
+            _make_issue_doc("2"),
+        ]
+        job = self._make_job(include_issues=True)
+        items = list(job.list_items())
+        self.assertEqual(len(items), 2)
+        self.assertIn(":issue:", items[0].id)
+
+    def test_list_items_issue_id_format(self):
+        # item.id uses the issue's API self-link ("url"), not the project-scoped
+        # iid, so that group-only ingestion doesn't collide across projects that
+        # share an iid (see discussion_r3760508294).
+        self.mock_repo_reader.load_data.return_value = []
+        self.mock_issues_reader.load_data.return_value = [_make_issue_doc("7")]
+        job = self._make_job(project_id=12345, include_issues=True)
+        items = list(job.list_items())
+        self.assertEqual(
+            items[0].id,
+            "gitlab:12345:issue:https://gitlab.com/api/v4/projects/12345/issues/7",
+        )
+
+    def test_list_items_issue_missing_url_raises(self):
+        # Falling back to doc_id (the project-scoped iid) would silently
+        # reintroduce the group-scoped collision _issue_identity exists to
+        # prevent, so a missing "url" must fail the item, not fall back.
+        self.mock_repo_reader.load_data.return_value = []
+        doc = _make_issue_doc("7")
+        del doc.metadata["url"]
+        self.mock_issues_reader.load_data.return_value = [doc]
+        job = self._make_job(project_id=12345, include_issues=True)
+        with self.assertRaises(ValueError):
+            list(job.list_items())
+
+    def test_list_items_issue_empty_url_raises(self):
+        # "url" present but empty ("") must fail the same as a missing key.
+        self.mock_repo_reader.load_data.return_value = []
+        doc = _make_issue_doc("7")
+        doc.metadata["url"] = ""
+        self.mock_issues_reader.load_data.return_value = [doc]
+        job = self._make_job(project_id=12345, include_issues=True)
+        with self.assertRaises(ValueError):
+            list(job.list_items())
+
+    def test_issue_identity_raises_on_missing_url(self):
+        doc = _make_issue_doc("7")
+        del doc.metadata["url"]
+        job = self._make_job(project_id=12345, include_issues=True)
+        with self.assertRaises(ValueError):
+            job._issue_identity(doc)
+
+    def test_list_items_issue_id_no_collision_across_projects_in_group(self):
+        # Regression test: two projects in the same group can share an iid.
+        # Using the url keeps their item.id unique when only group_id is set.
+        self.mock_repo_reader.load_data.return_value = []
+        doc_a = _make_issue_doc("5")
+        doc_a.metadata["url"] = "https://gitlab.com/api/v4/projects/111/issues/5"
+        doc_b = _make_issue_doc("5")
+        doc_b.metadata["url"] = "https://gitlab.com/api/v4/projects/222/issues/5"
+        self.mock_issues_reader.load_data.return_value = [doc_a, doc_b]
+        job = self._make_job(project_id=None, group_id=999, include_issues=True)
+        items = list(job.list_items())
+        self.assertEqual(len(items), 2)
+        self.assertNotEqual(items[0].id, items[1].id)
+
+    def test_get_item_name_issue_no_collision_across_projects_in_group(self):
+        # Regression test for the same iid-collision class, but for
+        # get_item_name() (the metadata-tracker key) rather than item.id:
+        # _issue_short_id() embeds project_id from the url, so two projects
+        # in the same group sharing an iid still get distinct tracker keys.
+        doc_a = _make_issue_doc("5")
+        doc_a.metadata["url"] = "https://gitlab.com/api/v4/projects/111/issues/5"
+        doc_b = _make_issue_doc("5")
+        doc_b.metadata["url"] = "https://gitlab.com/api/v4/projects/222/issues/5"
+        job = self._make_job(project_id=None, group_id=999, include_issues=True)
+        item_a = IngestionItem(id="gitlab:999:issue:a", source_ref=doc_a)
+        item_b = IngestionItem(id="gitlab:999:issue:b", source_ref=doc_b)
+        self.assertNotEqual(job.get_item_name(item_a), job.get_item_name(item_b))
+        self.assertEqual(job.get_item_name(item_a), "gitlab_issue_test_gitlab_111_5")
+        self.assertEqual(job.get_item_name(item_b), "gitlab_issue_test_gitlab_222_5")
+
+    def test_get_item_name_issue_no_collision_across_sources(self):
+        # Two configured sources on different GitLab instances can share the
+        # same numeric project_id + iid; source_name in the key keeps their
+        # tracker entries from colliding (matches the Slack connector's
+        # get_item_name() pattern for the same reason).
+        doc = _make_issue_doc("7")
+        doc.metadata["url"] = "https://gitlab.com/api/v4/projects/123/issues/7"
+        item = IngestionItem(id="gitlab:123:issue:7", source_ref=doc)
+        job_a = self._make_job()
+        job_a.source_name = "gitlab_com_source"
+        job_b = self._make_job()
+        job_b.source_name = "self_hosted_source"
+        self.assertNotEqual(job_a.get_item_name(item), job_b.get_item_name(item))
+
+    def test_list_items_issue_state_passed(self):
+        self.mock_repo_reader.load_data.return_value = []
+        self.mock_issues_reader.load_data.return_value = []
+        job = self._make_job(include_issues=True, issues_state="closed")
+        list(job.list_items())
+        call_kwargs = self.mock_issues_reader.load_data.call_args.kwargs
+        self.assertEqual(call_kwargs["state"], GitLabIssuesReader.IssueState.CLOSED)
+
+    def test_list_items_issue_labels_passed(self):
+        self.mock_repo_reader.load_data.return_value = []
+        self.mock_issues_reader.load_data.return_value = []
+        job = self._make_job(include_issues=True, issues_labels="bug,docs")
+        list(job.list_items())
+        call_kwargs = self.mock_issues_reader.load_data.call_args.kwargs
+        self.assertIn("bug", call_kwargs["labels"])
+        self.assertIn("docs", call_kwargs["labels"])
+
+    def test_list_items_issue_error_raises(self):
+        self.mock_repo_reader.load_data.return_value = []
+        self.mock_issues_reader.load_data.side_effect = Exception("403 Forbidden")
+        job = self._make_job(include_issues=True)
+        with self.assertRaises(Exception):
+            list(job.list_items())
+
+    # ------------------------------------------------------------------
+    # get_raw_content
+    # ------------------------------------------------------------------
+
+    def test_get_raw_content_returns_doc_text(self):
+        doc = _make_file_doc(text="# Hello")
+        item = IngestionItem(id="gitlab:1:file:README.md", source_ref=doc)
+        job = self._make_job()
+        self.assertEqual(job.get_raw_content(item), "# Hello")
+
+    def test_get_raw_content_none_returns_empty(self):
+        doc = _make_file_doc(text=None)
+        item = IngestionItem(id="gitlab:1:file:README.md", source_ref=doc)
+        job = self._make_job()
+        self.assertEqual(job.get_raw_content(item), "")
+
+    # ------------------------------------------------------------------
+    # get_item_name
+    # ------------------------------------------------------------------
+
+    def test_get_item_name_file(self):
+        doc = _make_file_doc(file_path="docs/guide.md")
+        item = IngestionItem(id="gitlab:1:file:docs/guide.md", source_ref=doc)
+        job = self._make_job()
+        self.assertEqual(job.get_item_name(item), "docs_guide.md")
+
+    def test_get_item_name_issue(self):
+        # Name uses a short "<project_id>_<iid>" extracted from the unique url
+        # (not slugify(full_url), which is unreadable, and not the bare iid,
+        # which collides across projects in a group) — per review feedback.
+        # source_name is prefixed too, since project_id alone can also collide
+        # across different GitLab instances configured as separate sources.
+        doc = _make_issue_doc(iid="42")
+        item = IngestionItem(id="gitlab:12345:issue:42", source_ref=doc)
+        job = self._make_job(project_id=12345)
+        self.assertEqual(job.get_item_name(item), "gitlab_issue_test_gitlab_12345_42")
+
+    def test_issue_short_id_falls_back_to_full_identity_on_unexpected_url_shape(self):
+        doc = _make_issue_doc(iid="42")
+        doc.metadata["url"] = "https://gitlab.com/some/other/shape"
+        job = self._make_job(project_id=12345)
+        self.assertEqual(job._issue_short_id(doc), "https://gitlab.com/some/other/shape")
+
+    def test_get_item_name_issue_missing_url_raises(self):
+        doc = _make_issue_doc(iid="42")
+        del doc.metadata["url"]
+        item = IngestionItem(id="gitlab:12345:issue:42", source_ref=doc)
+        job = self._make_job(project_id=12345)
+        with self.assertRaises(ValueError):
+            job.get_item_name(item)
+
+    def test_get_item_name_file_no_doc_id_or_file_path_falls_back_to_item_id(self):
+        doc = Mock()
+        doc.doc_id = None
+        doc.metadata = {}
+        item = IngestionItem(id="gitlab:1:file:fallback", source_ref=doc)
+        job = self._make_job()
+        self.assertEqual(job.get_item_name(item), "gitlab:1:file:fallback")
+
+    def test_get_item_name_truncates_to_255(self):
+        doc = _make_file_doc(file_path="a/" * 200 + "file.md")
+        item = IngestionItem(id="gitlab:1:file:x", source_ref=doc)
+        job = self._make_job()
+        self.assertLessEqual(len(job.get_item_name(item)), 255)
+
+    # ------------------------------------------------------------------
+    # get_extra_metadata — files
+    # ------------------------------------------------------------------
+
+    def test_get_extra_metadata_file(self):
+        doc = _make_file_doc(file_path="README.md")
+        item = IngestionItem(id="gitlab:12345:file:README.md", source_ref=doc)
+        job = self._make_job(project_id=12345)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["item_type"], "file")
+        self.assertEqual(meta["file_path"], "README.md")
+        self.assertEqual(meta["gitlab_url"], "https://gitlab.com")
+
+    def test_get_extra_metadata_file_name_not_reserved_key(self):
+        # BaseMetadataSchema reserves "file_name"; process_item() overwrites it
+        # from get_item_name() and silently drops any extra with that key, so
+        # the real basename must live under a non-reserved key instead.
+        doc = _make_file_doc(file_path="docs/README.md")
+        item = IngestionItem(id="gitlab:12345:file:docs/README.md", source_ref=doc)
+        job = self._make_job(project_id=12345)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertNotIn("file_name", meta)
+        self.assertEqual(meta["gitlab_file_name"], "README.md")
+
+    def test_get_extra_metadata_file_url_is_browse_url(self):
+        doc = _make_file_doc(file_path="docs/guide.md")
+        item = IngestionItem(id="gitlab:12345:file:docs/guide.md", source_ref=doc)
+        job = self._make_job(project_id=12345, ref="main")
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["url"], "https://gitlab.com/mygroup/myrepo/-/blob/main/docs/guide.md")
+
+    def test_get_extra_metadata_file_url_encodes_special_characters(self):
+        # The file path keeps "/" unescaped (those are real path separators),
+        # but ref slashes are percent-encoded so a branch like "feature/x" can't
+        # be misread as extra path segments against the file path that follows.
+        doc = _make_file_doc(file_path="docs/a b#c.md")
+        item = IngestionItem(id="gitlab:12345:file:docs/a b#c.md", source_ref=doc)
+        job = self._make_job(project_id=12345, ref="feature/x")
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(
+            meta["url"],
+            "https://gitlab.com/mygroup/myrepo/-/blob/feature%2Fx/docs/a%20b%23c.md",
+        )
+
+    def test_get_extra_metadata_file_url_empty_when_no_file_path(self):
+        doc = _make_file_doc(file_path="")
+        doc.metadata["file_path"] = ""
+        item = IngestionItem(id="gitlab:12345:file:empty", source_ref=doc)
+        job = self._make_job(project_id=12345)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["url"], "")
+
+    def test_get_extra_metadata_file_url_falls_back_without_web_url(self):
+        doc = _make_file_doc(file_path="README.md")
+        item = IngestionItem(id="gitlab:12345:file:README.md", source_ref=doc)
+        job = self._make_job(project_id=12345, ref="main")
+        job._project_web_url = None
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["url"], "https://gitlab.com/12345/-/blob/main/README.md")
+
+    # ------------------------------------------------------------------
+    # get_extra_metadata — issues
+    # ------------------------------------------------------------------
+
+    def test_get_extra_metadata_issue(self):
+        doc = _make_issue_doc(iid="7", state="opened", labels=["bug"])
+        item = IngestionItem(id="gitlab:12345:issue:7", source_ref=doc)
+        job = self._make_job(project_id=12345, include_issues=True)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["item_type"], "issue")
+        self.assertEqual(meta["issue_number"], "7")
+        self.assertEqual(meta["state"], "opened")
+        self.assertIn("bug", meta["labels"])
+        self.assertIn("gitlab.com", meta["url"])
+
+    def test_get_extra_metadata_issue_title_extracted_from_text(self):
+        # The reader embeds "{title}\n{description}" as doc.text and never
+        # exposes title in metadata separately (see _make_issue_doc's default
+        # text="Issue title\nIssue body").
+        doc = _make_issue_doc(iid="7")
+        item = IngestionItem(id="gitlab:12345:issue:7", source_ref=doc)
+        job = self._make_job(project_id=12345, include_issues=True)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["title"], "Issue title")
+
+    def test_get_extra_metadata_issue_title_empty_text(self):
+        doc = _make_issue_doc(iid="7", text="")
+        item = IngestionItem(id="gitlab:12345:issue:7", source_ref=doc)
+        job = self._make_job(project_id=12345, include_issues=True)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["title"], "")
+
+    def test_get_extra_metadata_issue_assignee_present(self):
+        doc = _make_issue_doc(iid="8")
+        doc.metadata["assignee"] = "octocat"
+        item = IngestionItem(id="gitlab:12345:issue:8", source_ref=doc)
+        job = self._make_job(project_id=12345, include_issues=True)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertEqual(meta["assignee"], "octocat")
+
+    def test_get_extra_metadata_issue_no_assignee(self):
+        doc = _make_issue_doc(iid="9")
+        item = IngestionItem(id="gitlab:12345:issue:9", source_ref=doc)
+        job = self._make_job(project_id=12345, include_issues=True)
+        meta = job.get_extra_metadata(item, "", {})
+        self.assertNotIn("assignee", meta)
+
+    # ------------------------------------------------------------------
+    # _parse_list
+    # ------------------------------------------------------------------
+
+    def test_parse_list_comma_string(self):
+        self.assertEqual(parse_list("bug, docs, wip"), ["bug", "docs", "wip"])
+
+    def test_parse_list_list_input(self):
+        self.assertEqual(parse_list(["bug", "docs"]), ["bug", "docs"])
+
+    def test_parse_list_empty(self):
+        self.assertEqual(parse_list(""), [])
+        self.assertEqual(parse_list(None), [])
+
+    def test_parse_list_non_string_elements(self):
+        self.assertEqual(parse_list([1, 2, 3]), ["1", "2", "3"])
+
+    def test_parse_list_all_blank_list_returns_none(self):
+        self.assertEqual(parse_list(["", "  ", ""]), [])
+
+    def test_resolve_state_opened(self):
+        self.assertEqual(
+            GitLabIngestionJob._resolve_state_enum("opened"),
+            GitLabIssuesReader.IssueState.OPEN,
+        )
+
+    def test_resolve_state_closed(self):
+        self.assertEqual(
+            GitLabIngestionJob._resolve_state_enum("closed"),
+            GitLabIssuesReader.IssueState.CLOSED,
+        )
+
+    def test_resolve_state_all(self):
+        self.assertEqual(
+            GitLabIngestionJob._resolve_state_enum("all"),
+            GitLabIssuesReader.IssueState.ALL,
+        )
+
+    def test_resolve_state_unknown_defaults_to_open(self):
+        self.assertEqual(
+            GitLabIngestionJob._resolve_state_enum("bogus"),
+            GitLabIssuesReader.IssueState.OPEN,
+        )
+
+    # ------------------------------------------------------------------
+    # _resolve_scope_enum
+    # ------------------------------------------------------------------
+
+    def test_resolve_scope_created_by_me(self):
+        self.assertEqual(
+            GitLabIngestionJob._resolve_scope_enum("created_by_me"),
+            GitLabIssuesReader.Scope.CREATED_BY_ME,
+        )
+
+    def test_resolve_scope_assigned_to_me(self):
+        self.assertEqual(
+            GitLabIngestionJob._resolve_scope_enum("assigned_to_me"),
+            GitLabIssuesReader.Scope.ASSIGNED_TO_ME,
+        )
+
+    def test_resolve_scope_all(self):
+        self.assertEqual(
+            GitLabIngestionJob._resolve_scope_enum("all"),
+            GitLabIssuesReader.Scope.ALL,
+        )
+
+    def test_resolve_scope_none_returns_none(self):
+        self.assertIsNone(GitLabIngestionJob._resolve_scope_enum(None))
+
+    def test_resolve_scope_unknown_returns_none(self):
+        self.assertIsNone(GitLabIngestionJob._resolve_scope_enum("bogus"))
+
+    # ------------------------------------------------------------------
+    # _resolve_issue_type_enum
+    # ------------------------------------------------------------------
+
+    def test_resolve_issue_type_issue(self):
+        self.assertEqual(
+            GitLabIngestionJob._resolve_issue_type_enum("issue"),
+            GitLabIssuesReader.IssueType.ISSUE,
+        )
+
+    def test_resolve_issue_type_incident(self):
+        self.assertEqual(
+            GitLabIngestionJob._resolve_issue_type_enum("incident"),
+            GitLabIssuesReader.IssueType.INCIDENT,
+        )
+
+    def test_resolve_issue_type_none_returns_none(self):
+        self.assertIsNone(GitLabIngestionJob._resolve_issue_type_enum(None))
+
+    def test_resolve_issue_type_unknown_returns_none(self):
+        self.assertIsNone(GitLabIngestionJob._resolve_issue_type_enum("bogus"))
+
+    # ------------------------------------------------------------------
+    # _parse_timestamp
+    # ------------------------------------------------------------------
+
+    def test_parse_timestamp_valid(self):
+        result = parse_timestamp("2024-01-15T10:00:00Z")
+        self.assertIsNotNone(result)
+        self.assertEqual(result.year, 2024)
+
+    def test_parse_timestamp_none(self):
+        self.assertIsNone(parse_timestamp(None))
+
+    def test_parse_timestamp_invalid(self):
+        self.assertIsNone(parse_timestamp("not-a-date"))
+
+    # ------------------------------------------------------------------
+    # file_path and new issue filters passed to readers
+    # ------------------------------------------------------------------
+
+    def test_list_items_passes_file_path(self):
+        self.mock_repo_reader.load_data.return_value = []
+        job = self._make_job(file_path="README.md")
+        list(job.list_items())
+        call_kwargs = self.mock_repo_reader.load_data.call_args.kwargs
+        self.assertEqual(call_kwargs["file_path"], "README.md")
+
+    def test_list_items_issue_date_filters_passed(self):
+        self.mock_repo_reader.load_data.return_value = []
+        self.mock_issues_reader.load_data.return_value = []
+        job = self._make_job(include_issues=True)
+        job.issues_created_after = datetime(2024, 1, 1, tzinfo=UTC)
+        job.issues_created_before = datetime(2024, 12, 31, tzinfo=UTC)
+        list(job.list_items())
+        call_kwargs = self.mock_issues_reader.load_data.call_args.kwargs
+        self.assertEqual(call_kwargs["created_after"].year, 2024)
+        self.assertEqual(call_kwargs["created_before"].year, 2024)
+
+    def test_list_items_issue_scope_passed(self):
+        self.mock_repo_reader.load_data.return_value = []
+        self.mock_issues_reader.load_data.return_value = []
+        job = self._make_job(include_issues=True)
+        job.issues_scope = GitLabIssuesReader.Scope.CREATED_BY_ME
+        list(job.list_items())
+        call_kwargs = self.mock_issues_reader.load_data.call_args.kwargs
+        self.assertEqual(call_kwargs["scope"], GitLabIssuesReader.Scope.CREATED_BY_ME)
+
+    def test_list_items_issue_iids_passed(self):
+        self.mock_repo_reader.load_data.return_value = []
+        self.mock_issues_reader.load_data.return_value = []
+        job = self._make_job(include_issues=True)
+        job.issues_iids = [1, 2, 3]
+        list(job.list_items())
+        call_kwargs = self.mock_issues_reader.load_data.call_args.kwargs
+        self.assertEqual(call_kwargs["iids"], [1, 2, 3])
+
+    def test_issues_iids_parses_comma_separated_string(self):
+        job = self._make_job(include_issues=True, issues_iids="1,2,3")
+        self.assertEqual(job.issues_iids, [1, 2, 3])
+
+    def test_issues_iids_parses_yaml_list(self):
+        job = self._make_job(include_issues=True, issues_iids=[1, 2, 3])
+        self.assertEqual(job.issues_iids, [1, 2, 3])
+
+    def test_issues_iids_empty_is_none(self):
+        job = self._make_job(include_issues=True, issues_iids=None)
+        self.assertIsNone(job.issues_iids)
+
+    def test_list_items_issue_confidential_passed(self):
+        self.mock_repo_reader.load_data.return_value = []
+        self.mock_issues_reader.load_data.return_value = []
+        job = self._make_job(include_issues=True)
+        job.issues_confidential = True
+        list(job.list_items())
+        call_kwargs = self.mock_issues_reader.load_data.call_args.kwargs
+        self.assertTrue(call_kwargs["confidential"])
+
+    # ------------------------------------------------------------------
+    # _parse_bool
+    # ------------------------------------------------------------------
+
+    def test_parse_bool_true_values(self):
+        for v in [True, "true", "True", "1", "yes", "on"]:
+            self.assertTrue(parse_bool(v), msg=f"expected True for {v!r}")
+
+    def test_parse_bool_false_values(self):
+        for v in [False, "false", "False", "0", "no", "off"]:
+            self.assertFalse(parse_bool(v), msg=f"expected False for {v!r}")
+
+    def test_parse_bool_none_uses_default(self):
+        self.assertTrue(parse_bool(None, default=True))
+        self.assertFalse(parse_bool(None, default=False))
+
+    def test_parse_bool_flows_through_recursive(self):
+        job = self._make_job(recursive="false")
+        self.assertFalse(job.recursive)
+
+    def test_parse_bool_flows_through_include_issues(self):
+        job = self._make_job(include_issues="false")
+        self.assertFalse(job.include_issues)
+
+    def test_parse_bool_flows_through_issues_get_all(self):
+        job = self._make_job(issues_get_all="false")
+        self.assertFalse(job.issues_get_all)
+
+    def test_issues_get_all_defaults_true(self):
+        job = self._make_job(issues_get_all=None)
+        self.assertTrue(job.issues_get_all)
+
+    # ------------------------------------------------------------------
+    # _parse_bool with default=None (optional bool fields)
+    # ------------------------------------------------------------------
+
+    def test_parse_bool_none_default_none_returns_none(self):
+        self.assertIsNone(GitLabIngestionJob._parse_bool_optional(None))
+
+    def test_parse_bool_optional_true_values(self):
+        for v in [True, "true", "1", "yes", "on"]:
+            self.assertTrue(GitLabIngestionJob._parse_bool_optional(v), msg=f"expected True for {v!r}")
+
+    def test_parse_bool_optional_false_values(self):
+        for v in [False, "false", "0", "no", "off"]:
+            self.assertFalse(GitLabIngestionJob._parse_bool_optional(v), msg=f"expected False for {v!r}")
+
+    def test_parse_bool_optional_flows_through_confidential(self):
+        job = self._make_job(include_issues=True)
+        job.issues_confidential = GitLabIngestionJob._parse_bool_optional("true")
+        self.assertTrue(job.issues_confidential)
+
+    # ------------------------------------------------------------------
+    # Fail-fast: group_id only + include_issues=False raises ValueError
+    # ------------------------------------------------------------------
+
+    def test_group_id_only_no_issues_raises(self):
+        with self.assertRaises(ValueError):
+            GitLabIngestionJob(
+                {
+                    "name": "x",
+                    "config": {
+                        "gitlab_url": "https://gitlab.com",
+                        "personal_token": "test_token",
+                        "group_id": 999,
+                        "include_issues": False,
+                    },
+                }
+            )
+
+    # ------------------------------------------------------------------
+    # issue last_modified uses created_at (updated_at not exposed by reader)
+    # ------------------------------------------------------------------
+
+    def test_list_items_issue_last_modified_uses_created_at(self):
+        doc = _make_issue_doc("5")
+        doc.metadata["created_at"] = "2024-03-10T08:00:00Z"
+        self.mock_repo_reader.load_data.return_value = []
+        self.mock_issues_reader.load_data.return_value = [doc]
+        job = self._make_job(include_issues=True)
+        items = list(job.list_items())
+        self.assertEqual(items[0].last_modified.year, 2024)
+
+
+if __name__ == "__main__":
+    unittest.main()
