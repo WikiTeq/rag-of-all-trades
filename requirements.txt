@@ -42,6 +42,9 @@ slack-sdk==3.41.0
 # OneDrive connector
 msal==1.37.0
 
+# Trello connector
+py-trello==0.20.1
+
 # Environment management
 python-dotenv==1.2.1
 
