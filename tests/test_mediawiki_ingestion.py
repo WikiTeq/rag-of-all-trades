@@ -539,44 +539,6 @@ class TestGetExtraMetadata:
         assert extra["page_id"] == 10
         assert extra["namespace"] == 0
 
-    def test_extra_metadata_conforms_to_schema(self, base_wiki_job):
-        """Extra metadata must validate against MediaWikiMetadataSchema."""
-        from tasks.schemas import BaseMetadataSchema, MediaWikiMetadataSchema
-
-        job, _ = base_wiki_job
-        item = _make_item(
-            "Test Page",
-            last_modified=datetime(2024, 1, 1, 12, 0, 0),
-            url="https://example.com/wiki/Test_Page",
-            pageid=10,
-            namespace=0,
-        )
-
-        extra = job.get_extra_metadata(item=item, content="content", metadata={})
-
-        validated = MediaWikiMetadataSchema(**extra)
-        assert validated.title == "Test Page"
-        assert validated.page_id == 10
-        assert validated.namespace == 0
-        assert str(validated.url) == "https://example.com/wiki/Test_Page"
-        assert set(MediaWikiMetadataSchema.model_fields).isdisjoint(BaseMetadataSchema.model_fields)
-
-    def test_extra_metadata_schema_without_url(self):
-        """url is optional in the schema; omitted url must still validate."""
-        from tasks.schemas import MediaWikiMetadataSchema
-
-        job, _ = _make_job()
-        item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
-
-        with patch("tasks.mediawiki_ingestion.logger.warning") as mock_warning:
-            extra = job.get_extra_metadata(item=item, content="content", metadata={})
-
-        mock_warning.assert_called_once()
-        assert "URL not found" in mock_warning.call_args[0][0]
-        assert "url" not in extra
-        validated = MediaWikiMetadataSchema(**extra)
-        assert validated.url is None
-
     def test_load_semantics_disabled_by_default(self):
         job, _ = _make_job()
         assert job.load_semantics is False

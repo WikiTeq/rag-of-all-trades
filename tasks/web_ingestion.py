@@ -8,7 +8,6 @@ from llama_index.readers.web.sitemap.base import SitemapReader
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.schemas import WebMetadataSchema
 from utils.config_validation import mutually_exclusive
 from utils.parse import parse_bool, parse_list
 from utils.text import slugify
@@ -154,10 +153,10 @@ class WebIngestionJob(IngestionJob):
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return web-specific metadata fields."""
-        return WebMetadataSchema(
-            url=item._metadata_cache.get("url", ""),
-            title=item._metadata_cache.get("title", ""),
-        ).model_dump()
+        return {
+            "url": item._metadata_cache.get("url", ""),
+            "title": item._metadata_cache.get("title", ""),
+        }
 
     def _discover_sitemap_urls(self) -> list[str]:
         """Parse the configured sitemap and return matching URLs."""

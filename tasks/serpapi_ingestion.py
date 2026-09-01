@@ -1,11 +1,8 @@
 import logging
-from collections.abc import Iterator
 from datetime import UTC, datetime
-from typing import Any
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.schemas import SerpAPIMetadataSchema
 from utils.http import RetrySession
 from utils.parse import parse_list
 from utils.text import slugify
@@ -41,10 +38,6 @@ class SerpAPIIngestionJob(IngestionJob):
                 source_ref=query,
                 last_modified=datetime.now(UTC),
             )
-
-    def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
-        """Return SerpAPI-specific metadata fields."""
-        return SerpAPIMetadataSchema(query=str(item.source_ref)).model_dump()
 
     def get_raw_content(self, item: IngestionItem) -> str:
         query: str = item.source_ref

@@ -166,26 +166,6 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
             mock_logger.info.assert_called_once()
             self.assertIn("Python news", mock_logger.info.call_args[0][0])
 
-    # --- get_extra_metadata ---
-
-    def test_get_extra_metadata_returns_query(self):
-        job = SerpAPIIngestionJob(self.config)
-        item = next(job.list_items())
-        meta = job.get_extra_metadata(item, "", {})
-        self.assertEqual(meta, {"query": "Python news"})
-
-    def test_get_extra_metadata_conforms_to_schema(self):
-        """Extra metadata must validate against SerpAPIMetadataSchema."""
-        from tasks.schemas import BaseMetadataSchema, SerpAPIMetadataSchema
-
-        job = SerpAPIIngestionJob(self.config)
-        item = next(job.list_items())
-        meta = job.get_extra_metadata(item, "", {})
-
-        validated = SerpAPIMetadataSchema(**meta)
-        self.assertEqual(validated.query, "Python news")
-        self.assertTrue(set(SerpAPIMetadataSchema.model_fields).isdisjoint(BaseMetadataSchema.model_fields))
-
 
 if __name__ == "__main__":
     unittest.main()
