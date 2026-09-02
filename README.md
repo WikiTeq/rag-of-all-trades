@@ -867,7 +867,7 @@ curl -X 'GET' \
 
 ### /dashboard
 
-This endpoint serves a small live dashboard (auto-refresh every 30 seconds) with:
+This endpoint serves a small live dashboard with:
 * Number of vector items
 * Total vector table size
 * Number of currently running Celery jobs
@@ -879,6 +879,11 @@ This endpoint serves a small live dashboard (auto-refresh every 30 seconds) with
   * skipped count
   * status (`success`/`error`/`running`)
   * connector (`name` + `type`)
+
+Updates stream over Server-Sent Events (`GET /dashboard/stream`, same basic auth): the
+server pushes a fresh stats payload when data changes (new runs, document changes, size)
+and at least every 30 seconds, with heartbeats keeping the connection alive. The page
+falls back to interval polling automatically if the stream is unavailable.
 
 Dashboard is disabled by default and protected with HTTP Basic Auth.
 

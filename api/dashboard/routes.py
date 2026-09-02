@@ -1,10 +1,13 @@
+import json
 import logging
 import re
 import secrets
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import inspect, text
@@ -189,6 +192,8 @@ def dashboard_page(request: Request, _: str = Depends(verify_dashboard_auth)):
         request=request,
         name="dashboard.html",
         context={"refresh_interval_seconds": 30},
+        # Template ships inline CSS; a heuristically cached page hides redesigns
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -202,3 +207,85 @@ def dashboard_stats(_: str = Depends(verify_dashboard_auth)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch dashboard stats",
         )
+
+
+SSE_DB_POLL_SECONDS = 5
+SSE_MAX_PUSH_INTERVAL_SECONDS = 30
+SSE_HEARTBEAT_INTERVAL_SECONDS = 15
+
+
+def get_stats_fingerprint() -> tuple:
+    """Cheap change detector for the stats payload.
+
+    Covers the inputs the UI actually reflects: new/updated documents bump
+    metadata.max(id), ingestion runs bump ingestion_runs.max(id), and DB size
+    tracks deleted/added chunks. Celery job count is intentionally excluded
+    (expensive inspect); it refreshes on the periodic full push instead.
+    """
+    vector_table_name = resolve_vector_table_name()
+    with get_db_session() as db:
+        row = db.execute(
+            text(
+                f"""
+            SELECT (SELECT COALESCE(MAX(id), 0) FROM public.metadata),
+                   (SELECT COALESCE(MAX(id), 0) FROM public.ingestion_runs),
+                   pg_total_relation_size(to_regclass(:relation_name))
+            """
+            ),
+            {"relation_name": f"public.{vector_table_name}"},
+        ).one()
+    return tuple(row)
+
+
+def sse_event(payload: dict) -> str:
+    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n"
+
+
+def dashboard_stats_stream():
+    """Yield SSE events: full stats on change, at most every 30s regardless.
+
+    Runs in the threadpool (sync generator); each client disconnect closes the
+    generator. Heartbeat comments keep intermediaries from idling the
+    connection out.
+    """
+    # object() sentinel: never equals a real fingerprint, forces the first push
+    last_fingerprint = object()
+    last_push = 0.0
+    last_activity = time.monotonic()
+
+    while True:
+        try:
+            fingerprint = get_stats_fingerprint()
+        except Exception:
+            logger.exception("Dashboard stream fingerprint failed")
+            fingerprint = None
+
+        now = time.monotonic()
+        due = now - last_push >= SSE_MAX_PUSH_INTERVAL_SECONDS
+
+        if fingerprint != last_fingerprint or due:
+            try:
+                yield sse_event(get_dashboard_stats())
+                last_fingerprint = fingerprint
+                last_push = now
+                last_activity = now
+            except Exception:
+                logger.exception("Dashboard stream push failed")
+        elif now - last_activity >= SSE_HEARTBEAT_INTERVAL_SECONDS:
+            yield ": ping\n\n"
+            last_activity = now
+
+        time.sleep(SSE_DB_POLL_SECONDS)
+
+
+@router.get("/dashboard/stream", include_in_schema=False)
+def dashboard_stream(_: str = Depends(verify_dashboard_auth)):
+    """Server-Sent Events stream of dashboard stats (push on change)."""
+    return StreamingResponse(
+        dashboard_stats_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )

@@ -304,7 +304,28 @@
     }
     .status-success { color: var(--green); background: var(--green-dim); }
     .status-error { color: var(--red); background: var(--red-dim); }
-    .status-running { color: var(--amber); background: var(--amber-dim); }
+    /* Amber band sweeps across the pill's own background: motion reads as
+       "work in flight". No ::after here on purpose - a negative z-index
+       pseudo would paint behind the pill unless the pill formed a stacking
+       context, rendering the band invisible. Both gradient ends are flat
+       dim, so the 0% -> 100% background-position loop is seamless. */
+    .status-running {
+      color: var(--amber);
+      background: linear-gradient(
+        100deg,
+        var(--amber-dim) 0%,
+        var(--amber-dim) 38%,
+        rgba(234, 166, 62, 0.55) 50%,
+        var(--amber-dim) 62%,
+        var(--amber-dim) 100%
+      );
+      background-size: 300% 100%;
+      animation: status-sweep 2.4s ease-in-out infinite;
+    }
+    @keyframes status-sweep {
+      0% { background-position: 0% 0; }
+      100% { background-position: 100% 0; }
+    }
     .empty-state { text-align: center; padding: 30px 16px; }
     .empty-state .empty-title { color: var(--text-2); font-weight: 600; }
     .empty-state .empty-hint { margin-top: 4px; color: var(--text-3); font-size: 12.5px; }
@@ -327,7 +348,7 @@
       .connectors-flow-list .connector-block:nth-child(even) { margin-left: 12%; }
     }
     @media (prefers-reduced-motion: reduce) {
-      .flow-path, .flow-pulse, .live-dot { animation: none; }
+      .flow-path, .flow-pulse, .live-dot, .status-running { animation: none; }
     }
   </style>
 </head>
@@ -350,7 +371,7 @@
     <header class="masthead">
       <div>
         <h1>Ingestion Console</h1>
-        <div class="sub">RAGacy vector pipeline &middot; auto-refresh every {{ refresh_interval_seconds }}s</div>
+        <div class="sub">RAGacy vector pipeline &middot; <span id="conn-mode">connecting&hellip;</span></div>
       </div>
       <div id="updated-at" class="live-chip"><span class="live-dot" aria-hidden="true"></span><span id="updated-at-text">connecting&hellip;</span></div>
     </header>
@@ -592,6 +613,7 @@
         `Couldn't reach /dashboard/stats (${message}). Retrying on the next refresh`
       ));
       document.getElementById('ingestion-runs-summary').textContent = '';
+      setChip(`update error: ${message}`);
     }
 
     function renderRecentIngestionRuns(runs) {
@@ -673,14 +695,15 @@
       summary.textContent = `Latest ${runs.length} run${runs.length === 1 ? '' : 's'}`;
     }
 
-    async function refreshStats() {
-      // location.origin strips any basic-auth userinfo from the document URL;
-      // fetch() refuses relative URLs when the document URL embeds credentials.
-      const response = await fetch(location.origin + '/dashboard/stats', { cache: 'no-store' });
-      if (!response.ok) {
-        throw new Error('Failed to fetch dashboard stats');
-      }
-      const data = await response.json();
+    function setChip(text) {
+      document.getElementById('updated-at-text').textContent = text;
+    }
+
+    function setConnMode(text) {
+      document.getElementById('conn-mode').textContent = text;
+    }
+
+    function renderStats(data) {
       document.getElementById('vector-items').textContent = data.vector_items_count.toLocaleString();
       document.getElementById('vector-size').textContent = data.vector_db_size_human;
       document.getElementById('vector-size-bytes').textContent = data.vector_db_size_bytes.toLocaleString() + ' bytes';
@@ -689,29 +712,77 @@
       document.getElementById('connectors-count').textContent = data.configured_connectors_count.toLocaleString();
       document.getElementById('db-flow-table').textContent = data.vector_table;
       document.getElementById('db-flow-meta').textContent = `${data.vector_items_count.toLocaleString()} items \u00b7 ${data.vector_db_size_human}`;
-      document.getElementById('updated-at-text').textContent = 'updated ' + new Date(data.updated_at).toLocaleTimeString();
+      setChip('updated ' + new Date(data.updated_at).toLocaleTimeString());
 
       const connectors = data.configured_connectors || [];
       renderConnectorsFlow(connectors);
       renderRecentIngestionRuns(data.recent_ingestion_runs || []);
     }
 
-    async function startRefreshLoop() {
-      try {
-        await refreshStats();
-      } catch (error) {
-        renderStatsError(error.message);
+    async function refreshStats() {
+      // location.origin strips any basic-auth userinfo from the document URL;
+      // fetch() refuses relative URLs when the document URL embeds credentials.
+      const response = await fetch(location.origin + '/dashboard/stats', { cache: 'no-store' });
+      if (!response.ok) {
+        throw new Error('Failed to fetch dashboard stats');
       }
-      setInterval(async () => {
+      renderStats(await response.json());
+    }
+
+    let pollTimer = null;
+
+    function startPolling() {
+      if (pollTimer) return;
+      setConnMode(`polling every {{ refresh_interval_seconds }}s`);
+      refreshStats().catch(showUpdateError);
+      pollTimer = setInterval(async () => {
         try {
           await refreshStats();
         } catch (error) {
-          renderStatsError(error.message);
+          showUpdateError(error);
         }
       }, refreshIntervalMs);
     }
 
-    startRefreshLoop();
+    function stopPolling() {
+      if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+      }
+    }
+
+    function showUpdateError(error) {
+      setChip(`update error: ${error.message}`);
+      renderStatsError(error.message);
+    }
+
+    function startStream() {
+      // EventSource cannot set an Authorization header, but the browser replays
+      // cached basic-auth credentials for the origin, same as it did for the
+      // initial page load and the fetch fallback.
+      if (typeof EventSource === 'undefined') {
+        startPolling();
+        return;
+      }
+      const source = new EventSource('/dashboard/stream');
+      source.onopen = () => setConnMode('live stream');
+      source.onmessage = (event) => {
+        stopPolling();
+        setConnMode('live stream');
+        try {
+          renderStats(JSON.parse(event.data));
+        } catch (error) {
+          showUpdateError(error);
+        }
+      };
+      // EventSource auto-reconnects; poll as a safety net while disconnected
+      source.onerror = () => {
+        setConnMode('reconnecting\u2026');
+        startPolling();
+      };
+    }
+
+    startStream();
     window.addEventListener('resize', () => requestAnimationFrame(drawFlowLinks));
   </script>
 </body>
