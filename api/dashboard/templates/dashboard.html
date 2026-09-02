@@ -3,121 +3,145 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>RAG Dashboard</title>
+  <title>RAG Ingestion Console</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='5' fill='%23eaa63e'/%3E%3C/svg%3E" />
   <style>
     :root {
-      --bg: #f5f7fb;
-      --card: #ffffff;
-      --text: #111827;
-      --muted: #6b7280;
-      --accent: #0f766e;
-      --border: #e5e7eb;
+      --bg: #0a0d13;
+      --panel: #121722;
+      --panel-2: #0e121b;
+      --panel-3: #161c29;
+      --line: #232a3a;
+      --line-strong: #313a4e;
+      --text: #e8edf6;
+      --text-2: #aab3c5;
+      --text-3: #8191a5;
+      --amber: #eaa63e;
+      --amber-soft: #ffd28a;
+      --amber-dim: rgba(234, 166, 62, 0.14);
+      --green: #41c98e;
+      --green-dim: rgba(65, 201, 142, 0.12);
+      --red: #f0565c;
+      --red-dim: rgba(240, 86, 92, 0.12);
+      --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo, Consolas, monospace;
     }
     * { box-sizing: border-box; }
+    html { color-scheme: dark; }
     body {
       margin: 0;
-      padding: 24px;
-      font-family: "JetBrains Mono", "Fira Code", "Menlo", monospace;
-      background: radial-gradient(circle at 10% 10%, #d1fae5, transparent 40%), var(--bg);
+      padding: 32px 24px 48px;
+      font-family: var(--sans);
+      background: var(--bg);
       color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
     }
-    .wrap { max-width: 1100px; margin: 0 auto; }
-    h1 { margin: 0 0 16px; font-size: 28px; }
-    .meta { color: var(--muted); margin-bottom: 18px; }
-    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
-    .card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px;
-    }
-    .label { color: var(--muted); font-size: 12px; text-transform: uppercase; }
-    .value { margin-top: 8px; font-size: 24px; font-weight: 700; }
-    .small { margin-top: 8px; color: var(--muted); font-size: 12px; }
-    .flow-section {
-      margin-top: 18px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px;
-    }
-    .runs-section {
-      margin-top: 18px;
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px;
-    }
-    .table-wrap {
-      overflow-x: auto;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: #fff;
-    }
-    .runs-table {
-      width: 100%;
-      border-collapse: collapse;
-      min-width: 900px;
-    }
-    .runs-table td:last-child {
-      max-width: 220px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .runs-table th,
-    .runs-table td {
-      padding: 10px 12px;
-      border-bottom: 1px solid var(--border);
-      text-align: left;
-      font-size: 13px;
-    }
-    .runs-table th {
-      font-size: 12px;
-      text-transform: uppercase;
-      color: var(--muted);
-      letter-spacing: 0.04em;
-      background: #f8fafc;
-    }
-    .runs-table tbody tr:last-child td {
-      border-bottom: none;
-    }
-    .status-pill {
-      display: inline-block;
-      border-radius: 999px;
-      padding: 2px 8px;
-      font-size: 12px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.02em;
-    }
-    .status-success {
-      color: #166534;
-      background: #dcfce7;
-    }
-    .status-error {
-      color: #991b1b;
-      background: #fee2e2;
-    }
-    .status-running {
-      color: #92400e;
-      background: #fef3c7;
-    }
-    .flow-header {
+    ::selection { background: rgba(234, 166, 62, 0.30); }
+    :focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; border-radius: 4px; }
+    * { scrollbar-width: thin; scrollbar-color: #2a3244 transparent; }
+    ::-webkit-scrollbar { width: 10px; height: 10px; }
+    ::-webkit-scrollbar-thumb { background: #2a3244; border-radius: 5px; border: 2px solid var(--bg); }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    .wrap { max-width: 1160px; margin: 0 auto; }
+
+    .masthead {
       display: flex;
       justify-content: space-between;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 10px;
+      align-items: flex-end;
+      gap: 16px;
+      margin-bottom: 22px;
     }
+    h1 {
+      margin: 0;
+      font-size: 21px;
+      font-weight: 650;
+      letter-spacing: -0.01em;
+    }
+    .masthead .sub { margin-top: 2px; color: var(--text-3); font-size: 12.5px; }
+    .live-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      white-space: nowrap;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 14px;
+      font-size: 12px;
+      color: var(--text-2);
+      font-variant-numeric: tabular-nums;
+    }
+    .live-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--amber);
+      box-shadow: 0 0 0 3px var(--amber-dim);
+      animation: live-breathe 2.4s ease-in-out infinite;
+    }
+    @keyframes live-breathe {
+      0%, 100% { box-shadow: 0 0 0 2px var(--amber-dim); }
+      50% { box-shadow: 0 0 0 4px var(--amber-dim); }
+    }
+
+    .vitals {
+      display: grid;
+      grid-template-columns: 1.3fr 1.2fr 0.9fr 0.9fr 1.3fr;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .vital { padding: 18px 22px 16px; border-left: 1px solid var(--line); min-width: 0; }
+    .vital:first-child { border-left: none; }
+    .vital-label {
+      color: var(--text-3);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+    }
+    .vital-value {
+      margin-top: 7px;
+      font-size: 30px;
+      font-weight: 700;
+      line-height: 1.1;
+      font-variant-numeric: tabular-nums;
+      word-break: break-word;
+    }
+    .vital.primary .vital-value { color: var(--amber); }
+    .vital-sub { margin-top: 5px; font-size: 12px; color: var(--text-3); }
+    .vital-sub .mono, .mono { font-family: var(--mono); font-size: 0.92em; }
+    .vital.value-sm .vital-value { font-size: 17px; font-weight: 600; padding-top: 8px; font-family: var(--mono); overflow-wrap: anywhere; }
+
+    .panel {
+      margin-top: 20px;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px 20px 20px;
+    }
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .panel-title { margin: 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
+    .panel-note { color: var(--text-3); font-size: 12px; text-align: right; }
+
     .flow-canvas {
       position: relative;
-      min-height: 320px;
+      min-height: 330px;
       overflow: hidden;
       border-radius: 10px;
-      background: linear-gradient(180deg, #f9fafb 0%, #f3f4f6 100%);
-      border: 1px solid var(--border);
-      padding: 16px;
+      background-color: var(--panel-2);
+      background-image: radial-gradient(circle, #151b28 1px, transparent 1px);
+      background-size: 22px 22px;
+      border: 1px solid var(--line);
+      padding: 18px;
     }
     #flow-links {
       position: absolute;
@@ -131,34 +155,36 @@
       position: relative;
       z-index: 2;
       border-radius: 12px;
-      border: 1px solid #c7d2fe;
-      background: linear-gradient(145deg, #eef2ff 0%, #e0e7ff 100%);
-      padding: 12px 14px;
-      box-shadow: 0 8px 24px rgba(30, 64, 175, 0.08);
+      border: 1px solid var(--line-strong);
+      background: var(--panel-3);
+      padding: 13px 16px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
     }
     .db-node {
-      width: min(360px, 95%);
-      margin: 0 auto;
+      width: min(380px, 95%);
+      margin: 6px auto 0;
       text-align: center;
     }
     .flow-node-title {
       text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: #4338ca;
-      font-size: 11px;
-      font-weight: 700;
+      letter-spacing: 0.09em;
+      color: var(--text-3);
+      font-size: 10.5px;
+      font-weight: 650;
     }
     .flow-node-main {
-      margin-top: 6px;
-      font-size: 20px;
-      font-weight: 700;
-      color: #1f2937;
+      margin-top: 5px;
+      font-family: var(--mono);
+      font-size: 19px;
+      font-weight: 600;
+      color: var(--text);
       word-break: break-word;
     }
     .flow-node-meta {
       margin-top: 4px;
+      font-family: var(--mono);
       font-size: 12px;
-      color: #4b5563;
+      color: var(--amber);
     }
     .connectors-flow-list {
       position: relative;
@@ -170,91 +196,197 @@
     }
     .connector-block {
       border-radius: 10px;
-      border: 1px solid var(--border);
-      background: #ffffff;
-      padding: 10px 12px;
-      min-height: 76px;
-      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+      border: 1px solid var(--line);
+      background: var(--panel);
+      padding: 11px 14px;
+      min-height: 78px;
+      transition: border-color 160ms ease, transform 160ms ease;
     }
-    .connector-name {
-      font-size: 14px;
-      font-weight: 700;
-      color: #0f172a;
-    }
+    .connector-block:hover { border-color: var(--line-strong); transform: translateY(-1px); }
+    .connector-name { font-size: 14px; font-weight: 600; color: var(--text); }
     .connector-type {
-      margin-top: 4px;
-      font-size: 12px;
-      color: #475569;
-      text-transform: uppercase;
-      letter-spacing: 0.03em;
-    }
-    .connector-schedule {
       margin-top: 3px;
-      font-size: 12px;
-      color: #334155;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-3);
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
     }
+    .connector-schedule { margin-top: 5px; font-family: var(--mono); font-size: 12px; color: var(--text-2); }
     .flow-path {
       fill: none;
-      stroke: #2563eb;
-      stroke-width: 2;
+      stroke: var(--amber);
+      stroke-width: 1.5;
       stroke-linecap: round;
-      stroke-dasharray: 8 9;
+      stroke-dasharray: 6 8;
       animation: flow-dash 1.2s linear infinite;
-      opacity: 0.9;
+      opacity: 0.75;
     }
     .flow-pulse {
       fill: none;
-      stroke: #0f766e;
-      stroke-width: 3;
+      stroke: var(--amber-soft);
+      stroke-width: 2.5;
       stroke-linecap: round;
       stroke-dasharray: 1 140;
       animation: flow-pulse 1.4s linear infinite;
-      opacity: 0.9;
+      opacity: 0.95;
     }
-    @keyframes flow-dash {
-      to { stroke-dashoffset: -34; }
+    @keyframes flow-dash { to { stroke-dashoffset: -28; } }
+    @keyframes flow-pulse { to { stroke-dashoffset: -282; } }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel-2);
     }
-    @keyframes flow-pulse {
-      to { stroke-dashoffset: -282; }
+    .runs-table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 900px;
+    }
+    .runs-table.is-empty { min-width: 0; }
+    .runs-table.is-empty thead { display: none; }
+    .runs-table.is-empty td:last-child {
+      max-width: none;
+      white-space: normal;
+    }
+    .runs-table td:last-child {
+      max-width: 240px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .runs-table th, .runs-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      font-size: 13px;
+    }
+    .runs-table th {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--text-3);
+      letter-spacing: 0.08em;
+      background: var(--panel);
+      white-space: nowrap;
+    }
+    .runs-table tbody tr:last-child td { border-bottom: none; }
+    .runs-table tbody tr { transition: background-color 120ms ease; }
+    .runs-table tbody tr:hover { background: #151b28; }
+    .runs-table td { color: var(--text-2); font-variant-numeric: tabular-nums; }
+    .runs-table td.num { font-family: var(--mono); font-size: 12.5px; }
+    .cell-connector .connector-name { font-size: 13px; }
+    .cell-connector .connector-type { margin-top: 1px; }
+    .cell-time { white-space: nowrap; }
+    .cell-time .ago { color: var(--text); }
+    .cell-time .abs { color: var(--text-3); font-size: 11.5px; margin-top: 1px; }
+    .cell-error { color: var(--text-3); }
+    .cell-error.has-error { color: var(--red); }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border-radius: 999px;
+      padding: 3px 10px;
+      font-size: 11px;
+      font-weight: 650;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .status-pill::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .status-success { color: var(--green); background: var(--green-dim); }
+    .status-error { color: var(--red); background: var(--red-dim); }
+    .status-running { color: var(--amber); background: var(--amber-dim); }
+    .empty-state { text-align: center; padding: 30px 16px; }
+    .empty-state .empty-title { color: var(--text-2); font-weight: 600; }
+    .empty-state .empty-hint { margin-top: 4px; color: var(--text-3); font-size: 12.5px; }
+
+    @media (max-width: 960px) {
+      .vitals { grid-template-columns: repeat(2, 1fr); }
+      .vital.primary { grid-column: 1 / -1; border-left: none; border-bottom: 1px solid var(--line); }
+      .vital:nth-child(odd) { border-left: none; }
+      .vital:nth-child(n+3) { border-top: 1px solid var(--line); }
+      .masthead { flex-direction: column; align-items: flex-start; }
     }
     @media (max-width: 700px) {
+      body { padding: 20px 14px 36px; }
+      .vital-value { font-size: 24px; }
+      .vital.value-sm .vital-value { font-size: 15px; }
+      .panel-header { flex-direction: column; align-items: flex-start; gap: 2px; }
+      .panel-note { text-align: left; }
       .flow-canvas { min-height: 420px; }
       .connectors-flow-list { margin-top: 90px; }
+      .connectors-flow-list .connector-block:nth-child(even) { margin-left: 12%; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .flow-path, .flow-pulse, .live-dot { animation: none; }
     }
   </style>
 </head>
 <body>
+  <!--
+  Direction contract (scoped refinement of an existing internal ops dashboard, Operate mode):
+  THESIS: a quiet dark operations console where amber means "live pipeline activity" and nothing else;
+  refuses the five-identical-stat-cards layout in favor of one vitals strip with a single headline metric.
+  OWN-WORLD: near-black blue-neutral ground (#0a0d13) with hairline-separated panels; sans for UI (system
+  stack), mono strictly for data (table names, bytes, counts, schedules); amber #eaa63e accent; green/red
+  reserved for run status.
+  STORY: engineer glancing between terminal sessions sees store size, pipeline activity, and run outcomes
+  at once; the animated connector-to-database flow map is the living centerpiece.
+  FIRST VIEWPORT: masthead with live chip, full vitals strip, top of the flow map with pulsing links.
+  FORM: scoped refinement of incumbent composition (no direction roll); seed key n/a.
+  FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict,
+  DESIGN.md, and every shipping raster carrying its provenance.
+  -->
   <div class="wrap">
-    <h1>RAG Application Dashboard</h1>
-    <div class="meta">Refresh interval: {{ refresh_interval_seconds }} seconds</div>
-    <div class="grid">
-      <section class="card">
-        <div class="label">Vector Items</div>
-        <div id="vector-items" class="value">-</div>
+    <header class="masthead">
+      <div>
+        <h1>Ingestion Console</h1>
+        <div class="sub">RAGacy vector pipeline &middot; auto-refresh every {{ refresh_interval_seconds }}s</div>
+      </div>
+      <div id="updated-at" class="live-chip"><span class="live-dot" aria-hidden="true"></span><span id="updated-at-text">connecting&hellip;</span></div>
+    </header>
+
+    <section class="vitals" aria-label="Pipeline vitals">
+      <section class="vital primary">
+        <div class="vital-label">Vector Items</div>
+        <div id="vector-items" class="vital-value">-</div>
+        <div class="vital-sub"><span class="mono" id="vector-size-bytes"></span></div>
       </section>
-      <section class="card">
-        <div class="label">Vector DB Size</div>
-        <div id="vector-size" class="value">-</div>
-        <div id="vector-size-bytes" class="small"></div>
+      <section class="vital">
+        <div class="vital-label">DB Size</div>
+        <div id="vector-size" class="vital-value">-</div>
+        <div class="vital-sub">on disk</div>
       </section>
-      <section class="card">
-        <div class="label">Running Celery Jobs</div>
-        <div id="celery-jobs" class="value">-</div>
+      <section class="vital">
+        <div class="vital-label">Celery Jobs</div>
+        <div id="celery-jobs" class="vital-value">-</div>
+        <div class="vital-sub">running now</div>
       </section>
-      <section class="card">
-        <div class="label">Vector Table</div>
-        <div id="vector-table" class="value" style="font-size:18px">-</div>
+      <section class="vital">
+        <div class="vital-label">Connectors</div>
+        <div id="connectors-count" class="vital-value">-</div>
+        <div class="vital-sub">configured</div>
       </section>
-      <section class="card">
-        <div class="label">Configured Connectors</div>
-        <div id="connectors-count" class="value">-</div>
-        <div class="small">Rendered in flow map below</div>
+      <section class="vital value-sm">
+        <div class="vital-label">Vector Table</div>
+        <div id="vector-table" class="vital-value">-</div>
+        <div class="vital-sub">public schema</div>
       </section>
-    </div>
-    <section class="flow-section">
-      <div class="flow-header">
-        <div class="label">Connector Data Flow</div>
-        <div id="connectors-summary" class="small">-</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Pipeline Flow</h2>
+        <div id="connectors-summary" class="panel-note">-</div>
       </div>
       <div id="flow-canvas" class="flow-canvas">
         <svg id="flow-links" aria-hidden="true"></svg>
@@ -266,16 +398,17 @@
         <div id="connectors-flow-list" class="connectors-flow-list"></div>
       </div>
     </section>
-    <section class="runs-section">
-      <div class="flow-header">
-        <div class="label">Recent Ingestion Runs</div>
-        <div id="ingestion-runs-summary" class="small">-</div>
+
+    <section class="panel">
+      <div class="panel-header">
+        <h2 class="panel-title">Recent Runs</h2>
+        <div id="ingestion-runs-summary" class="panel-note">-</div>
       </div>
       <div class="table-wrap">
-        <table class="runs-table">
+        <table class="runs-table is-empty">
           <thead>
             <tr>
-              <th>Started At</th>
+              <th>Started</th>
               <th>Connector</th>
               <th>Status</th>
               <th>Duration</th>
@@ -286,17 +419,39 @@
           </thead>
           <tbody id="ingestion-runs-body">
             <tr>
-              <td colspan="7" class="small">Loading...</td>
+              <td colspan="7" class="empty-state"><div class="empty-title">Loading&hellip;</div></td>
             </tr>
           </tbody>
         </table>
       </div>
     </section>
-    <div id="updated-at" class="small" style="margin-top:16px;"></div>
   </div>
   <script>
     const refreshIntervalMs = {{ refresh_interval_seconds }} * 1000;
     const SVG_NS = 'http://www.w3.org/2000/svg';
+
+    function humanizeSchedule(seconds) {
+      if (seconds == null) return 'unscheduled';
+      if (seconds >= 3600) {
+        const h = seconds / 3600;
+        return `every ${Number.isInteger(h) ? h : h.toFixed(1)}h`;
+      }
+      if (seconds >= 60) {
+        const m = seconds / 60;
+        return `every ${Number.isInteger(m) ? m : m.toFixed(1)}m`;
+      }
+      return `every ${seconds}s`;
+    }
+
+    function relativeTime(iso) {
+      if (!iso) return null;
+      const diffMs = Date.now() - new Date(iso).getTime();
+      const sec = Math.max(0, Math.floor(diffMs / 1000));
+      if (sec < 60) return 'just now';
+      if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+      if (sec < 86400) return `${Math.floor(sec / 3600)}h ago`;
+      return `${Math.floor(sec / 86400)}d ago`;
+    }
 
     function buildConnectorBlock(connector) {
       const block = document.createElement('article');
@@ -309,7 +464,7 @@
       type.textContent = connector.type || 'unknown';
       const schedule = document.createElement('div');
       schedule.className = 'connector-schedule';
-      schedule.textContent = `every ${connector.schedule_seconds ?? 'n/a'}s`;
+      schedule.textContent = humanizeSchedule(connector.schedule_seconds);
       block.appendChild(name);
       block.appendChild(type);
       block.appendChild(schedule);
@@ -338,7 +493,7 @@
       marker.setAttribute('orient', 'auto-start-reverse');
       const arrowPath = document.createElementNS(SVG_NS, 'path');
       arrowPath.setAttribute('d', 'M 0 0 L 10 5 L 0 10 z');
-      arrowPath.setAttribute('fill', '#2563eb');
+      arrowPath.setAttribute('fill', '#eaa63e');
       marker.appendChild(arrowPath);
       defs.appendChild(marker);
       svg.appendChild(defs);
@@ -379,15 +534,23 @@
 
       if (!connectors.length) {
         const empty = document.createElement('div');
-        empty.className = 'small';
-        empty.textContent = 'No connectors configured';
+        empty.className = 'empty-state';
+        empty.style.width = '100%';
+        const title = document.createElement('div');
+        title.className = 'empty-title';
+        title.textContent = 'No connectors configured';
+        const hint = document.createElement('div');
+        hint.className = 'empty-hint';
+        hint.textContent = 'Add sources in config.yaml to see pipeline flows here';
+        empty.appendChild(title);
+        empty.appendChild(hint);
         flowList.appendChild(empty);
         summary.textContent = 'No active connector flows';
       } else {
         connectors.forEach((connector) => {
           flowList.appendChild(buildConnectorBlock(connector));
         });
-        summary.textContent = `${connectors.length} connector flow${connectors.length === 1 ? '' : 's'} -> vector database`;
+        summary.textContent = `${connectors.length} connector flow${connectors.length === 1 ? '' : 's'} into the vector database`;
       }
 
       requestAnimationFrame(drawFlowLinks);
@@ -400,18 +563,50 @@
       return 'status-running';
     }
 
+    function buildEmptyRow(titleText, hintText) {
+      const row = document.createElement('tr');
+      const cell = document.createElement('td');
+      cell.colSpan = 7;
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      const title = document.createElement('div');
+      title.className = 'empty-title';
+      title.textContent = titleText;
+      const hint = document.createElement('div');
+      hint.className = 'empty-hint';
+      hint.textContent = hintText;
+      empty.appendChild(title);
+      empty.appendChild(hint);
+      cell.appendChild(empty);
+      row.appendChild(cell);
+      return row;
+    }
+
+    // Fetch failure must read as a real error state, not a stuck "Loading..." row
+    function renderStatsError(message) {
+      const body = document.getElementById('ingestion-runs-body');
+      body.closest('table').classList.add('is-empty');
+      body.textContent = '';
+      body.appendChild(buildEmptyRow(
+        'Stats unavailable',
+        `Couldn't reach /dashboard/stats (${message}). Retrying on the next refresh`
+      ));
+      document.getElementById('ingestion-runs-summary').textContent = '';
+    }
+
     function renderRecentIngestionRuns(runs) {
       const body = document.getElementById('ingestion-runs-body');
       const summary = document.getElementById('ingestion-runs-summary');
+      const table = body.closest('table');
+      // Empty state must escape the min-width table so it stays visible on small screens
+      table.classList.toggle('is-empty', !runs.length);
       body.textContent = '';
 
       if (!runs.length) {
-        const row = document.createElement('tr');
-        const cell = document.createElement('td');
-        cell.colSpan = 7;
-        cell.textContent = 'No ingestion runs logged yet';
-        row.appendChild(cell);
-        body.appendChild(row);
+        body.appendChild(buildEmptyRow(
+          'No ingestion runs logged yet',
+          'Connectors fire on their schedule; each run will appear here'
+        ));
         summary.textContent = '0 runs';
         return;
       }
@@ -420,10 +615,27 @@
         const row = document.createElement('tr');
 
         const started = document.createElement('td');
-        started.textContent = run.started_at ? new Date(run.started_at).toLocaleString() : '-';
+        started.className = 'cell-time';
+        const ago = document.createElement('div');
+        ago.className = 'ago';
+        ago.textContent = relativeTime(run.started_at) || '-';
+        const abs = document.createElement('div');
+        abs.className = 'abs';
+        abs.textContent = run.started_at ? new Date(run.started_at).toLocaleString() : '-';
+        started.appendChild(ago);
+        started.appendChild(abs);
+        started.title = run.started_at ? new Date(run.started_at).toLocaleString() : '';
 
         const connector = document.createElement('td');
-        connector.textContent = `${run.connector_name || 'unknown'} (${run.connector_type || 'unknown'})`;
+        connector.className = 'cell-connector';
+        const connName = document.createElement('div');
+        connName.className = 'connector-name';
+        connName.textContent = run.connector_name || 'unknown';
+        const connType = document.createElement('div');
+        connType.className = 'connector-type';
+        connType.textContent = run.connector_type || 'unknown';
+        connector.appendChild(connName);
+        connector.appendChild(connType);
 
         const status = document.createElement('td');
         const statusPill = document.createElement('span');
@@ -432,16 +644,20 @@
         status.appendChild(statusPill);
 
         const duration = document.createElement('td');
+        duration.className = 'num';
         duration.textContent = run.duration_human || '-';
 
         const ingested = document.createElement('td');
+        ingested.className = 'num';
         ingested.textContent = (run.items_ingested ?? 0).toLocaleString();
 
         const skipped = document.createElement('td');
+        skipped.className = 'num';
         skipped.textContent = (run.items_skipped ?? 0).toLocaleString();
 
         const error = document.createElement('td');
-        error.textContent = run.error_message ? run.error_message.slice(0, 80) : '';
+        error.className = run.error_message ? 'cell-error has-error' : 'cell-error';
+        error.textContent = run.error_message ? run.error_message.slice(0, 80) : '-';
         error.title = run.error_message || '';
 
         row.appendChild(started);
@@ -458,7 +674,9 @@
     }
 
     async function refreshStats() {
-      const response = await fetch('/dashboard/stats', { cache: 'no-store' });
+      // location.origin strips any basic-auth userinfo from the document URL;
+      // fetch() refuses relative URLs when the document URL embeds credentials.
+      const response = await fetch(location.origin + '/dashboard/stats', { cache: 'no-store' });
       if (!response.ok) {
         throw new Error('Failed to fetch dashboard stats');
       }
@@ -470,8 +688,8 @@
       document.getElementById('vector-table').textContent = data.vector_table;
       document.getElementById('connectors-count').textContent = data.configured_connectors_count.toLocaleString();
       document.getElementById('db-flow-table').textContent = data.vector_table;
-      document.getElementById('db-flow-meta').textContent = `${data.vector_items_count.toLocaleString()} items | ${data.vector_db_size_human}`;
-      document.getElementById('updated-at').textContent = 'Last update: ' + new Date(data.updated_at).toLocaleString();
+      document.getElementById('db-flow-meta').textContent = `${data.vector_items_count.toLocaleString()} items \u00b7 ${data.vector_db_size_human}`;
+      document.getElementById('updated-at-text').textContent = 'updated ' + new Date(data.updated_at).toLocaleTimeString();
 
       const connectors = data.configured_connectors || [];
       renderConnectorsFlow(connectors);
@@ -482,13 +700,13 @@
       try {
         await refreshStats();
       } catch (error) {
-        document.getElementById('updated-at').textContent = 'Dashboard update error: ' + error.message;
+        renderStatsError(error.message);
       }
       setInterval(async () => {
         try {
           await refreshStats();
         } catch (error) {
-          document.getElementById('updated-at').textContent = 'Dashboard update error: ' + error.message;
+          renderStatsError(error.message);
         }
       }, refreshIntervalMs);
     }

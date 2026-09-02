@@ -116,22 +116,19 @@ def get_dashboard_stats():
     vector_table_name = resolve_vector_table_name()
 
     with get_db_session() as db:
-        # reltuples is a planner statistic; Postgres >= 13 reports -1 for a
-        # table never analyzed (e.g. nothing ingested yet). Fall back to an
-        # exact COUNT(*) only in that no-stats case.
+        # Vector Items = distinct documents at their latest version. Embedding
+        # rows are chunks (SentenceSplitter), so counting rows overstates the
+        # count ~3-4x. Old-version chunks are deleted on re-ingest, so distinct
+        # key_text values == documents live in the store. Exact count by design:
+        # no planner statistic can provide a DISTINCT count.
         vector_items_count = (
             db.execute(
                 text(
                     f"""
-                SELECT CASE
-                    WHEN c.reltuples >= 0 THEN c.reltuples::bigint
-                    ELSE (SELECT COUNT(*) FROM public.{quote_sql_identifier(vector_table_name)})
-                END
-                FROM pg_class c
-                WHERE c.oid = to_regclass(:relation_name)
+                SELECT COUNT(DISTINCT key_text)
+                FROM public.{quote_sql_identifier(vector_table_name)}
                 """
-                ),
-                {"relation_name": f"public.{vector_table_name}"},
+                )
             ).scalar_one()
             or 0
         )
