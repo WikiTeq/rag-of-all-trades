@@ -463,6 +463,37 @@
       }
       return `every ${seconds}s`;
     }
+    // Mirrors backend format_duration_ms so the column format never changes
+    // when a row transitions from in-flight (client-ticked) to completed
+    function formatLiveDuration(ms) {
+      const clamped = Math.max(0, ms);
+      if (clamped < 1000) return `${Math.floor(clamped)} ms`;
+      if (clamped < 60000) return `${(clamped / 1000).toFixed(2)} s`;
+      const minutes = Math.floor(clamped / 60000);
+      const seconds = (clamped % 60000) / 1000;
+      return `${minutes}m ${seconds.toFixed(1)}s`;
+    }
+
+    let durationTicker = null;
+
+    function tickLiveDurations() {
+      const cells = document.querySelectorAll('.duration-live');
+      if (!cells.length) {
+        clearInterval(durationTicker);
+        durationTicker = null;
+        return;
+      }
+      const now = Date.now();
+      cells.forEach((cell) => {
+        const startedAtMs = Number(cell.dataset.startedAtMs);
+        if (startedAtMs) cell.textContent = formatLiveDuration(now - startedAtMs);
+      });
+    }
+
+    function ensureDurationTicker() {
+      if (durationTicker) return;
+      durationTicker = setInterval(tickLiveDurations, 1000);
+    }
 
     function relativeTime(iso) {
       if (!iso) return null;
@@ -666,8 +697,15 @@
         status.appendChild(statusPill);
 
         const duration = document.createElement('td');
-        duration.className = 'num';
-        duration.textContent = run.duration_human || '-';
+        if (run.status === 'running' && run.started_at) {
+          // Backend leaves duration empty for in-flight rows; tick it locally
+          duration.className = 'num duration-live';
+          duration.dataset.startedAtMs = String(new Date(run.started_at).getTime());
+          duration.textContent = formatLiveDuration(Date.now() - new Date(run.started_at).getTime());
+        } else {
+          duration.className = 'num';
+          duration.textContent = run.duration_human || '-';
+        }
 
         const ingested = document.createElement('td');
         ingested.className = 'num';
@@ -692,6 +730,7 @@
         body.appendChild(row);
       });
 
+      if (document.querySelector('.duration-live')) ensureDurationTicker();
       summary.textContent = `Latest ${runs.length} run${runs.length === 1 ? '' : 's'}`;
     }
 

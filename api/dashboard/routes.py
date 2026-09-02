@@ -34,13 +34,29 @@ def quote_sql_identifier(identifier: str) -> str:
     return f'"{validate_sql_identifier(identifier)}"'
 
 
+_resolved_vector_table_name: str | None = None
+
+
 def resolve_vector_table_name():
+    """Resolve and memoize the physical vector table name.
+
+    Memoized per process: migrations run at container start, so table
+    existence cannot change under a running app. Without the cache every
+    fingerprint poll and stats request re-ran catalog reflection. The
+    failure path is intentionally not cached, so a table created after
+    startup resolves on the next call.
+    """
+    global _resolved_vector_table_name
+    if _resolved_vector_table_name is not None:
+        return _resolved_vector_table_name
+
     configured_table_name = settings.POSTGRES.get("table_name", "embeddings")
     vector_table_name = f"data_{configured_table_name}"
 
     with get_db_session() as db:
         inspector = inspect(db.bind)
         if inspector.has_table(vector_table_name, schema="public"):
+            _resolved_vector_table_name = vector_table_name
             return vector_table_name
 
     raise ValueError(f"Could not find vector table '{vector_table_name}' in schema 'public'")
@@ -83,15 +99,10 @@ def format_duration_ms(duration_ms: int | None) -> str:
 
 def serialize_ingestion_run(run: IngestionRun) -> dict:
     duration_ms = run.duration_ms
-    if duration_ms is None and run.started_at:
-        if run.completed_at:
-            duration_ms = max(0, int((run.completed_at - run.started_at).total_seconds() * 1000))
-        elif run.status == "running":
-            # In-flight row: report live elapsed so the row moves between pushes
-            started_at = run.started_at
-            if started_at.tzinfo is None:
-                started_at = started_at.replace(tzinfo=UTC)
-            duration_ms = max(0, int((datetime.now(UTC) - started_at).total_seconds() * 1000))
+    if duration_ms is None and run.started_at and run.completed_at:
+        duration_ms = max(0, int((run.completed_at - run.started_at).total_seconds() * 1000))
+    # In-flight rows stay duration_ms=None; the frontend ticks live elapsed
+    # from started_at so no per-push recomputation is needed here
 
     return {
         "id": run.id,

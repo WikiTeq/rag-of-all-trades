@@ -1,5 +1,6 @@
 import logging
 from datetime import datetime, timezone
+from time import monotonic
 from typing import Optional
 
 from models.ingestion_run import IngestionRun
@@ -7,9 +8,16 @@ from utils.db import get_db_session
 
 logger = logging.getLogger(__name__)
 
+# Runs that skip most/all items would otherwise persist a DB write per item
+# with nothing to show for it; cap progress writes at 1 Hz per tracker.
+PROGRESS_UPDATE_MIN_INTERVAL_SECONDS = 1.0
+
 
 class IngestionRunTracker:
     """Persists ingestion run lifecycle events for dashboard visibility."""
+
+    def __init__(self):
+        self._last_progress_write = 0.0
 
     def create_run(
         self,
@@ -43,12 +51,21 @@ class IngestionRunTracker:
     ) -> None:
         """Persist in-flight counters so the dashboard can show live progress.
 
-        Only touches rows still marked running, so a late flush can never
-        clobber the final record written by complete_run. Best-effort by
-        design: progress visibility must never break ingestion.
+        Writes are capped at one per second (mostly-skip runs would otherwise
+        issue a write per item with nothing changing). Only touches rows still
+        marked running, so a late flush can never clobber the final record
+        written by complete_run. Best-effort by design: progress visibility
+        must never break ingestion.
         """
         if run_id is None:
             return
+
+        now = monotonic()
+        if now - self._last_progress_write < PROGRESS_UPDATE_MIN_INTERVAL_SECONDS:
+            return
+        # Consume the slot even if the write below fails, so a persistently
+        # broken DB can't turn every item into a failed-write retry
+        self._last_progress_write = now
 
         try:
             with get_db_session() as db:
