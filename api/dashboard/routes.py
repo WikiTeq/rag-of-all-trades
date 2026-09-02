@@ -116,11 +116,17 @@ def get_dashboard_stats():
     vector_table_name = resolve_vector_table_name()
 
     with get_db_session() as db:
+        # reltuples is a planner statistic; Postgres >= 13 reports -1 for a
+        # table never analyzed (e.g. nothing ingested yet). Fall back to an
+        # exact COUNT(*) only in that no-stats case.
         vector_items_count = (
             db.execute(
                 text(
-                    """
-                SELECT COALESCE(c.reltuples::bigint, 0)
+                    f"""
+                SELECT CASE
+                    WHEN c.reltuples >= 0 THEN c.reltuples::bigint
+                    ELSE (SELECT COUNT(*) FROM public.{quote_sql_identifier(vector_table_name)})
+                END
                 FROM pg_class c
                 WHERE c.oid = to_regclass(:relation_name)
                 """
