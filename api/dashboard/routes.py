@@ -83,8 +83,15 @@ def format_duration_ms(duration_ms: int | None) -> str:
 
 def serialize_ingestion_run(run: IngestionRun) -> dict:
     duration_ms = run.duration_ms
-    if duration_ms is None and run.started_at and run.completed_at:
-        duration_ms = max(0, int((run.completed_at - run.started_at).total_seconds() * 1000))
+    if duration_ms is None and run.started_at:
+        if run.completed_at:
+            duration_ms = max(0, int((run.completed_at - run.started_at).total_seconds() * 1000))
+        elif run.status == "running":
+            # In-flight row: report live elapsed so the row moves between pushes
+            started_at = run.started_at
+            if started_at.tzinfo is None:
+                started_at = started_at.replace(tzinfo=UTC)
+            duration_ms = max(0, int((datetime.now(UTC) - started_at).total_seconds() * 1000))
 
     return {
         "id": run.id,
@@ -218,8 +225,9 @@ def get_stats_fingerprint() -> tuple:
     """Cheap change detector for the stats payload.
 
     Covers the inputs the UI actually reflects: new/updated documents bump
-    metadata.max(id), ingestion runs bump ingestion_runs.max(id), and DB size
-    tracks deleted/added chunks. Celery job count is intentionally excluded
+    metadata.max(id), ingestion runs bump ingestion_runs.max(id), in-flight
+    run progress moves the running-row counters, and DB size tracks
+    deleted/added chunks. Celery job count is intentionally excluded
     (expensive inspect); it refreshes on the periodic full push instead.
     """
     vector_table_name = resolve_vector_table_name()
@@ -229,6 +237,8 @@ def get_stats_fingerprint() -> tuple:
                 f"""
             SELECT (SELECT COALESCE(MAX(id), 0) FROM public.metadata),
                    (SELECT COALESCE(MAX(id), 0) FROM public.ingestion_runs),
+                   (SELECT COALESCE(MAX(items_ingested), 0) FROM public.ingestion_runs WHERE status = 'running'),
+                   (SELECT COALESCE(MAX(items_skipped), 0) FROM public.ingestion_runs WHERE status = 'running'),
                    pg_total_relation_size(to_regclass(:relation_name))
             """
             ),

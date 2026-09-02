@@ -337,11 +337,12 @@ class IngestionJob(ABC):
                 count = self.process_item(item)
                 if count == 0:
                     skipped += 1
-                    continue
+                else:
+                    total += count
+                    if self.request_delay > 0:
+                        time.sleep(self.request_delay)
 
-                total += count
-                if self.request_delay > 0:
-                    time.sleep(self.request_delay)
+                self.run_tracker.update_progress(run_id, total, skipped)
 
             result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped"
             logger.info(result_msg)

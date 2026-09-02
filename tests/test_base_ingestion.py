@@ -294,6 +294,37 @@ class TestIngestionJob:
             duration_ms=ANY,
         )
 
+    def test_run_records_progress_after_every_item(self, base_config):
+        """Running counters land in the run row after each processed item."""
+        items = [IngestionItem(id=f"item-{i}", source_ref="src") for i in range(25)]
+        job = DummyIngestionJob(base_config, items=items)
+        job.process_item = Mock(side_effect=[1 if i % 2 == 0 else 0 for i in range(25)])
+        job.run_tracker = Mock()
+        job.run_tracker.create_run.return_value = 42
+
+        job.run()
+
+        ing = skip = 0
+        expected = []
+        for i in range(25):
+            if i % 2 == 0:
+                ing += 1
+            else:
+                skip += 1
+            expected.append((42, ing, skip))
+
+        updates = [c.args for c in job.run_tracker.update_progress.call_args_list]
+        assert updates == expected
+        # Final totals still land via complete_run, not a progress record
+        job.run_tracker.complete_run.assert_called_once_with(
+            run_id=42,
+            status="success",
+            items_ingested=13,
+            items_skipped=12,
+            completed_at=ANY,
+            duration_ms=ANY,
+        )
+
     def test_run_records_error_status(self):
         job = DummyIngestionJob({"name": "test-source"}, items=[])
         job.list_items = Mock(side_effect=RuntimeError("boom"))

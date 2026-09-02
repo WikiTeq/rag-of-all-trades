@@ -35,6 +35,34 @@ class IngestionRunTracker:
             logger.exception("Failed to create ingestion run record")
             return None
 
+    def update_progress(
+        self,
+        run_id: Optional[int],
+        items_ingested: int,
+        items_skipped: int,
+    ) -> None:
+        """Persist in-flight counters so the dashboard can show live progress.
+
+        Only touches rows still marked running, so a late flush can never
+        clobber the final record written by complete_run. Best-effort by
+        design: progress visibility must never break ingestion.
+        """
+        if run_id is None:
+            return
+
+        try:
+            with get_db_session() as db:
+                run = (
+                    db.query(IngestionRun)
+                    .filter(IngestionRun.id == run_id)
+                    .first()
+                )
+                if run and run.status == "running":
+                    run.items_ingested = items_ingested
+                    run.items_skipped = items_skipped
+        except Exception:
+            logger.exception("Failed to update ingestion run progress")
+
     def complete_run(
         self,
         run_id: Optional[int],
