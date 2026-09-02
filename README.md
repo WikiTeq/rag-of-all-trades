@@ -902,6 +902,20 @@ curl -u admin:admin \
   'http://localhost:8000/dashboard'
 ```
 
+### Known limitations
+
+If a worker container is killed (or the whole stack is stopped) while an
+ingestion run is in progress, its `ingestion_runs` row stays in `running`
+status: only the worker itself can end a run, and a hard kill never gets to
+do that. The dashboard then shows that run as running until newer runs push
+it out of the "Latest 10" list. The ingestion itself is not affected: tasks
+are acknowledged late and requeued on worker loss, so the work re-runs after
+restart and creates a fresh run row.
+
+Planned fix: reconcile stuck rows to an `interrupted` status on worker boot
+(`worker_process_init` already runs per worker) plus a matching dashboard
+pill, so interrupted runs stop reading as live.
+
 ## Integration examples
 
 ### OpenWebUI
