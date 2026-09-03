@@ -4,6 +4,7 @@ from celery import Celery
 from celery.signals import worker_process_init, worker_process_shutdown
 from celery_singleton import Singleton
 
+from utils.celery_scheduling import singleton_lock_expiry_for_schedule
 from utils.celery_utils import ingestion_task_name
 from utils.config import settings
 from utils.db import engine
@@ -53,7 +54,9 @@ def create_task_for_source(source_config):
     """Register a Celery task and Beat schedule for one source (S3, MediaWiki, etc.)."""
     task_name = ingestion_task_name(source_config)
 
-    @celery_app.task(name=task_name, base=Singleton, ignore_result=True, bind=True)
+    lock_expiry = singleton_lock_expiry_for_schedule(source_config.get("schedule"))
+
+    @celery_app.task(name=task_name, base=Singleton, lock_expiry=lock_expiry, ignore_result=True, bind=True)
     def run_source(self, pipeline_config=source_config):
         from tasks.factory import IngestionJobFactory
 
