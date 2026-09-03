@@ -1,7 +1,7 @@
 import hashlib
 import unittest
 from datetime import datetime
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 import pytest
 
@@ -273,21 +273,89 @@ class TestIngestionJob:
         item2 = IngestionItem(id="item-2", source_ref="src")
         job = DummyIngestionJob(base_config, items=[item1, item2])
         job.process_item = Mock(side_effect=[1, 0])
+        job.run_tracker = Mock()
+        job.run_tracker.create_run.return_value = 42
 
         result = job.run()
 
         assert result == "[test-source] Completed: 1 ingested, 1 skipped"
         assert job.process_item.call_count == 2
+        job.run_tracker.create_run.assert_called_once_with(
+            connector_name="test-source",
+            connector_type="dummy",
+            started_at=ANY,
+        )
+        job.run_tracker.complete_run.assert_called_once_with(
+            run_id=42,
+            status="success",
+            items_ingested=1,
+            items_skipped=1,
+            completed_at=ANY,
+            duration_ms=ANY,
+        )
+
+    def test_run_records_progress_after_every_item(self, base_config):
+        """Running counters land in the run row after each processed item."""
+        items = [IngestionItem(id=f"item-{i}", source_ref="src") for i in range(25)]
+        job = DummyIngestionJob(base_config, items=items)
+        job.process_item = Mock(side_effect=[1 if i % 2 == 0 else 0 for i in range(25)])
+        job.run_tracker = Mock()
+        job.run_tracker.create_run.return_value = 42
+
+        job.run()
+
+        ing = skip = 0
+        expected = []
+        for i in range(25):
+            if i % 2 == 0:
+                ing += 1
+            else:
+                skip += 1
+            expected.append((42, ing, skip))
+
+        updates = [c.args for c in job.run_tracker.update_progress.call_args_list]
+        assert updates == expected
+        # Final totals still land via complete_run, not a progress record
+        job.run_tracker.complete_run.assert_called_once_with(
+            run_id=42,
+            status="success",
+            items_ingested=13,
+            items_skipped=12,
+            completed_at=ANY,
+            duration_ms=ANY,
+        )
+
+    def test_run_records_error_status(self):
+        job = DummyIngestionJob({"name": "test-source"}, items=[])
+        job.list_items = Mock(side_effect=RuntimeError("boom"))
+        job.run_tracker = Mock()
+        job.run_tracker.create_run.return_value = 99
+
+        result = job.run()
+
+        assert "[test-source] Job failed: boom" in result
+        job.run_tracker.complete_run.assert_called_once_with(
+            run_id=99,
+            status="error",
+            items_ingested=0,
+            items_skipped=0,
+            completed_at=ANY,
+            duration_ms=ANY,
+            error_message="boom",
+        )
 
 
 class TestIngestionJobRunFatalErrors(unittest.TestCase):
-    """run() must propagate fatal errors from list_items() instead of swallowing them.
+    """A fatal error while discovering items (list_items() itself raising, e.g. an
+    auth or listing-API failure) must not crash run() — it's caught, recorded on the
+    run tracker with status "error", and reported back as part of the returned
+    summary string, same as any other job failure.
 
     Written as unittest.TestCase (not the pytest-fixture style above) so it actually
     executes under `python -m unittest discover` per the project's test runner.
     """
 
-    def test_run_reraises_list_items_exception(self):
+    def test_run_catches_list_items_exception_and_records_error_status(self):
         class FailingListItemsJob(IngestionJob):
             @property
             def source_type(self) -> str:
@@ -304,14 +372,26 @@ class TestIngestionJobRunFatalErrors(unittest.TestCase):
                 return item.id
 
         job = FailingListItemsJob({"name": "test-source"})
+        job.run_tracker = Mock()
+        job.run_tracker.create_run.return_value = 7
 
-        with self.assertRaises(ConnectionError):
-            job.run()
+        result = job.run()
 
-    def test_run_does_not_swallow_fatal_error_into_return_string(self):
-        """A fatal list_items() error must not be caught and turned into a result string —
-        Celery's ignore_result=True means a returned string is silently discarded, so a
-        caught-and-stringified error looks identical to success."""
+        self.assertIn("[test-source] Job failed: auth failed", result)
+        job.run_tracker.complete_run.assert_called_once_with(
+            run_id=7,
+            status="error",
+            items_ingested=0,
+            items_skipped=0,
+            completed_at=unittest.mock.ANY,
+            duration_ms=unittest.mock.ANY,
+            error_message="auth failed",
+        )
+
+    def test_run_does_not_crash_on_fatal_error(self):
+        """A fatal list_items() error must not propagate out of run() — it's turned
+        into a result string instead, with the run tracker (not a raised exception)
+        as the source of truth for job failures."""
 
         class FailingListItemsJob(IngestionJob):
             @property
@@ -329,12 +409,12 @@ class TestIngestionJobRunFatalErrors(unittest.TestCase):
                 return item.id
 
         job = FailingListItemsJob({"name": "test-source"})
+        job.run_tracker = Mock()
+        job.run_tracker.create_run.return_value = 8
 
-        try:
-            job.run()
-            self.fail("run() should have raised RuntimeError, not returned normally")
-        except RuntimeError as exc:
-            self.assertEqual(str(exc), "listing API is down")
+        result = job.run()
+
+        self.assertIn("[test-source] Job failed: listing API is down", result)
 
 
 class TestIngestionJobMarkdownConversion:
@@ -453,3 +533,7 @@ class TestIngestionJobMarkdownConversion:
             first = job._get_markitdown()
             second = job._get_markitdown()
             assert first is second
+
+
+if __name__ == "__main__":
+    unittest.main()
