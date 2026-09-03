@@ -2,8 +2,8 @@ import logging
 
 from celery import Celery
 from celery.signals import worker_process_init, worker_process_shutdown
-from celery_singleton import Singleton
 
+from utils.celery_heartbeat_singleton import HeartbeatingSingleton
 from utils.config import settings
 from utils.db import engine
 from utils.logger import configure_logging
@@ -59,7 +59,7 @@ def create_task_for_source(source_config):
     else:
         task_name = f"{source_config['type']}_ingest_{source_name}"
 
-    @celery_app.task(name=task_name, base=Singleton, ignore_result=True, bind=True)
+    @celery_app.task(name=task_name, base=HeartbeatingSingleton, ignore_result=True, bind=True)
     def run_source(self, pipeline_config=source_config):
         from tasks.factory import IngestionJobFactory
 
