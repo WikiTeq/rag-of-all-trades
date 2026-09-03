@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import yaml
 
-from utils.celery_scheduling import MIN_SINGLETON_LOCK_EXPIRY, singleton_lock_expiry_for_schedule
+from utils.celery_scheduling import SINGLETON_LOCK_EXPIRY, SINGLETON_LOCK_RENEWAL_INTERVAL
 from utils.parse import parse_bool
 
 # ---------------------------------------------------------------------------
@@ -90,42 +90,31 @@ class TestSourceRegistration(unittest.TestCase):
 class TestSingletonLockExpiry(unittest.TestCase):
     """MAIT-387: a worker killed mid-task never releases its celery_singleton lock
     (on_success/on_failure never fire), and with no lock_expiry the lock never
-    expires either — the task is silently skipped forever after that. The lock
-    TTL must be bounded so a leaked lock self-heals by the next scheduled run.
+    expires either — the task is silently skipped forever after that.
+
+    The TTL is a fixed, short constant, independent of any task's schedule —
+    a healthy task stays alive via HeartbeatingSingleton's periodic renewal
+    (tests/test_celery_heartbeat_singleton.py), not by having a long enough TTL.
+    This class only checks the constants are sane; the renewal behavior itself
+    is covered by TestCreateTaskForSourceLockExpiryWiring below and the
+    HeartbeatingSingleton test module.
     """
 
-    def test_expiry_doubles_schedule_when_above_floor(self):
-        # Doubled, not equal to the schedule: a healthy task taking longer than one
-        # interval must not have its lock expire out from under it (which would let
-        # Beat dispatch a second, overlapping run).
-        self.assertEqual(singleton_lock_expiry_for_schedule(3600), 7200)
+    def test_expiry_is_positive(self):
+        self.assertGreater(SINGLETON_LOCK_EXPIRY, 0)
 
-    def test_expiry_uses_floor_for_frequent_schedules(self):
-        self.assertEqual(singleton_lock_expiry_for_schedule(60), MIN_SINGLETON_LOCK_EXPIRY)
+    def test_renewal_interval_is_positive(self):
+        self.assertGreater(SINGLETON_LOCK_RENEWAL_INTERVAL, 0)
 
-    def test_expiry_at_floor_boundary(self):
-        # Doubling a schedule already at the floor exceeds it, so the result is the
-        # doubled value, not the floor itself.
-        expiry = singleton_lock_expiry_for_schedule(MIN_SINGLETON_LOCK_EXPIRY)
-        self.assertEqual(expiry, MIN_SINGLETON_LOCK_EXPIRY * 2)
-
-    def test_expiry_is_never_none_or_unbounded(self):
-        # This is the actual bug: celery_singleton's default lock_expiry is None,
-        # which means Redis SET ... EX=None -> no TTL -> permanent lock leak.
-        for schedule in (60, 300, 3600, 7200):
-            expiry = singleton_lock_expiry_for_schedule(schedule)
-            self.assertIsNotNone(expiry)
-            self.assertGreater(expiry, 0)
-
-    def test_expiry_accepts_string_schedule(self):
-        # source_config["schedule"] is parsed from YAML/env and may arrive as a string.
-        self.assertEqual(singleton_lock_expiry_for_schedule("3600"), 7200)
+    def test_renewal_interval_leaves_headroom_before_expiry(self):
+        # Renewal must land comfortably before the TTL, not right at the wire.
+        self.assertLess(SINGLETON_LOCK_RENEWAL_INTERVAL, SINGLETON_LOCK_EXPIRY)
 
 
 class TestCreateTaskForSourceLockExpiryWiring(unittest.TestCase):
-    """Registration-level check that create_task_for_source actually passes
-    lock_expiry through to the Celery task decorator, not just that the pure
-    helper computes the right number (TestSingletonLockExpiry above).
+    """Registration-level check that create_task_for_source wires the fixed
+    lock_expiry and the HeartbeatingSingleton base into the Celery task
+    decorator, not just that the constants themselves are sane.
     """
 
     def test_registered_task_has_expected_lock_expiry(self):
@@ -139,17 +128,17 @@ class TestCreateTaskForSourceLockExpiryWiring(unittest.TestCase):
         task_name = "jira_ingest_jira_wiring_test"
 
         task = _celery_app_module.celery_app.tasks[task_name]
-        self.assertEqual(task.lock_expiry, 7200)
+        self.assertEqual(task.lock_expiry, SINGLETON_LOCK_EXPIRY)
 
-    def test_registered_task_uses_floor_for_frequent_schedule(self):
+    def test_registered_task_uses_heartbeating_singleton_base(self):
         source_config = {
             "type": "jira",
-            "name": "jira_wiring_floor_test",
-            "schedule": 60,
+            "name": "jira_wiring_heartbeat_test",
+            "schedule": 3600,
             "config": {},
         }
         _celery_app_module.create_task_for_source(source_config)
-        task_name = "jira_ingest_jira_wiring_floor_test"
+        task_name = "jira_ingest_jira_wiring_heartbeat_test"
 
         task = _celery_app_module.celery_app.tasks[task_name]
-        self.assertEqual(task.lock_expiry, MIN_SINGLETON_LOCK_EXPIRY)
+        self.assertIsInstance(task, _celery_app_module.HeartbeatingSingleton)
