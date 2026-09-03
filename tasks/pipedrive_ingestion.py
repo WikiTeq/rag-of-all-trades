@@ -10,6 +10,7 @@ import requests
 # Local imports
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.schemas import PipedriveMetadataSchema
 from utils.cache import CachedResolver
 from utils.http import RetrySession
 from utils.parse import parse_timestamp
@@ -335,14 +336,14 @@ class PipedriveIngestionJob(IngestionJob):
         record = item.source_ref["data"]
         entity_type = item.source_ref["type"]
 
-        extra = {
-            "entity_type": entity_type,
-            "pipedrive_id": str(record.get("id", "")),
-            "title": self._record_title(entity_type, record),
-            "url": self._build_record_url(entity_type, record),
-            "add_time": record.get("add_time", "") or "",
-            "update_time": record.get("update_time") or record.get("updated_at", "") or "",
-        }
+        extra = PipedriveMetadataSchema(
+            entity_type=entity_type,
+            pipedrive_id=str(record.get("id", "")),
+            title=self._record_title(entity_type, record),
+            url=self._build_record_url(entity_type, record),
+            add_time=record.get("add_time", "") or "",
+            update_time=record.get("update_time") or record.get("updated_at", "") or "",
+        ).model_dump()
 
         # Entity-specific metadata extensions
         extender = getattr(self, f"_extend_{entity_type}_metadata", None)
