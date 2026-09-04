@@ -16,6 +16,7 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.helper_classes.metadata_tracker import MetadataTracker
 from tasks.helper_classes.vector_store import VectorStoreManager
 from tasks.schemas import BaseMetadataSchema
+from utils.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,10 @@ class IngestionJob(ABC):
             raise ValueError("request_delay must be a number") from exc
         if self.request_delay < 0:
             raise ValueError("request_delay must be >= 0")
+
+        raw_acl_owner = cfg.get("acl_owner")
+        self.acl_owner = str(raw_acl_owner).strip().lower() if raw_acl_owner else None
+        self.acl_enabled = settings.env.ENABLE_ACL
 
         self.source_name = config.get("name")
         self.metadata_tracker = MetadataTracker()
@@ -169,6 +174,54 @@ class IngestionJob(ABC):
         """
         return None
 
+    def get_acl_list(self, item: IngestionItem) -> list[str]:
+        """Hook for subclasses to resolve the access control list for an item.
+
+        Default implementation returns an empty list — a document with no ACL
+        is fully private (no one has access). Override in subclasses to resolve
+        and return the flat list of email identities that should have access,
+        or ``['*']`` for a publicly accessible document.
+
+        This is deliberately separate from get_extra_metadata(): ACL data goes
+        through this dedicated hook so the base class can apply ACL-specific
+        handling (fail-closed on error, acl_owner fallback, exclusion from LLM/
+        embedding metadata) that doesn't apply to arbitrary extra metadata.
+
+        Only consulted when ACL support is enabled (``ENABLE_ACL``); ignored
+        entirely otherwise.
+
+        Args:
+            item: The ingestion item to resolve the ACL for
+
+        Returns:
+            list[str]: Email identities with access, or ['*'] for public.
+                       Empty list means the document is private.
+        """
+        return []
+
+    def _sanitize_acl_list(self, acl: list[str], *, item_id: str) -> list[str]:
+        """Trim, lowercase, de-duplicate and sort an ACL list for storage.
+
+        A list containing both '*' and specific emails is ambiguous (the
+        ticket's own rules treat '*' and emails as mutually exclusive), so it
+        is collapsed to ['*'] — public wins — with a warning logged so the
+        connector bug producing the mixed list is visible.
+
+        Args:
+            acl: Raw ACL entries as returned by get_acl_list()
+            item_id: Item identifier, used only for the warning message
+
+        Returns:
+            list[str]: Sanitized, sorted ACL list.
+        """
+        normalized = {str(entry).strip().lower() for entry in acl if str(entry).strip()}
+        if "*" in normalized and len(normalized) > 1:
+            logger.warning(
+                f"[{self.source_name}] ACL for item {item_id} mixes '*' with explicit emails; treating as public"
+            )
+            return ["*"]
+        return sorted(normalized)
+
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Hook for subclasses to provide additional metadata.
 
@@ -243,9 +296,29 @@ class IngestionJob(ABC):
 
             item_name = self.get_item_name(item)
 
+            # Resolve and sanitize the ACL before the dedup decision, since an
+            # ACL-only change (content unchanged, access changed) must still
+            # trigger reprocessing. Ignored entirely when ACL support is off.
+            acl_list: list[str] = []
+            if self.acl_enabled:
+                try:
+                    raw_acl = self.get_acl_list(item)
+                    acl_failed = False
+                except Exception:
+                    logger.exception(f"get_acl_list failed for item {item.id}; treating as empty (fail-closed)")
+                    raw_acl = []
+                    acl_failed = True
+
+                acl_list = self._sanitize_acl_list(raw_acl, item_id=item.id)
+
+                if not acl_list and not acl_failed and self.acl_owner:
+                    acl_list = [self.acl_owner]
+
             # Unified dedup checks
             latest = self.metadata_tracker.get_latest_record(item_name)
-            if latest and latest.checksum == new_checksum:
+            stored_acl = (latest.metadata_content or {}).get("acl", []) if latest else []
+            acl_changed = self.acl_enabled and sorted(stored_acl) != acl_list
+            if latest and latest.checksum == new_checksum and not acl_changed:
                 logger.info(f"Skipping unchanged item: {item_name}")
                 return 0
             seen_key = f"{item.id}:{new_checksum}"
@@ -282,12 +355,26 @@ class IngestionJob(ABC):
             ).model_dump()
 
             extra = self.get_extra_metadata(item, raw_content, metadata)
-            filtered_extra = {k: v for k, v in extra.items() if k not in BaseMetadataSchema.model_fields}
+            reserved_keys = set(BaseMetadataSchema.model_fields) | {"acl"}
+            filtered_extra = {k: v for k, v in extra.items() if k not in reserved_keys}
             metadata.update(filtered_extra)
 
-            doc = Document(text=raw_content, metadata=metadata)
+            if self.acl_enabled:
+                metadata["acl"] = acl_list
+
+            excluded_keys = ["acl"] if self.acl_enabled else []
+            doc = Document(
+                text=raw_content,
+                metadata=metadata,
+                excluded_llm_metadata_keys=excluded_keys,
+                excluded_embed_metadata_keys=excluded_keys,
+            )
 
             self.vector_manager.insert_documents([doc])
+
+            extra_metadata = {"source_name": self.source_name}
+            if self.acl_enabled:
+                extra_metadata["acl"] = acl_list
 
             self.metadata_tracker.record_metadata(
                 item_name,
@@ -295,7 +382,7 @@ class IngestionJob(ABC):
                 version,
                 1,
                 last_modified_ts,
-                extra_metadata={"source_name": self.source_name},
+                extra_metadata=extra_metadata,
             )
 
             logger.info(f"Successfully ingested: {item_name} (version {version})")
