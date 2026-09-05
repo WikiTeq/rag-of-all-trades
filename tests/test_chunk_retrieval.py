@@ -1,7 +1,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
-from llama_index.core.vector_stores.types import FilterCondition
+from llama_index.core.vector_stores.types import FilterCondition, VectorStoreQueryMode
 from pydantic import TypeAdapter, ValidationError
 
 from api.v1.chunk_retrieval import routes
@@ -29,9 +29,9 @@ class _DummyNodeWithScore:
         self.score = score
 
 
-def _make_engine():
+def _make_engine(hybrid_search: bool = False):
     vector_store = Mock()
-    return RAGQueryEngine(vector_store=vector_store)
+    return RAGQueryEngine(vector_store=vector_store, hybrid_search=hybrid_search)
 
 
 class TestMetadataFilterItemSchema:
@@ -152,6 +152,115 @@ class TestBuildFilterObject:
         ]
         result = engine._build_filter_object(items)
         assert len(result.filters) == 3
+
+
+class TestRetrieveTopK:
+    def _mock_retriever(self, engine, nodes):
+        retriever = Mock()
+        retriever.retrieve.return_value = nodes
+        index = Mock()
+        index.as_retriever.return_value = retriever
+        engine._index_cache = index
+        return retriever
+
+    def test_default_mode_when_hybrid_search_disabled(self):
+        engine = _make_engine(hybrid_search=False)
+        nodes = [_DummyNodeWithScore("a"), _DummyNodeWithScore("b")]
+        retriever = self._mock_retriever(engine, nodes)
+
+        result = engine.retrieve_top_k(query="test", top_k=5)
+
+        kwargs = engine._index_cache.as_retriever.call_args.kwargs
+        assert "vector_store_query_mode" not in kwargs
+        assert "sparse_top_k" not in kwargs
+        assert kwargs["similarity_top_k"] == 5
+        retriever.retrieve.assert_called_once_with("test")
+        assert result == nodes
+
+    def test_hybrid_mode_requested_when_enabled(self):
+        engine = _make_engine(hybrid_search=True)
+        nodes = [_DummyNodeWithScore("a")]
+        self._mock_retriever(engine, nodes)
+
+        engine.retrieve_top_k(query="test", top_k=5)
+
+        kwargs = engine._index_cache.as_retriever.call_args.kwargs
+        assert kwargs["vector_store_query_mode"] == VectorStoreQueryMode.HYBRID
+        assert kwargs["sparse_top_k"] == 5
+        assert kwargs["similarity_top_k"] == 5
+
+    def test_alpha_never_passed(self):
+        for hybrid_search in (True, False):
+            engine = _make_engine(hybrid_search=hybrid_search)
+            self._mock_retriever(engine, [])
+
+            engine.retrieve_top_k(query="test", top_k=5)
+
+            kwargs = engine._index_cache.as_retriever.call_args.kwargs
+            assert "alpha" not in kwargs
+
+    def test_hybrid_results_trimmed_to_top_k(self):
+        engine = _make_engine(hybrid_search=True)
+        # Descending scores so a correct sort-then-trim keeps this exact prefix;
+        # the assertion below also independently checks length and score order,
+        # so this doesn't merely encode "positional slice" as expected behavior.
+        nodes = [_DummyNodeWithScore(str(i), score=1.0 - i * 0.1) for i in range(10)]
+        self._mock_retriever(engine, nodes)
+
+        result = engine.retrieve_top_k(query="test", top_k=5)
+
+        assert len(result) == 5
+        assert result == nodes[:5]
+
+    def test_hybrid_results_sorted_by_score_before_trim(self):
+        # Simulates PGVectorStore's real behavior: dense results concatenated
+        # before sparse results, unsorted. A lower-scoring dense hit ("dense_low")
+        # would win a positional slice, but a higher-scoring sparse-only match
+        # ("sparse_high") must win once results are sorted by score first.
+        engine = _make_engine(hybrid_search=True)
+        dense_low = _DummyNodeWithScore("dense_low", score=0.2)
+        sparse_high = _DummyNodeWithScore("sparse_high", score=0.9)
+        nodes = [dense_low, sparse_high]  # dense-first concatenation order
+        self._mock_retriever(engine, nodes)
+
+        result = engine.retrieve_top_k(query="test", top_k=1)
+
+        assert result == [sparse_high]
+
+    def test_default_mode_results_not_resorted(self):
+        # DEFAULT mode already returns dense-sorted results from PGVectorStore;
+        # retrieve_top_k must not reorder them.
+        engine = _make_engine(hybrid_search=False)
+        nodes = [_DummyNodeWithScore("a", score=0.9), _DummyNodeWithScore("b", score=0.1)]
+        self._mock_retriever(engine, nodes)
+
+        result = engine.retrieve_top_k(query="test", top_k=5)
+
+        assert result == nodes
+
+    def test_default_mode_also_trims_to_top_k(self):
+        # The retriever's own similarity_top_k should already bound this, but
+        # retrieve_top_k applies an unconditional nodes[:top_k] regardless of
+        # mode — confirm that's a safe no-op-in-practice, not a behavior gap.
+        engine = _make_engine(hybrid_search=False)
+        nodes = [_DummyNodeWithScore(str(i), score=1.0 - i * 0.1) for i in range(10)]
+        self._mock_retriever(engine, nodes)
+
+        result = engine.retrieve_top_k(query="test", top_k=5)
+
+        assert result == nodes[:5]
+
+    def test_hybrid_sort_handles_none_score(self):
+        # NodeWithScore.score can be None; the `n.score or 0.0` fallback must
+        # not raise and must rank None-scored nodes below any real score.
+        engine = _make_engine(hybrid_search=True)
+        scored = _DummyNodeWithScore("scored", score=0.5)
+        unscored = _DummyNodeWithScore("unscored", score=None)
+        self._mock_retriever(engine, [unscored, scored])
+
+        result = engine.retrieve_top_k(query="test", top_k=2)
+
+        assert result == [scored, unscored]
 
 
 def _make_request(rag_engine):

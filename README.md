@@ -703,7 +703,7 @@ inference:
 # vector store configuration
 vector_store:
   table_name: embeddings
-  hybrid_search: true # whether to use hybrid search or not
+  hybrid_search: true # whether to combine dense vector similarity with sparse full-text search (pgvector text_search_tsv) at query time, or use dense-only
   chunk_size: 512 # chunk size for vector indexing
   chunk_overlap: 50 # overlap between chunks
   # hnsw indexes settings
