@@ -6,6 +6,7 @@ from llama_index.core.vector_stores.types import (
     MetadataFilter,
     MetadataFilters,
     VectorStore,
+    VectorStoreQueryMode,
 )
 
 from api.v1.chunk_retrieval.schema import MetadataFilterItem
@@ -31,8 +32,9 @@ _OPERATOR_MAP: dict[str, FilterOperator] = {
 
 
 class RAGQueryEngine:
-    def __init__(self, vector_store: VectorStore):
+    def __init__(self, vector_store: VectorStore, hybrid_search: bool = False):
         self.vector_store = vector_store
+        self.hybrid_search = hybrid_search
         self._index_cache = None  # Cache the index to avoid recreating it
 
     def _build_filter_object(self, metadata: list[MetadataFilterItem] | None) -> MetadataFilters | None:
@@ -89,10 +91,31 @@ class RAGQueryEngine:
         # Convert metadata dict → MetadataFilters
         metadata_filters = self._build_filter_object(metadata)
 
-        retriever = self._index_cache.as_retriever(
-            similarity_top_k=top_k,
-            filters=metadata_filters,
-        )
+        retriever_kwargs = {
+            "similarity_top_k": top_k,
+            "filters": metadata_filters,
+        }
+        if self.hybrid_search:
+            # PGVectorStore's hybrid mode unions dense + sparse results and dedups,
+            # but does not support `alpha` (it logs a warning and ignores it).
+            retriever_kwargs["vector_store_query_mode"] = VectorStoreQueryMode.HYBRID
+            retriever_kwargs["sparse_top_k"] = top_k
+
+        retriever = self._index_cache.as_retriever(**retriever_kwargs)
 
         nodes = retriever.retrieve(query)
-        return nodes
+
+        if self.hybrid_search:
+            # PGVectorStore concatenates dense results before sparse results and
+            # dedups by node id, without sorting the merged list or trimming it
+            # back down to top_k. Left as-is, a plain nodes[:top_k] slice would
+            # keep only dense hits (they come first) and silently drop every
+            # sparse-only match. Sort by score before trimming so both dense and
+            # sparse hits compete for the final top_k slots. Dense scores (cosine
+            # similarity) and sparse scores (Postgres ts_rank) are on different
+            # scales, so this is an approximation, not true fused ranking — but
+            # it is strictly better than keeping whichever list happens to be
+            # concatenated first.
+            nodes = sorted(nodes, key=lambda n: n.score or 0.0, reverse=True)
+
+        return nodes[:top_k]
