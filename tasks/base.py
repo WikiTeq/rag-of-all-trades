@@ -202,24 +202,34 @@ class IngestionJob(ABC):
     def _sanitize_acl_list(self, acl: list[str], *, item_id: str) -> list[str]:
         """Trim, lowercase, de-duplicate and sort an ACL list for storage.
 
-        A list containing both '*' and specific emails is ambiguous (the
-        ticket's own rules treat '*' and emails as mutually exclusive), so it
-        is collapsed to ['*'] — public wins — with a warning logged so the
-        connector bug producing the mixed list is visible.
+        Requires a list (or tuple/set) of entries; a bare string or any other
+        type is rejected — a bare string would otherwise be iterated
+        character-by-character into garbage ACL entries instead of raising.
+
+        A list containing both '*' and specific emails is invalid ('*' and
+        emails are mutually exclusive per the ticket's rules) and raises
+        rather than guessing intent: silently narrowing to the emails or
+        widening to public can both manufacture a plausible-looking but
+        wrong ACL, which is harder to catch later than a loud failure.
 
         Args:
             acl: Raw ACL entries as returned by get_acl_list()
-            item_id: Item identifier, used only for the warning message
+            item_id: Item identifier, used only for log messages
 
         Returns:
             list[str]: Sanitized, sorted ACL list.
+
+        Raises:
+            ValueError: If acl is not a list/tuple/set, or mixes '*' with
+                specific emails.
         """
+        if not isinstance(acl, list | tuple | set):
+            raise ValueError(f"get_acl_list for item {item_id} must return a list, got {type(acl).__name__}")
+
         normalized = {str(entry).strip().lower() for entry in acl if str(entry).strip()}
         if "*" in normalized and len(normalized) > 1:
-            logger.warning(
-                f"[{self.source_name}] ACL for item {item_id} mixes '*' with explicit emails; treating as public"
-            )
-            return ["*"]
+            logger.warning(f"[{self.source_name}] ACL for item {item_id} mixes '*' with explicit emails; invalid")
+            raise ValueError(f"ACL for item {item_id} mixes '*' with explicit emails")
         return sorted(normalized)
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
@@ -296,28 +306,37 @@ class IngestionJob(ABC):
 
             item_name = self.get_item_name(item)
 
+            # latest must be loaded before ACL resolution: on a failed ACL
+            # resolve, the previously stored ACL (from latest.metadata_content)
+            # is what gets preserved instead of wiping it with [].
+            latest = self.metadata_tracker.get_latest_record(item_name)
+            stored_acl: list[str] = []
+            if self.acl_enabled and latest:
+                stored_acl = sorted((latest.metadata_content or {}).get("acl", []))
+
             # Resolve and sanitize the ACL before the dedup decision, since an
             # ACL-only change (content unchanged, access changed) must still
             # trigger reprocessing. Ignored entirely when ACL support is off.
+            # Any failure (get_acl_list raising, a non-list/bad return, or a
+            # mixed '*'+email result) is fail-closed the same way: preserve
+            # the previously stored ACL if a record exists, [] on first
+            # ingest — never treat "we couldn't resolve it" as "it's empty".
             acl_list: list[str] = []
             if self.acl_enabled:
                 try:
                     raw_acl = self.get_acl_list(item)
+                    acl_list = self._sanitize_acl_list(raw_acl, item_id=item.id)
                     acl_failed = False
                 except Exception:
-                    logger.exception(f"get_acl_list failed for item {item.id}; treating as empty (fail-closed)")
-                    raw_acl = []
+                    logger.exception(f"ACL resolution failed for item {item.id}; keeping last-known ACL")
+                    acl_list = list(stored_acl)
                     acl_failed = True
-
-                acl_list = self._sanitize_acl_list(raw_acl, item_id=item.id)
 
                 if not acl_list and not acl_failed and self.acl_owner:
                     acl_list = [self.acl_owner]
 
             # Unified dedup checks
-            latest = self.metadata_tracker.get_latest_record(item_name)
-            stored_acl = (latest.metadata_content or {}).get("acl", []) if latest else []
-            acl_changed = self.acl_enabled and sorted(stored_acl) != acl_list
+            acl_changed = self.acl_enabled and stored_acl != sorted(acl_list)
             if latest and latest.checksum == new_checksum and not acl_changed:
                 logger.info(f"Skipping unchanged item: {item_name}")
                 return 0

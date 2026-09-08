@@ -468,16 +468,25 @@ class TestIngestionJobACL:
         job = DummyIngestionJob(base_config)
         assert job._sanitize_acl_list(["*"], item_id="item-1") == ["*"]
 
-    def test_sanitize_acl_list_mixed_star_and_emails_collapses_to_star(self, base_config, caplog):
+    def test_sanitize_acl_list_mixed_star_and_emails_raises(self, base_config, caplog):
         job = DummyIngestionJob(base_config)
-        with caplog.at_level("WARNING"):
-            result = job._sanitize_acl_list(["*", "bob@example.com"], item_id="item-1")
-        assert result == ["*"]
+        with caplog.at_level("WARNING"), pytest.raises(ValueError, match="mixes '\\*' with explicit"):
+            job._sanitize_acl_list(["*", "bob@example.com"], item_id="item-1")
         assert "mixes '*' with explicit" in caplog.text
 
     def test_sanitize_acl_list_empty_input_returns_empty(self, base_config):
         job = DummyIngestionJob(base_config)
         assert job._sanitize_acl_list([], item_id="item-1") == []
+
+    def test_sanitize_acl_list_bare_string_raises(self, base_config):
+        job = DummyIngestionJob(base_config)
+        with pytest.raises(ValueError, match="must return a list"):
+            job._sanitize_acl_list("bob@example.com", item_id="item-1")
+
+    def test_sanitize_acl_list_none_raises(self, base_config):
+        job = DummyIngestionJob(base_config)
+        with pytest.raises(ValueError, match="must return a list"):
+            job._sanitize_acl_list(None, item_id="item-1")
 
     def _acl_job(self, base_config, *, acl_owner=None, acl_return=None, acl_side_effect=None):
         config = {**base_config, "config": {"acl_owner": acl_owner} if acl_owner else {}}
@@ -615,3 +624,87 @@ class TestIngestionJobACL:
         _, kwargs = mock_document.call_args
         assert kwargs["metadata"]["acl"] == ["alice@example.com"]
         assert kwargs["metadata"]["custom"] == "val"
+
+    def test_existing_record_same_checksum_acl_failure_skips_stored_acl_unchanged(self, base_config):
+        """A transient get_acl_list failure must not look like "ACL became empty" —
+        with content unchanged too, the item is skipped and the stored ACL is
+        never touched (record_metadata is never called)."""
+        content = "same content"
+        checksum = hashlib.md5(content.encode("utf-8"), usedforsecurity=False).hexdigest()
+        item = IngestionItem(id="item-1", source_ref="src")
+        job = DummyIngestionJob(base_config, items=[item], content_by_id={"item-1": content})
+        job.acl_enabled = True
+        job.metadata_tracker = Mock()
+        job.vector_manager = Mock()
+        job.metadata_tracker.get_latest_record.return_value = Mock(
+            checksum=checksum,
+            version=1,
+            metadata_content={"acl": ["alice@example.com"]},
+        )
+        job.get_acl_list = Mock(side_effect=RuntimeError("boom"))
+
+        with patch.object(job, "_seen_add", return_value=True):
+            result = job.process_item(item)
+
+        assert result == 0
+        job.metadata_tracker.record_metadata.assert_not_called()
+        job.vector_manager.insert_documents.assert_not_called()
+
+    @patch("tasks.base.Document")
+    def test_existing_record_different_checksum_acl_failure_keeps_stored_acl(self, mock_document, base_config):
+        """Content changed (different checksum) but ACL resolution fails: content
+        is re-ingested, but the stored ACL is preserved, not wiped to []."""
+        old_checksum = "old-checksum"
+        new_content = "new content"
+        item = IngestionItem(id="item-1", source_ref="src")
+        job = DummyIngestionJob(base_config, items=[item], content_by_id={"item-1": new_content})
+        job.acl_enabled = True
+        job.metadata_tracker = Mock()
+        job.vector_manager = Mock()
+        job.metadata_tracker.get_latest_record.return_value = Mock(
+            checksum=old_checksum,
+            version=1,
+            metadata_content={"acl": ["alice@example.com"]},
+        )
+        job.get_acl_list = Mock(side_effect=RuntimeError("boom"))
+
+        result = job.process_item(item)
+
+        assert result == 1
+        _, kwargs = mock_document.call_args
+        assert kwargs["metadata"]["acl"] == ["alice@example.com"]
+
+    @patch("tasks.base.Document")
+    def test_existing_record_mixed_acl_input_keeps_stored_acl(self, mock_document, base_config):
+        """get_acl_list returns an invalid mixed '*'+email list: treated the
+        same as a raised exception — stored ACL preserved, item still processes."""
+        content = "same content"
+        item = IngestionItem(id="item-1", source_ref="src")
+        job = DummyIngestionJob(base_config, items=[item], content_by_id={"item-1": content})
+        job.acl_enabled = True
+        job.metadata_tracker = Mock()
+        job.vector_manager = Mock()
+        job.metadata_tracker.get_latest_record.return_value = Mock(
+            checksum="old-checksum",
+            version=1,
+            metadata_content={"acl": ["alice@example.com"]},
+        )
+        job.get_acl_list = Mock(return_value=["*", "bob@example.com"])
+
+        result = job.process_item(item)
+
+        assert result == 1
+        _, kwargs = mock_document.call_args
+        assert kwargs["metadata"]["acl"] == ["alice@example.com"]
+
+    @patch("tasks.base.Document")
+    def test_new_document_mixed_acl_input_results_in_empty_acl(self, mock_document, base_config):
+        """No prior record (first ingest) and get_acl_list returns an invalid
+        mixed list: fail-closed to [] since there is nothing to preserve."""
+        job, item = self._acl_job(base_config, acl_return=["*", "bob@example.com"])
+
+        result = job.process_item(item)
+
+        assert result == 1
+        _, kwargs = mock_document.call_args
+        assert kwargs["metadata"]["acl"] == []
