@@ -26,6 +26,7 @@ exercises an actual background thread to catch exactly that class of bug.
 import threading
 import time
 import unittest
+from unittest import mock
 from unittest.mock import MagicMock
 
 from celery.app.task import Context
@@ -253,6 +254,142 @@ class TestHeartbeatLifecycle(unittest.TestCase):
         self.assertEqual(stopped, [True])
 
 
+class TestStartLockScript(unittest.TestCase):
+    """The atomic start-of-run script must renew when this task_id already
+    owns the lock, reacquire when the lock is missing entirely (queued past
+    TTL, or a same-task_id redelivery under task_acks_late), and report
+    "superseded" only when a *different* task_id currently holds it — see
+    PR96-fixes.md "Commit 2" for the full reasoning and the race this closes
+    versus a separate GET-then-EXPIRE.
+    """
+
+    def test_renews_when_already_owner(self):
+        redis_client = MagicMock()
+        start_script = MagicMock(return_value=1)  # _START_RENEWED
+        redis_client.register_script.return_value = start_script
+
+        task = _make_task(redis_client)
+        result = task._start_lock("lock:key", "task-a")
+
+        self.assertTrue(result)
+        start_script.assert_called_once_with(keys=["lock:key"], args=["task-a", task.lock_expiry])
+
+    def test_reacquires_when_lock_missing(self):
+        redis_client = MagicMock()
+        start_script = MagicMock(return_value=2)  # _START_REACQUIRED
+        redis_client.register_script.return_value = start_script
+
+        task = _make_task(redis_client)
+        with self.assertLogs("utils.celery_heartbeat_singleton", level="INFO") as logs:
+            result = task._start_lock("lock:key", "task-a")
+
+        self.assertTrue(result)
+        self.assertTrue(any("lock:key" in message for message in logs.output))
+
+    def test_skips_when_superseded_by_a_different_task_id(self):
+        redis_client = MagicMock()
+        start_script = MagicMock(return_value=0)  # _START_SUPERSEDED
+        redis_client.register_script.return_value = start_script
+
+        task = _make_task(redis_client)
+        with self.assertLogs("utils.celery_heartbeat_singleton", level="WARNING") as logs:
+            result = task._start_lock("lock:key", "task-a")
+
+        self.assertFalse(result)
+        self.assertTrue(any("lock:key" in message for message in logs.output))
+
+    def test_proceeds_on_a_redis_error_instead_of_dropping_the_run(self):
+        # A transient Redis error here must not silently skip a legitimate
+        # run — that would be strictly worse than the bug this closes.
+        redis_client = MagicMock()
+        start_script = MagicMock(side_effect=ConnectionError("redis unreachable"))
+        redis_client.register_script.return_value = start_script
+
+        task = _make_task(redis_client)
+        with self.assertLogs("utils.celery_heartbeat_singleton", level="ERROR") as logs:
+            result = task._start_lock("lock:key", "task-a")
+
+        self.assertTrue(result)
+        self.assertTrue(any("lock:key" in message for message in logs.output))
+
+
+class TestCallSkipsWhenSuperseded(unittest.TestCase):
+    """__call__ must skip the task body and never start a heartbeat when
+    _start_lock reports this task_id has been superseded — but must proceed
+    normally (renew or reacquire) in every other case.
+    """
+
+    def test_call_skips_without_running_task_or_starting_heartbeat(self):
+        redis_client = MagicMock()
+        redis_client.register_script.return_value = MagicMock(return_value=0)  # superseded
+        task = _make_task(redis_client)
+
+        task._start_heartbeat = MagicMock()
+        task._stop_heartbeat = MagicMock()
+        task.run = MagicMock(return_value="should not run")
+
+        result = task()
+
+        self.assertIsNone(result)
+        task.run.assert_not_called()
+        task._start_heartbeat.assert_not_called()
+        task._stop_heartbeat.assert_not_called()
+
+    def test_call_proceeds_when_lock_reacquired(self):
+        redis_client = MagicMock()
+        redis_client.register_script.return_value = MagicMock(return_value=2)  # reacquired
+        task = _make_task(redis_client)
+
+        task._start_heartbeat = MagicMock()
+        task._stop_heartbeat = MagicMock()
+        task.run = MagicMock(return_value="ok")
+
+        result = task()
+
+        self.assertEqual(result, "ok")
+        task.run.assert_called_once()
+        task._start_heartbeat.assert_called_once_with("lock:key", "task-a")
+
+
+class TestLockAndRunOverride(unittest.TestCase):
+    """lock_and_run's publish-failure cleanup must pass task_id through to
+    unlock() explicitly, instead of celery_singleton's upstream `self.unlock
+    (lock)` (no task_id) — see the class docstring on lock_and_run and
+    PR96-fixes.md "Commit 2" finding 2 for why the bare call is wrong here.
+    """
+
+    def test_cleanup_passes_task_id_through_on_publish_failure(self):
+        redis_client = MagicMock()
+        release_script = MagicMock(return_value=1)
+        redis_client.register_script.return_value = release_script
+
+        task = _make_task(redis_client)
+        task.aquire_lock = MagicMock(return_value=True)
+
+        def failing_apply_async(*args, **kwargs):
+            raise RuntimeError("publish failed")
+
+        # lock_and_run calls super(Singleton, self).apply_async(...), which
+        # resolves past Singleton in the MRO straight to celery.app.task.Task
+        # — patching Singleton.apply_async itself would not intercept that.
+        from celery.app.task import Task
+
+        with mock.patch.object(Task, "apply_async", failing_apply_async):
+            with self.assertRaises(RuntimeError):
+                task.lock_and_run("lock:key", task_id="task-a")
+
+        release_script.assert_called_once_with(keys=["lock:key"], args=["task-a"])
+
+    def test_does_not_call_apply_async_when_lock_not_acquired(self):
+        redis_client = MagicMock()
+        task = _make_task(redis_client)
+        task.aquire_lock = MagicMock(return_value=False)
+
+        result = task.lock_and_run("lock:key", task_id="task-a")
+
+        self.assertIsNone(result)
+
+
 class TestRealHeartbeatThread(unittest.TestCase):
     """Exercises the actual background thread (not a stub), because
     self.request is thread-local: a version that reads self.request from
@@ -263,14 +400,21 @@ class TestRealHeartbeatThread(unittest.TestCase):
     """
 
     def test_heartbeat_thread_renews_with_correct_task_id(self):
+        # register_script is called once per distinct script source (see
+        # _get_script's per-attribute caching) — _start_lock's _START_SCRIPT
+        # and the heartbeat loop's _RENEW_SCRIPT are registered separately,
+        # so each gets its own script mock here rather than sharing one.
         redis_client = MagicMock()
         renew_calls = []
 
-        def fake_script(keys, args):
+        def fake_renew_script(keys, args):
             renew_calls.append((keys, args))
             return 1
 
-        redis_client.register_script.return_value = fake_script
+        redis_client.register_script.side_effect = [
+            MagicMock(return_value=1),  # _START_SCRIPT, called once by _start_lock
+            fake_renew_script,  # _RENEW_SCRIPT, called by the heartbeat loop
+        ]
 
         task = _make_task(redis_client, task_id="task-a", lock="lock:key")
         task.renewal_interval = 0.02  # fast for the test
@@ -278,7 +422,9 @@ class TestRealHeartbeatThread(unittest.TestCase):
         task.run = MagicMock(side_effect=lambda: time.sleep(0.1))
         task()
 
-        self.assertGreaterEqual(len(renew_calls), 2)  # immediate renew + at least one interval tick
+        # Only counts the heartbeat loop's own renewals now — _start_lock's
+        # single call goes through the separate _START_SCRIPT mock above.
+        self.assertGreaterEqual(len(renew_calls), 1)
         for keys, args in renew_calls:
             self.assertEqual(keys, ["lock:key"])
             self.assertEqual(args[0], "task-a")  # not None — proves the thread saw the real task_id
