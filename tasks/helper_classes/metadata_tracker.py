@@ -13,7 +13,7 @@ class MetadataTracker:
     def get_latest_record(self, key: str):
         with get_db_session() as db:
             row = (
-                db.query(MetaData.checksum, MetaData.version)
+                db.query(MetaData.checksum, MetaData.version, MetaData.metadata_content)
                 .filter(MetaData.key == key)
                 .order_by(MetaData.version.desc())
                 .first()

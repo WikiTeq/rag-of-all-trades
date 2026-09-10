@@ -11,6 +11,7 @@ sources:
       buckets: "${S3_ACCOUNT1_BUCKETS}" # comma-separated string or list
       schedules: "${S3_ACCOUNT1_SCHEDULES}"
       #request_delay: 0  # optional, delay in seconds between items (default: 0)
+      #acl_owner: ""  # optional, email used as the ACL when a document resolves to an empty ACL (default: unset, requires ENABLE_ACL=true)
 
   #- type: "directory"
   #  name: "local_docs"
