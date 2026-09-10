@@ -180,14 +180,14 @@ class IngestionJob(ABC):
         Default implementation returns an empty list — a document with no ACL
         is fully private (no one has access). Override in subclasses to resolve
         and return the flat list of email identities that should have access,
-        or ``['*']`` for a publicly accessible document.
+        or `['*']` for a publicly accessible document.
 
         This is deliberately separate from get_extra_metadata(): ACL data goes
         through this dedicated hook so the base class can apply ACL-specific
         handling (fail-closed on error, acl_owner fallback, exclusion from LLM/
         embedding metadata) that doesn't apply to arbitrary extra metadata.
 
-        Only consulted when ACL support is enabled (``ENABLE_ACL``); ignored
+        Only consulted when ACL support is enabled (`ENABLE_ACL`); ignored
         entirely otherwise.
 
         Args:
@@ -199,11 +199,11 @@ class IngestionJob(ABC):
         """
         return []
 
-    def _sanitize_acl_list(self, acl: list[str], *, item_id: str) -> list[str]:
+    def _sanitize_acl_list(self, acl: list[str], item_id: str) -> list[str]:
         """Trim, lowercase, de-duplicate and sort an ACL list for storage.
 
-        Requires a list (or tuple/set) of entries; a bare string or any other
-        type is rejected — a bare string would otherwise be iterated
+        Requires a list of entries; a bare string or any other type is
+        rejected — a bare string would otherwise be iterated
         character-by-character into garbage ACL entries instead of raising.
 
         A list containing both '*' and specific emails is invalid ('*' and
@@ -220,10 +220,10 @@ class IngestionJob(ABC):
             list[str]: Sanitized, sorted ACL list.
 
         Raises:
-            ValueError: If acl is not a list/tuple/set, or mixes '*' with
-                specific emails.
+            ValueError: If acl is not a list, or mixes '*' with specific
+                emails.
         """
-        if not isinstance(acl, list | tuple | set):
+        if not isinstance(acl, list):
             raise ValueError(f"get_acl_list for item {item_id} must return a list, got {type(acl).__name__}")
 
         normalized = {str(entry).strip().lower() for entry in acl if str(entry).strip()}
@@ -310,9 +310,6 @@ class IngestionJob(ABC):
             # resolve, the previously stored ACL (from latest.metadata_content)
             # is what gets preserved instead of wiping it with [].
             latest = self.metadata_tracker.get_latest_record(item_name)
-            stored_acl: list[str] = []
-            if self.acl_enabled and latest:
-                stored_acl = sorted((latest.metadata_content or {}).get("acl", []))
 
             # Resolve and sanitize the ACL before the dedup decision, since an
             # ACL-only change (content unchanged, access changed) must still
@@ -321,11 +318,15 @@ class IngestionJob(ABC):
             # mixed '*'+email result) is fail-closed the same way: preserve
             # the previously stored ACL if a record exists, [] on first
             # ingest — never treat "we couldn't resolve it" as "it's empty".
+            stored_acl: list[str] = []
             acl_list: list[str] = []
             if self.acl_enabled:
+                if latest:
+                    stored_acl = sorted((latest.metadata_content or {}).get("acl", []))
+
                 try:
                     raw_acl = self.get_acl_list(item)
-                    acl_list = self._sanitize_acl_list(raw_acl, item_id=item.id)
+                    acl_list = self._sanitize_acl_list(raw_acl, item.id)
                     acl_failed = False
                 except Exception:
                     logger.exception(f"ACL resolution failed for item {item.id}; keeping last-known ACL")
