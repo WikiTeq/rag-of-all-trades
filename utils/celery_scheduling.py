@@ -20,3 +20,14 @@ SINGLETON_LOCK_EXPIRY = 600
 # than SINGLETON_LOCK_EXPIRY so a renewal has room to land before the lock
 # would otherwise expire.
 SINGLETON_LOCK_RENEWAL_INTERVAL = 60
+
+# If Redis errors while a task is trying to confirm lock ownership at start
+# (HeartbeatingSingleton._start_lock), the task retries via Celery's own
+# retry mechanism rather than proceeding unprotected or requeuing at full
+# speed. countdown=SINGLETON_LOCK_RENEWAL_INTERVAL gives a transient blip
+# (e.g. a brief Redis failover) time to clear between attempts;
+# max_retries=30 means ~30 minutes of retrying — comfortably longer than a
+# normal Redis restart/failover, short enough that a genuinely sustained
+# outage surfaces as a real task failure within the hour instead of
+# retrying silently for days.
+SINGLETON_START_LOCK_MAX_RETRIES = 30

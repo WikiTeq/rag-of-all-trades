@@ -16,19 +16,23 @@ for as long as it's alive. A leaked lock (renewals stopped because the
 worker died) still self-heals within roughly one TTL window; a healthy task
 can run arbitrarily long.
 
-Renewal and release are ownership-checked via Lua scripts (atomic
-GET-then-EXPIRE / GET-then-DELETE, gated on the lock's value still being this
-task's own task_id) rather than celery_singleton's unconditional
-EXPIRE/DELETE. Without this, once renewal is in play, a task whose lock
-already expired and got reacquired by a newer dispatch could renew — or on
-finishing, delete — that newer task's lock instead of its own.
+Renewal and release are ownership-checked via Lua scripts (atomic, gated on
+the lock's value still being this task's own task_id) rather than
+celery_singleton's unconditional EXPIRE/DELETE. Without this, once renewal
+is in play, a task whose lock already expired and got reacquired by a newer
+dispatch could renew — or on finishing, delete — that newer task's lock
+instead of its own.
 
-Start-of-run ownership uses one atomic renew-or-reacquire-or-skip check
-(_start_lock / _START_SCRIPT) instead of a separate GET-then-EXPIRE — see
-_start_lock's docstring for the race a two-step check would have, and why
-"lock missing" must mean "reacquire," not "skip." lock_and_run is also
-overridden (copied from celery_singleton, not just monkeypatched) to fix a
-dispatch-time cleanup bug — see its own docstring for why.
+Start-of-run and heartbeat renewal both use one shared atomic
+renew-or-reacquire-or-skip check (_check_lock / _OWNERSHIP_SCRIPT) instead
+of a plain GET-then-EXPIRE — see _check_lock's docstring for the race a
+two-step check would have, why "lock missing" must mean "reacquire," not
+"skip," and why a Redis error at start retries via Celery's own retry
+mechanism instead of proceeding unprotected or requeuing at unbounded
+speed (https://github.com/WikiTeq/rag-of-all-trades/pull/96#discussion_r3972417143).
+lock_and_run is also overridden (copied from celery_singleton, not just
+monkeypatched) to fix a dispatch-time cleanup bug — see its own docstring
+for why.
 """
 
 import logging
@@ -36,18 +40,13 @@ import threading
 
 from celery_singleton import Singleton
 
-from utils.celery_scheduling import SINGLETON_LOCK_EXPIRY, SINGLETON_LOCK_RENEWAL_INTERVAL
+from utils.celery_scheduling import (
+    SINGLETON_LOCK_EXPIRY,
+    SINGLETON_LOCK_RENEWAL_INTERVAL,
+    SINGLETON_START_LOCK_MAX_RETRIES,
+)
 
 logger = logging.getLogger(__name__)
-
-# KEYS[1] = lock key, ARGV[1] = this task's own task_id, ARGV[2] = new TTL (renew only)
-_RENEW_SCRIPT = """
-if redis.call("GET", KEYS[1]) == ARGV[1] then
-    return redis.call("EXPIRE", KEYS[1], ARGV[2])
-else
-    return 0
-end
-"""
 
 # KEYS[1] = lock key, ARGV[1] = this task's own task_id
 _RELEASE_SCRIPT = """
@@ -58,19 +57,24 @@ else
 end
 """
 
-# Atomic start-of-run check: renew if this task_id already owns the lock,
-# reacquire if the lock is missing entirely (nobody owns it — e.g. this
-# task sat queued past SINGLETON_LOCK_EXPIRY, or this is a same-task_id
-# redelivery per task_acks_late/task_reject_on_worker_lost), or report
-# "superseded" only if a *different* task_id currently holds it. Doing this
-# as one Lua script (rather than a separate GET-check followed by a
-# separate EXPIRE/SET call) closes the race where the lock changes state
-# between those two round-trips.
+# Shared atomic ownership check, used both at task start and by every
+# heartbeat tick: renew if this task_id already owns the lock, reacquire if
+# the lock is missing entirely (nobody owns it — e.g. this task sat queued
+# past SINGLETON_LOCK_EXPIRY, this is a same-task_id redelivery per
+# task_acks_late/task_reject_on_worker_lost, or the key was evicted/lost
+# mid-run, e.g. a Redis restart), or report "superseded" only if a
+# *different* task_id currently holds it. Doing this as one Lua script
+# (rather than a separate GET-check followed by a separate EXPIRE/SET call)
+# closes the race where the lock changes state between those two
+# round-trips. The start check and the heartbeat renewal need the exact
+# same three-way logic — a lock that goes missing mid-run (not just before
+# the task starts) must also be reacquirable, not just renewable — so both
+# call sites share this one script instead of keeping two near-duplicates.
 #
 # KEYS[1] = lock key, ARGV[1] = this task's own task_id, ARGV[2] = TTL
 # Returns: 1 = renewed (already owned it), 2 = reacquired (was missing),
 #          0 = superseded (a different task_id owns it — caller must skip)
-_START_SCRIPT = """
+_OWNERSHIP_SCRIPT = """
 local current = redis.call("GET", KEYS[1])
 if current == ARGV[1] then
     redis.call("EXPIRE", KEYS[1], ARGV[2])
@@ -83,9 +87,9 @@ else
 end
 """
 
-_START_RENEWED = 1
-_START_REACQUIRED = 2
-_START_SUPERSEDED = 0
+_LOCK_RENEWED = 1
+_LOCK_REACQUIRED = 2
+_LOCK_SUPERSEDED = 0
 
 
 class HeartbeatingSingleton(Singleton):
@@ -94,9 +98,8 @@ class HeartbeatingSingleton(Singleton):
     lock_expiry = SINGLETON_LOCK_EXPIRY
     renewal_interval = SINGLETON_LOCK_RENEWAL_INTERVAL
 
-    _renew_script = None
+    _ownership_script = None
     _release_script = None
-    _start_script = None
     _heartbeat_thread = None
     _heartbeat_stop = None
 
@@ -107,10 +110,13 @@ class HeartbeatingSingleton(Singleton):
             setattr(self, attr_name, script)
         return script
 
-    def _renew_lock(self, lock, task_id):
-        """Atomically extend the lock's TTL, only if it still belongs to
-        task_id. Returns a truthy value if the renewal succeeded, falsy if
-        task_id no longer owns the lock (already leaked to a newer dispatch).
+    def _check_lock(self, lock, task_id):
+        """Atomically renew, reacquire, or detect supersession of the lock —
+        see _OWNERSHIP_SCRIPT above for the exact semantics. Used both at
+        task start (_start_lock) and by every heartbeat tick (_renew_lock);
+        those wrappers differ only in what they do with a Redis error, since
+        a task that hasn't started yet can still retry the whole dispatch,
+        while a task already mid-run cannot.
 
         Takes lock/task_id explicitly rather than reading self.request:
         self.request is backed by Celery's *thread-local* request stack
@@ -120,46 +126,73 @@ class HeartbeatingSingleton(Singleton):
         renewal into a no-op. Capturing these values on the main thread
         before starting the heartbeat (see __call__) and passing them in is
         required, not just a style choice.
+
+        Raises whatever the underlying Redis call raises — callers decide
+        how to handle a failure, this method does not swallow it.
         """
-        script = self._get_script("_renew_script", _RENEW_SCRIPT)
+        script = self._get_script("_ownership_script", _OWNERSHIP_SCRIPT)
+        return script(keys=[lock], args=[task_id, self.lock_expiry])
+
+    def _renew_lock(self, lock, task_id):
+        """Heartbeat-loop wrapper around _check_lock: renews or reacquires,
+        returns a truthy value on success, falsy if a different task_id now
+        owns the lock, and falsy (without raising) on a Redis error.
+
+        A Redis error here must not kill the heartbeat thread — that would
+        silently stop all future renewals for the rest of the task's run,
+        reintroducing the original bug (lock expires under a still-healthy
+        task) after a delay instead of fixing it. Unlike _start_lock, there
+        is no "retry the dispatch" option mid-run — the task is already
+        executing — so log and let the next scheduled tick try again instead.
+        """
         try:
-            renewed = script(keys=[lock], args=[task_id, self.lock_expiry])
+            result = self._check_lock(lock, task_id)
         except Exception:
-            # A transient Redis error must not kill the heartbeat thread —
-            # that would silently stop all future renewals for the rest of
-            # the task's run, reintroducing the original bug (lock expires
-            # under a still-healthy task) after a delay instead of fixing it.
-            # Log and let the next scheduled tick try again.
             logger.exception("Renewing lock %s for task %s failed", lock, task_id)
             return False
-        if not renewed:
+        if result == _LOCK_SUPERSEDED:
             logger.warning(
                 "Lock %s no longer owned by task %s — skipping renewal (a newer dispatch may already be running)",
                 lock,
                 task_id,
             )
-        return renewed
+            return False
+        if result == _LOCK_REACQUIRED:
+            logger.info(
+                "Lock %s was missing for task %s mid-run (e.g. Redis restart) "
+                "— reacquiring so this still-healthy task keeps its lock",
+                lock,
+                task_id,
+            )
+        return True
 
     def _start_lock(self, lock, task_id):
-        """Atomically renew, reacquire, or detect supersession at the start
-        of a run — see _START_SCRIPT above for the exact semantics.
+        """__call__ wrapper around _check_lock: renews or reacquires at task
+        start, returning True if the task should proceed.
 
-        Returns True if the task should proceed (lock renewed or reacquired),
-        False if a different task_id already owns the lock and this run must
-        be skipped instead.
+        Returns False only if a different task_id already owns the lock —
+        this run has been genuinely superseded and must be skipped.
+
+        On a Redis error, retries the whole dispatch via self.retry() rather
+        than either proceeding unprotected (no confirmed ownership) or
+        silently skipping a legitimate run. self.retry() raises Retry, which
+        Celery's own trace machinery routes to on_retry — never on_failure —
+        so this never releases a lock it doesn't hold; see the module
+        docstring and PR96-fixes.md "Commit 3" for the full trace through
+        Celery's source. countdown/max_retries give a transient blip (e.g. a
+        brief Redis failover) room to clear before a genuinely sustained
+        outage surfaces as a real failure, instead of an unbounded
+        requeue-at-full-speed loop.
         """
-        script = self._get_script("_start_script", _START_SCRIPT)
         try:
-            result = script(keys=[lock], args=[task_id, self.lock_expiry])
+            result = self._check_lock(lock, task_id)
         except Exception:
-            # A transient Redis error here must not silently let the task run
-            # unprotected (no confirmed ownership) or silently skip a
-            # legitimate run — log and treat as "proceed" so a flaky Redis
-            # call doesn't drop real work; the periodic heartbeat renewal
-            # will still enforce ownership going forward once Redis recovers.
-            logger.exception("Start-of-run lock check for %s (task %s) failed", lock, task_id)
-            return True
-        if result == _START_SUPERSEDED:
+            logger.exception("Start-of-run lock check for %s (task %s) failed — retrying", lock, task_id)
+            raise self.retry(
+                countdown=SINGLETON_LOCK_RENEWAL_INTERVAL,
+                max_retries=SINGLETON_START_LOCK_MAX_RETRIES,
+            )
+        if result == _LOCK_SUPERSEDED:
             logger.warning(
                 "Lock %s no longer available for task %s at start "
                 "(a different task_id already owns it) — skipping this run",
@@ -167,7 +200,7 @@ class HeartbeatingSingleton(Singleton):
                 task_id,
             )
             return False
-        if result == _START_REACQUIRED:
+        if result == _LOCK_REACQUIRED:
             logger.info(
                 "Lock %s was missing for task %s at start (queued past TTL, "
                 "or a same-task_id redelivery) — reacquiring and proceeding",
