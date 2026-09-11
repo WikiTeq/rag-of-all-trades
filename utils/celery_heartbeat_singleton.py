@@ -26,10 +26,23 @@ instead of its own.
 Start-of-run and heartbeat renewal both use one shared atomic
 renew-or-reacquire-or-skip check (_check_lock / _OWNERSHIP_SCRIPT) instead
 of a plain GET-then-EXPIRE — see _check_lock's docstring for the race a
-two-step check would have, why "lock missing" must mean "reacquire," not
-"skip," and why a Redis error at start retries via Celery's own retry
-mechanism instead of proceeding unprotected or requeuing at unbounded
-speed (https://github.com/WikiTeq/rag-of-all-trades/pull/96#discussion_r3972417143).
+two-step check would have, and why "lock missing" must mean "reacquire,"
+not "skip."
+
+At task start, a Redis error blocks __call__ in a sleep-and-retry loop
+instead of starting the task body, rather than calling Task.retry() —
+self.retry() publishes a *new* message through the same singleton lock,
+which either silently no-ops (if the lock is still visibly held, celery_
+singleton's own duplicate-detection returns a result without publishing
+anything) or gets dropped outright via Reject(requeue=False) if Redis is
+still down when the retry itself tries to publish — exactly the sustained-
+outage case this fix exists to survive
+(https://github.com/WikiTeq/rag-of-all-trades/pull/96#discussion_r3992509190).
+Looping inside __call__ instead holds the *current* delivery — acks_late
+keeps it unacked for the whole time __call__ is running, loop included —
+so no second message is ever created. After a bounded number of attempts,
+this raises for real rather than looping forever or calling retry().
+
 lock_and_run is also overridden (copied from celery_singleton, not just
 monkeypatched) to fix a dispatch-time cleanup bug — see its own docstring
 for why.
@@ -37,6 +50,7 @@ for why.
 
 import logging
 import threading
+import time
 
 from celery_singleton import Singleton
 
@@ -90,6 +104,15 @@ end
 _LOCK_RENEWED = 1
 _LOCK_REACQUIRED = 2
 _LOCK_SUPERSEDED = 0
+
+
+class LockCheckExhausted(Exception):
+    """Raised when the lock ownership check keeps failing (Redis errors) for
+    SINGLETON_START_LOCK_MAX_RETRIES consecutive attempts at task start.
+
+    A real, visible failure on purpose — not a silent drop (Task.retry()'s
+    would-be Reject(requeue=False)) and not an infinite loop.
+    """
 
 
 class HeartbeatingSingleton(Singleton):
@@ -167,47 +190,81 @@ class HeartbeatingSingleton(Singleton):
         return True
 
     def _start_lock(self, lock, task_id):
-        """__call__ wrapper around _check_lock: renews or reacquires at task
-        start, returning True if the task should proceed.
+        """__call__ wrapper around _check_lock: blocks until the ownership
+        check actually answers, then reports what __call__ should do next.
 
+        Returns True if the task should proceed (lock renewed or reacquired).
         Returns False only if a different task_id already owns the lock —
         this run has been genuinely superseded and must be skipped.
 
-        On a Redis error, retries the whole dispatch via self.retry() rather
-        than either proceeding unprotected (no confirmed ownership) or
-        silently skipping a legitimate run. self.retry() raises Retry, which
-        Celery's own trace machinery routes to on_retry — never on_failure —
-        so this never releases a lock it doesn't hold; see the module
-        docstring and PR96-fixes.md "Commit 3" for the full trace through
-        Celery's source. countdown/max_retries give a transient blip (e.g. a
-        brief Redis failover) room to clear before a genuinely sustained
-        outage surfaces as a real failure, instead of an unbounded
-        requeue-at-full-speed loop.
+        On a Redis error, sleeps SINGLETON_LOCK_RENEWAL_INTERVAL and retries
+        the *same* check, up to SINGLETON_START_LOCK_MAX_RETRIES attempts,
+        instead of either proceeding unprotected (no confirmed ownership) or
+        calling Task.retry() — retry() publishes a brand-new message through
+        the same singleton lock, which either silently no-ops (lock still
+        held: celery_singleton's own duplicate check returns a result
+        without publishing anything) or is dropped outright
+        (Reject(requeue=False)) if Redis is still down when the retry tries
+        to publish — precisely the sustained-outage case this exists to
+        survive. See the module docstring and PR96-fixes.md "Commit 4" for
+        the full trace through Celery/celery_singleton's source.
+
+        Blocking here (rather than returning a special "not yet" value) is
+        safe because of how acks_late works: the underlying message is not
+        acknowledged until __call__ returns, whether that return happens
+        quickly or after this loop first spends a while retrying — see
+        celery/worker/request.py's Request.execute(), which only acks/rejects
+        after trace_task (which calls __call__) has fully finished. If the
+        worker dies while blocked here, task_reject_on_worker_lost redelivers
+        the same still-unacked message to another worker, which re-enters
+        this same loop from scratch.
+
+        After the attempt cap, raises LockCheckExhausted — a real, visible
+        failure on purpose, not a silent drop.
         """
-        try:
-            result = self._check_lock(lock, task_id)
-        except Exception:
-            logger.exception("Start-of-run lock check for %s (task %s) failed — retrying", lock, task_id)
-            raise self.retry(
-                countdown=SINGLETON_LOCK_RENEWAL_INTERVAL,
-                max_retries=SINGLETON_START_LOCK_MAX_RETRIES,
-            )
-        if result == _LOCK_SUPERSEDED:
-            logger.warning(
-                "Lock %s no longer available for task %s at start "
-                "(a different task_id already owns it) — skipping this run",
-                lock,
-                task_id,
-            )
-            return False
-        if result == _LOCK_REACQUIRED:
-            logger.info(
-                "Lock %s was missing for task %s at start (queued past TTL, "
-                "or a same-task_id redelivery) — reacquiring and proceeding",
-                lock,
-                task_id,
-            )
-        return True
+        attempts_left = SINGLETON_START_LOCK_MAX_RETRIES
+        while True:
+            try:
+                result = self._check_lock(lock, task_id)
+            except Exception as exc:
+                attempts_left -= 1
+                if attempts_left <= 0:
+                    logger.exception(
+                        "Start-of-run lock check for %s (task %s) failed %d times — giving up",
+                        lock,
+                        task_id,
+                        SINGLETON_START_LOCK_MAX_RETRIES,
+                    )
+                    raise LockCheckExhausted(
+                        f"Could not confirm lock {lock!r} for task {task_id!r} "
+                        f"after {SINGLETON_START_LOCK_MAX_RETRIES} attempts"
+                    ) from exc
+                logger.exception(
+                    "Start-of-run lock check for %s (task %s) failed — retrying in %ss (%d attempt(s) left)",
+                    lock,
+                    task_id,
+                    SINGLETON_LOCK_RENEWAL_INTERVAL,
+                    attempts_left,
+                )
+                time.sleep(SINGLETON_LOCK_RENEWAL_INTERVAL)
+                continue
+
+            if result == _LOCK_SUPERSEDED:
+                logger.warning(
+                    "Lock %s no longer available for task %s at start "
+                    "(a different task_id already owns it) — skipping this run",
+                    lock,
+                    task_id,
+                )
+                return False
+            if result == _LOCK_REACQUIRED:
+                logger.info(
+                    "Lock %s was missing for task %s at start (queued past TTL, "
+                    "or a same-task_id redelivery) — reacquiring and proceeding",
+                    lock,
+                    task_id,
+                )
+            return True
 
     def unlock(self, lock, task_id=None):
         """Ownership-checked release, replacing Singleton's unconditional
@@ -223,11 +280,30 @@ class HeartbeatingSingleton(Singleton):
         fall back to self.request.id for the on_success/on_failure path
         (release_lock below), which does run on the main task thread where
         self.request is valid.
+
+        A Redis error here is logged and swallowed, not raised. unlock() is
+        called from on_success/on_failure, both invoked by Celery's own
+        trace_task with no try/except around the call
+        (celery/app/trace.py's TraceInfo.handle_failure and the success path
+        both call task.on_success/on_failure unguarded — confirmed directly
+        against that source, and via a `/codex` review consult, after this
+        was found to mask a clean LockCheckExhausted failure with a raw
+        ConnectionError instead). Letting a release failure escape here would
+        corrupt Celery's own success/failure reporting for the *original*
+        task outcome, which is a worse failure than a lock release that
+        didn't happen — the lock still self-expires via its TTL either way.
         """
         if task_id is None:
             task_id = self.request.id
         script = self._get_script("_release_script", _RELEASE_SCRIPT)
-        script(keys=[lock], args=[task_id])
+        try:
+            script(keys=[lock], args=[task_id])
+        except Exception:
+            logger.exception(
+                "Releasing lock %s for task %s failed — it will still self-expire via its TTL",
+                lock,
+                task_id,
+            )
 
     def release_lock(self, task_args=None, task_kwargs=None, task_id=None):
         """Same as celery_singleton.Singleton.release_lock, but forwards
