@@ -46,6 +46,13 @@ this raises for real rather than looping forever or calling retry().
 lock_and_run is also overridden (copied from celery_singleton, not just
 monkeypatched) to fix a dispatch-time cleanup bug — see its own docstring
 for why.
+
+unlock() swallows (logs, does not raise) a Redis error during release,
+rather than letting it propagate — see its own docstring. Found while
+verifying the loop above: Celery calls on_success/on_failure completely
+unguarded, so a release failure during cleanup (e.g. the same Redis outage
+that caused a LockCheckExhausted failure in the first place) would
+otherwise mask the real task outcome with a raw connection error instead.
 """
 
 import logging
@@ -138,8 +145,9 @@ class HeartbeatingSingleton(Singleton):
         see _OWNERSHIP_SCRIPT above for the exact semantics. Used both at
         task start (_start_lock) and by every heartbeat tick (_renew_lock);
         those wrappers differ only in what they do with a Redis error, since
-        a task that hasn't started yet can still retry the whole dispatch,
-        while a task already mid-run cannot.
+        a task that hasn't started yet can still block and wait for Redis to
+        recover (see _start_lock), while a task already mid-run cannot stop
+        and must just log and retry on the next scheduled tick instead.
 
         Takes lock/task_id explicitly rather than reading self.request:
         self.request is backed by Celery's *thread-local* request stack
@@ -281,17 +289,25 @@ class HeartbeatingSingleton(Singleton):
         (release_lock below), which does run on the main task thread where
         self.request is valid.
 
-        A Redis error here is logged and swallowed, not raised. unlock() is
-        called from on_success/on_failure, both invoked by Celery's own
-        trace_task with no try/except around the call
-        (celery/app/trace.py's TraceInfo.handle_failure and the success path
-        both call task.on_success/on_failure unguarded — confirmed directly
-        against that source, and via a `/codex` review consult, after this
-        was found to mask a clean LockCheckExhausted failure with a raw
-        ConnectionError instead). Letting a release failure escape here would
-        corrupt Celery's own success/failure reporting for the *original*
-        task outcome, which is a worse failure than a lock release that
-        didn't happen — the lock still self-expires via its TTL either way.
+        A Redis error here is logged and swallowed, not raised. This protects
+        all three callers of unlock():
+        - on_success/on_failure, both invoked by Celery's own trace_task with
+          no try/except around the call (celery/app/trace.py's
+          TraceInfo.handle_failure and the success path both call
+          task.on_success/on_failure unguarded — confirmed directly against
+          that source, and via a `/codex` review consult, after this was
+          found to mask a clean LockCheckExhausted failure with a raw
+          ConnectionError instead). Letting a release failure escape here
+          would corrupt Celery's own success/failure reporting for the
+          *original* task outcome, which is a worse failure than a lock
+          release that didn't happen.
+        - lock_and_run's publish-failure cleanup (see its own docstring):
+          there's no "task outcome" yet at that point (dispatch hasn't
+          happened), but the same swallow-and-log is still correct — a
+          cleanup failure there shouldn't mask the original publish
+          exception either.
+        In every case, the lock still self-expires via its TTL even if this
+        release attempt fails, so swallowing costs nothing but immediacy.
         """
         if task_id is None:
             task_id = self.request.id
@@ -379,6 +395,11 @@ class HeartbeatingSingleton(Singleton):
         override, a publish failure here would silently fail to release its
         own just-acquired lock — a leaked lock, the exact failure mode this
         whole fix exists to prevent.
+
+        unlock() itself swallows a Redis error rather than raising (see its
+        own docstring) — if this cleanup call hits a Redis error, it's
+        logged and the original publish exception below still propagates
+        via `raise`, unmasked.
 
         Re-check this method against celery_singleton's source on every
         version bump of that dependency.

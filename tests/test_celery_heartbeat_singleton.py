@@ -163,6 +163,11 @@ class TestReleaseScript(unittest.TestCase):
     contrast, receive their own task_id as a real parameter from Celery and
     must forward it explicitly (TestReleaseLockChain below), not rely on
     self.request happening to still be valid.
+
+    unlock() must also never raise on a Redis error (see the last test in
+    this class and TestReleaseLockChain below) — Celery calls
+    on_success/on_failure completely unguarded, so a release failure there
+    would otherwise mask the task's real outcome.
     """
 
     def test_release_deletes_when_still_owner_via_explicit_task_id(self):
