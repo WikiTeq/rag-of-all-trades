@@ -1,0 +1,558 @@
+"""Tests for utils/celery_heartbeat_singleton.py (MAIT-387 follow-up).
+
+celery_singleton.Singleton's lock is set once at dispatch and only released
+by on_success/on_failure. A fixed TTL is therefore always a ceiling on task
+runtime. HeartbeatingSingleton keeps a short TTL but renews it periodically
+while the task is alive, so a leaked lock (worker actually dead, renewals
+stopped) still self-heals quickly, while a healthy long-running task is never
+cut off mid-run.
+
+The renewal/release must be ownership-checked (only touch the lock if its
+current value is still this task's own task_id) — see the "Ownership race"
+section of PR96-fixes.md for why an unconditional EXPIRE/DELETE is unsafe
+once renewal is in play: an old task could otherwise extend or delete a
+newer task's lock.
+
+_renew_lock takes (lock, task_id) explicitly rather than reading self.request
+internally, because self.request is backed by Celery's *thread-local*
+request stack — a background heartbeat thread can't see the request the main
+thread pushed. An earlier version read self.request from inside _renew_lock,
+which passed every unit test (all called from the main thread) while being
+completely broken under real Celery execution (renewal always saw
+task_id=None and silently no-opped forever). TestRealHeartbeatThread below
+exercises an actual background thread to catch exactly that class of bug.
+"""
+
+import threading
+import time
+import unittest
+from unittest import mock
+from unittest.mock import MagicMock
+
+from celery.app.task import Context
+from celery.utils.threads import LocalStack
+
+from utils.celery_heartbeat_singleton import HeartbeatingSingleton, LockCheckExhausted
+from utils.celery_scheduling import SINGLETON_LOCK_RENEWAL_INTERVAL, SINGLETON_START_LOCK_MAX_RETRIES
+
+
+def _make_task(redis_client, task_id="task-a", lock="lock:key"):
+    """Build a HeartbeatingSingleton instance wired to a fake redis client,
+    without going through Celery's real task registration machinery.
+
+    task.request is a read-only property backed by task.request_stack, which
+    is normally set up when a task is bound to a Celery app via @app.task(...)
+    — since we're deliberately bypassing that to unit test the lock logic in
+    isolation, wire up a minimal stack by hand instead of push_request (which
+    itself needs an existing request_stack to push onto).
+    """
+    task = HeartbeatingSingleton()
+    task.request_stack = LocalStack()
+    task.request_stack.push(Context(id=task_id, args=(), kwargs={}))
+    task._singleton_backend = MagicMock()
+    task._singleton_backend.redis = redis_client
+    task.generate_lock = MagicMock(return_value=lock)
+    return task
+
+
+class TestRenewScript(unittest.TestCase):
+    """The heartbeat loop's ownership check must extend the TTL if the key
+    still holds the given task_id, reacquire it if the key went missing
+    mid-run (e.g. a Redis restart), and never touch a lock a different
+    task_id now holds — see PR96-fixes.md "Commit 3" for why the heartbeat
+    needs the reacquire case too, not just renew-or-noop.
+    """
+
+    def test_renew_extends_when_still_owner(self):
+        redis_client = MagicMock()
+        renew_script = MagicMock(return_value=1)
+        redis_client.register_script.return_value = renew_script
+
+        task = _make_task(redis_client)
+        task._renew_lock("lock:key", "task-a")
+
+        renew_script.assert_called_once_with(keys=["lock:key"], args=["task-a", task.lock_expiry])
+
+    def test_renew_reacquires_when_lock_went_missing_mid_run(self):
+        # E.g. Redis restarted or the key was otherwise evicted while a
+        # still-healthy task kept running. The old EXPIRE-only script could
+        # never recover from this; the shared ownership script now can.
+        redis_client = MagicMock()
+        renew_script = MagicMock(return_value=2)  # _LOCK_REACQUIRED
+        redis_client.register_script.return_value = renew_script
+
+        task = _make_task(redis_client)
+        with self.assertLogs("utils.celery_heartbeat_singleton", level="INFO") as logs:
+            result = task._renew_lock("lock:key", "task-a")
+
+        self.assertTrue(result)
+        self.assertTrue(any("lock:key" in message for message in logs.output))
+
+    def test_renew_is_noop_when_lock_owned_by_another_task(self):
+        # The script itself enforces this server-side (GET == ARGV[1] check);
+        # here we assert the call shape passes the given task_id, so a
+        # different owner's key is correctly left alone by the script logic.
+        redis_client = MagicMock()
+        renew_script = MagicMock(return_value=0)  # script reports "not owner"
+        redis_client.register_script.return_value = renew_script
+
+        task = _make_task(redis_client)
+        result = task._renew_lock("lock:key", "task-a")
+
+        self.assertFalse(result)
+        renew_script.assert_called_once_with(keys=["lock:key"], args=["task-a", task.lock_expiry])
+
+    def test_renew_logs_warning_when_ownership_lost(self):
+        redis_client = MagicMock()
+        renew_script = MagicMock(return_value=0)
+        redis_client.register_script.return_value = renew_script
+
+        task = _make_task(redis_client)
+        with self.assertLogs("utils.celery_heartbeat_singleton", level="WARNING") as logs:
+            task._renew_lock("lock:key", "task-a")
+
+        self.assertTrue(any("lock:key" in message for message in logs.output))
+
+    def test_renew_survives_a_redis_error_without_raising(self):
+        # A transient Redis error must not propagate out of _renew_lock: that
+        # would kill the heartbeat thread's loop, silently ending all future
+        # renewals for the rest of the task's run.
+        redis_client = MagicMock()
+        renew_script = MagicMock(side_effect=ConnectionError("redis unreachable"))
+        redis_client.register_script.return_value = renew_script
+
+        task = _make_task(redis_client)
+        with self.assertLogs("utils.celery_heartbeat_singleton", level="ERROR") as logs:
+            result = task._renew_lock("lock:key", "task-a")
+
+        self.assertFalse(result)
+        self.assertTrue(any("lock:key" in message for message in logs.output))
+
+    def test_heartbeat_loop_keeps_retrying_after_a_renewal_error(self):
+        # One failed renewal tick must not stop the loop from trying again on
+        # the next interval.
+        redis_client = MagicMock()
+        call_count = {"n": 0}
+
+        def flaky_script(keys, args):
+            call_count["n"] += 1
+            if call_count["n"] == 2:
+                raise ConnectionError("transient")
+            return 1
+
+        redis_client.register_script.return_value = flaky_script
+
+        task = _make_task(redis_client)
+        task.renewal_interval = 0.02
+        task.run = MagicMock(side_effect=lambda: time.sleep(0.1))
+        task()
+
+        self.assertGreaterEqual(call_count["n"], 3)  # survived the failed 2nd call
+
+
+class TestReleaseScript(unittest.TestCase):
+    """Release (replacing celery_singleton's unconditional unlock/delete) must
+    also be ownership-checked, for the same reason as renewal.
+
+    unlock() takes task_id explicitly (falling back to self.request.id only
+    when omitted) rather than always reading self.request internally. That
+    matters because celery_singleton.Singleton.lock_and_run calls
+    `self.unlock(lock)` (no task_id) from its own dispatch-time cleanup path
+    — inside apply_async, before push_request — where self.request would not
+    be the dispatching task's real request. on_success/on_failure, by
+    contrast, receive their own task_id as a real parameter from Celery and
+    must forward it explicitly (TestReleaseLockChain below), not rely on
+    self.request happening to still be valid.
+
+    unlock() must also never raise on a Redis error (see the last test in
+    this class and TestReleaseLockChain below) — Celery calls
+    on_success/on_failure completely unguarded, so a release failure there
+    would otherwise mask the task's real outcome.
+    """
+
+    def test_release_deletes_when_still_owner_via_explicit_task_id(self):
+        redis_client = MagicMock()
+        release_script = MagicMock(return_value=1)
+        redis_client.register_script.return_value = release_script
+
+        task = _make_task(redis_client)
+        task.unlock("lock:key", task_id="task-a")
+
+        release_script.assert_called_once_with(keys=["lock:key"], args=["task-a"])
+
+    def test_release_does_not_delete_lock_owned_by_newer_task(self):
+        # This is the exact race from the plan: task-a's lock already expired,
+        # task-b acquired the same key, then task-a finishes and tries to
+        # release. task-a's release must be a no-op, not delete task-b's lock.
+        redis_client = MagicMock()
+        release_script = MagicMock(return_value=0)
+        redis_client.register_script.return_value = release_script
+
+        task = _make_task(redis_client)
+        task.unlock("lock:key", task_id="task-a")
+
+        release_script.assert_called_once_with(keys=["lock:key"], args=["task-a"])
+
+    def test_release_falls_back_to_self_request_id_when_task_id_omitted(self):
+        # Compatibility path for celery_singleton's own `self.unlock(lock)`
+        # call site, which passes no task_id.
+        redis_client = MagicMock()
+        release_script = MagicMock(return_value=1)
+        redis_client.register_script.return_value = release_script
+
+        task = _make_task(redis_client, task_id="task-a")
+        task.unlock("lock:key")
+
+        release_script.assert_called_once_with(keys=["lock:key"], args=["task-a"])
+
+    def test_release_swallows_a_redis_error_instead_of_raising(self):
+        # Celery calls task.on_success/on_failure with no try/except around
+        # them (celery/app/trace.py) — a Redis error escaping unlock() here
+        # would propagate out of Celery's own success/failure handling,
+        # masking the task's real outcome (e.g. a clean LockCheckExhausted
+        # failure gets replaced by a raw ConnectionError). The lock still
+        # self-expires via its TTL even if this release attempt fails, so
+        # swallowing is correct, not just convenient.
+        redis_client = MagicMock()
+        release_script = MagicMock(side_effect=ConnectionError("redis unreachable"))
+        redis_client.register_script.return_value = release_script
+
+        task = _make_task(redis_client)
+        with self.assertLogs("utils.celery_heartbeat_singleton", level="ERROR") as logs:
+            task.unlock("lock:key", task_id="task-a")  # must not raise
+
+        self.assertTrue(any("lock:key" in message for message in logs.output))
+
+
+class TestReleaseLockChain(unittest.TestCase):
+    """on_success/on_failure must forward their own task_id parameter all the
+    way through release_lock() to unlock(), not rely on self.request.id.
+
+    Regression coverage for the same class of bug as the renewal fix: Celery
+    hands on_success/on_failure the correct task_id directly, and
+    celery_singleton's own release_lock() silently drops it — forward it
+    explicitly instead of trusting self.request to be the right request at
+    the point unlock() runs.
+    """
+
+    def test_on_success_forwards_its_own_task_id_to_unlock(self):
+        redis_client = MagicMock()
+        release_script = MagicMock(return_value=1)
+        redis_client.register_script.return_value = release_script
+
+        # Task instance's own request is a *different* id than the one
+        # on_success is told about, to prove on_success's argument wins.
+        task = _make_task(redis_client, task_id="stale-request-id")
+        task.on_success("retval", "task-a", (), {})
+
+        release_script.assert_called_once_with(keys=["lock:key"], args=["task-a"])
+
+    def test_on_failure_forwards_its_own_task_id_to_unlock(self):
+        redis_client = MagicMock()
+        release_script = MagicMock(return_value=1)
+        redis_client.register_script.return_value = release_script
+
+        task = _make_task(redis_client, task_id="stale-request-id")
+        task.on_failure(RuntimeError("boom"), "task-a", (), {}, None)
+
+        release_script.assert_called_once_with(keys=["lock:key"], args=["task-a"])
+
+    def test_on_failure_does_not_raise_when_release_hits_a_redis_error(self):
+        # Celery's TraceInfo.handle_failure calls task.on_failure(...) with no
+        # try/except around it — if on_failure -> release_lock -> unlock let
+        # a Redis error propagate (e.g. the same outage that caused the
+        # original task failure, such as LockCheckExhausted), it would
+        # escape Celery's own failure handler and mask the real failure
+        # reason with a raw connection error instead.
+        redis_client = MagicMock()
+        release_script = MagicMock(side_effect=ConnectionError("redis still unreachable"))
+        redis_client.register_script.return_value = release_script
+
+        task = _make_task(redis_client)
+        with self.assertLogs("utils.celery_heartbeat_singleton", level="ERROR"):
+            task.on_failure(RuntimeError("original failure"), "task-a", (), {}, None)  # must not raise
+
+    def test_on_success_does_not_raise_when_release_hits_a_redis_error(self):
+        # Same class of bug on the success path: Celery calls
+        # task.on_success(...) unguarded too (celery/app/trace.py), after
+        # already recording the task as successful — a release failure here
+        # must not retroactively turn a real success into a reported error.
+        redis_client = MagicMock()
+        release_script = MagicMock(side_effect=ConnectionError("redis unreachable"))
+        redis_client.register_script.return_value = release_script
+
+        task = _make_task(redis_client)
+        with self.assertLogs("utils.celery_heartbeat_singleton", level="ERROR"):
+            task.on_success("retval", "task-a", (), {})  # must not raise
+
+
+class TestHeartbeatLifecycle(unittest.TestCase):
+    """The renewal thread must start when the task body runs and stop when it
+    finishes, on both the success and the exception path.
+    """
+
+    def test_heartbeat_starts_and_stops_on_success(self):
+        redis_client = MagicMock()
+        redis_client.register_script.return_value = MagicMock(return_value=1)
+        task = _make_task(redis_client)
+
+        started = []
+        stopped = []
+        task._start_heartbeat = lambda lock, task_id: started.append((lock, task_id))
+        task._stop_heartbeat = lambda: stopped.append(True)
+        task.run = MagicMock(return_value="ok")
+
+        result = task()
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(started, [("lock:key", "task-a")])
+        self.assertEqual(stopped, [True])
+
+    def test_heartbeat_stops_even_when_task_raises(self):
+        redis_client = MagicMock()
+        redis_client.register_script.return_value = MagicMock(return_value=1)
+        task = _make_task(redis_client)
+
+        stopped = []
+        task._start_heartbeat = MagicMock()
+        task._stop_heartbeat = lambda: stopped.append(True)
+        task.run = MagicMock(side_effect=RuntimeError("boom"))
+
+        with self.assertRaises(RuntimeError):
+            task()
+
+        self.assertEqual(stopped, [True])
+
+
+class TestStartLockScript(unittest.TestCase):
+    """The atomic start-of-run check must renew when this task_id already
+    owns the lock, reacquire when the lock is missing entirely (queued past
+    TTL, or a same-task_id redelivery under task_acks_late), report
+    "superseded" only when a *different* task_id currently holds it, and on
+    a Redis error block in a sleep-and-retry loop (never proceed unprotected,
+    never call Task.retry()) until either the check succeeds or the attempt
+    cap is exhausted — see PR96-fixes.md "Commit 4" for why Task.retry()
+    (Commit 3's design) can silently drop the message it was meant to
+    protect, and why blocking is safe under acks_late.
+    """
+
+    def test_renews_when_already_owner(self):
+        redis_client = MagicMock()
+        ownership_script = MagicMock(return_value=1)  # _LOCK_RENEWED
+        redis_client.register_script.return_value = ownership_script
+
+        task = _make_task(redis_client)
+        result = task._start_lock("lock:key", "task-a")
+
+        self.assertTrue(result)
+        ownership_script.assert_called_once_with(keys=["lock:key"], args=["task-a", task.lock_expiry])
+
+    def test_reacquires_when_lock_missing(self):
+        redis_client = MagicMock()
+        ownership_script = MagicMock(return_value=2)  # _LOCK_REACQUIRED
+        redis_client.register_script.return_value = ownership_script
+
+        task = _make_task(redis_client)
+        with self.assertLogs("utils.celery_heartbeat_singleton", level="INFO") as logs:
+            result = task._start_lock("lock:key", "task-a")
+
+        self.assertTrue(result)
+        self.assertTrue(any("lock:key" in message for message in logs.output))
+
+    def test_skips_when_superseded_by_a_different_task_id(self):
+        redis_client = MagicMock()
+        ownership_script = MagicMock(return_value=0)  # _LOCK_SUPERSEDED
+        redis_client.register_script.return_value = ownership_script
+
+        task = _make_task(redis_client)
+        with self.assertLogs("utils.celery_heartbeat_singleton", level="WARNING") as logs:
+            result = task._start_lock("lock:key", "task-a")
+
+        self.assertFalse(result)
+        self.assertTrue(any("lock:key" in message for message in logs.output))
+
+    def test_retries_in_place_after_a_transient_redis_error_then_succeeds(self):
+        # A transient Redis error here must never let the task proceed with
+        # zero confirmed ownership (the original Commit 2 gap), and must
+        # never call Task.retry() (the Commit 3 gap — see class docstring).
+        # It must instead sleep and re-run the *same* check, and succeed
+        # once the check starts answering again, without ever having
+        # published a second message.
+        redis_client = MagicMock()
+        call_count = {"n": 0}
+
+        def flaky_script(keys, args):
+            call_count["n"] += 1
+            if call_count["n"] <= 2:
+                raise ConnectionError("redis unreachable")
+            return 1  # _LOCK_RENEWED
+
+        redis_client.register_script.return_value = flaky_script
+
+        task = _make_task(redis_client)
+        task.retry = MagicMock(side_effect=AssertionError("must not call Task.retry()"))
+
+        with mock.patch("utils.celery_heartbeat_singleton.time.sleep") as sleep_mock:
+            with self.assertLogs("utils.celery_heartbeat_singleton", level="ERROR") as logs:
+                result = task._start_lock("lock:key", "task-a")
+
+        self.assertTrue(result)
+        self.assertEqual(call_count["n"], 3)
+        self.assertEqual(sleep_mock.call_count, 2)
+        sleep_mock.assert_called_with(SINGLETON_LOCK_RENEWAL_INTERVAL)
+        task.retry.assert_not_called()
+        self.assertTrue(any("lock:key" in message for message in logs.output))
+
+    def test_raises_lock_check_exhausted_after_max_retries(self):
+        # After SINGLETON_START_LOCK_MAX_RETRIES consecutive Redis errors,
+        # __call__ must fail for real (a visible failure) rather than loop
+        # forever or fall back to Task.retry().
+        redis_client = MagicMock()
+        ownership_script = MagicMock(side_effect=ConnectionError("redis unreachable"))
+        redis_client.register_script.return_value = ownership_script
+
+        task = _make_task(redis_client)
+        task.retry = MagicMock(side_effect=AssertionError("must not call Task.retry()"))
+
+        with mock.patch("utils.celery_heartbeat_singleton.time.sleep") as sleep_mock:
+            with self.assertLogs("utils.celery_heartbeat_singleton", level="ERROR"):
+                with self.assertRaises(LockCheckExhausted):
+                    task._start_lock("lock:key", "task-a")
+
+        self.assertEqual(ownership_script.call_count, SINGLETON_START_LOCK_MAX_RETRIES)
+        self.assertEqual(sleep_mock.call_count, SINGLETON_START_LOCK_MAX_RETRIES - 1)
+        task.retry.assert_not_called()
+
+
+class TestCallSkipsWhenSuperseded(unittest.TestCase):
+    """__call__ must skip the task body and never start a heartbeat when
+    _start_lock reports this task_id has been superseded — but must proceed
+    normally (renew or reacquire) in every other case.
+    """
+
+    def test_call_skips_without_running_task_or_starting_heartbeat(self):
+        redis_client = MagicMock()
+        redis_client.register_script.return_value = MagicMock(return_value=0)  # superseded
+        task = _make_task(redis_client)
+
+        task._start_heartbeat = MagicMock()
+        task._stop_heartbeat = MagicMock()
+        task.run = MagicMock(return_value="should not run")
+
+        result = task()
+
+        self.assertIsNone(result)
+        task.run.assert_not_called()
+        task._start_heartbeat.assert_not_called()
+        task._stop_heartbeat.assert_not_called()
+
+    def test_call_proceeds_when_lock_reacquired(self):
+        redis_client = MagicMock()
+        redis_client.register_script.return_value = MagicMock(return_value=2)  # reacquired
+        task = _make_task(redis_client)
+
+        task._start_heartbeat = MagicMock()
+        task._stop_heartbeat = MagicMock()
+        task.run = MagicMock(return_value="ok")
+
+        result = task()
+
+        self.assertEqual(result, "ok")
+        task.run.assert_called_once()
+        task._start_heartbeat.assert_called_once_with("lock:key", "task-a")
+
+
+class TestLockAndRunOverride(unittest.TestCase):
+    """lock_and_run's publish-failure cleanup must pass task_id through to
+    unlock() explicitly, instead of celery_singleton's upstream `self.unlock
+    (lock)` (no task_id) — see the class docstring on lock_and_run and
+    PR96-fixes.md "Commit 2" finding 2 for why the bare call is wrong here.
+    """
+
+    def test_cleanup_passes_task_id_through_on_publish_failure(self):
+        redis_client = MagicMock()
+        release_script = MagicMock(return_value=1)
+        redis_client.register_script.return_value = release_script
+
+        task = _make_task(redis_client)
+        task.aquire_lock = MagicMock(return_value=True)
+
+        def failing_apply_async(*args, **kwargs):
+            raise RuntimeError("publish failed")
+
+        # lock_and_run calls super(Singleton, self).apply_async(...), which
+        # resolves past Singleton in the MRO straight to celery.app.task.Task
+        # — patching Singleton.apply_async itself would not intercept that.
+        from celery.app.task import Task
+
+        with mock.patch.object(Task, "apply_async", failing_apply_async):
+            with self.assertRaises(RuntimeError):
+                task.lock_and_run("lock:key", task_id="task-a")
+
+        release_script.assert_called_once_with(keys=["lock:key"], args=["task-a"])
+
+    def test_does_not_call_apply_async_when_lock_not_acquired(self):
+        redis_client = MagicMock()
+        task = _make_task(redis_client)
+        task.aquire_lock = MagicMock(return_value=False)
+
+        result = task.lock_and_run("lock:key", task_id="task-a")
+
+        self.assertIsNone(result)
+
+
+class TestRealHeartbeatThread(unittest.TestCase):
+    """Exercises the actual background thread (not a stub), because
+    self.request is thread-local: a version that reads self.request from
+    inside the renewal loop passes every test above (all main-thread calls)
+    while being silently broken for real — renewal always sees task_id=None
+    and never actually extends the lock. These tests must NOT stub
+    _start_heartbeat/_renew_lock.
+    """
+
+    def test_heartbeat_thread_renews_with_correct_task_id(self):
+        # _start_lock (main thread, at task start) and _renew_lock (heartbeat
+        # thread, on each tick) now share one script via _get_script's
+        # per-attribute caching, so register_script is called once and every
+        # call — the start check included — goes through this single mock.
+        redis_client = MagicMock()
+        calls = []
+
+        def fake_ownership_script(keys, args):
+            calls.append((keys, args))
+            return 1
+
+        redis_client.register_script.return_value = fake_ownership_script
+
+        task = _make_task(redis_client, task_id="task-a", lock="lock:key")
+        task.renewal_interval = 0.02  # fast for the test
+
+        task.run = MagicMock(side_effect=lambda: time.sleep(0.1))
+        task()
+
+        # First call is _start_lock's own check; the rest are the heartbeat
+        # thread's ticks — assert at least one heartbeat tick happened beyond
+        # the initial start-of-run check.
+        self.assertGreaterEqual(len(calls), 2)
+        for keys, args in calls:
+            self.assertEqual(keys, ["lock:key"])
+            self.assertEqual(args[0], "task-a")  # not None — proves the thread saw the real task_id
+
+    def test_heartbeat_thread_stops_when_task_finishes(self):
+        redis_client = MagicMock()
+        redis_client.register_script.return_value = MagicMock(return_value=1)
+
+        task = _make_task(redis_client)
+        task.renewal_interval = 0.02
+
+        task.run = MagicMock(return_value="ok")
+        task()
+
+        # After __call__ returns, no heartbeat thread should still be running.
+        self.assertIsNone(task._heartbeat_thread)
+        other_threads = [t for t in threading.enumerate() if t is not threading.current_thread()]
+        heartbeat_threads = [t for t in other_threads if t.name.startswith("Thread") and t.is_alive()]
+        # Give a stray thread a brief moment to notice the stop signal, if any.
+        for t in heartbeat_threads:
+            t.join(timeout=0.5)
+        self.assertFalse(any(t.is_alive() for t in heartbeat_threads))
