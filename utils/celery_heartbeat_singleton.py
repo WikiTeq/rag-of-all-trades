@@ -214,8 +214,8 @@ class HeartbeatingSingleton(Singleton):
         without publishing anything) or is dropped outright
         (Reject(requeue=False)) if Redis is still down when the retry tries
         to publish — precisely the sustained-outage case this exists to
-        survive. See the module docstring and PR96-fixes.md "Commit 4" for
-        the full trace through Celery/celery_singleton's source.
+        survive. See the module docstring above for the full trace through
+        Celery/celery_singleton's source.
 
         Blocking here (rather than returning a special "not yet" value) is
         safe because of how acks_late works: the underlying message is not

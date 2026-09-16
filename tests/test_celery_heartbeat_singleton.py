@@ -8,10 +8,9 @@ stopped) still self-heals quickly, while a healthy long-running task is never
 cut off mid-run.
 
 The renewal/release must be ownership-checked (only touch the lock if its
-current value is still this task's own task_id) — see the "Ownership race"
-section of PR96-fixes.md for why an unconditional EXPIRE/DELETE is unsafe
-once renewal is in play: an old task could otherwise extend or delete a
-newer task's lock.
+current value is still this task's own task_id): an unconditional
+EXPIRE/DELETE is unsafe once renewal is in play — an old task could
+otherwise extend or delete a newer task's lock.
 
 _renew_lock takes (lock, task_id) explicitly rather than reading self.request
 internally, because self.request is backed by Celery's *thread-local*
@@ -58,9 +57,9 @@ def _make_task(redis_client, task_id="task-a", lock="lock:key"):
 class TestRenewScript(unittest.TestCase):
     """The heartbeat loop's ownership check must extend the TTL if the key
     still holds the given task_id, reacquire it if the key went missing
-    mid-run (e.g. a Redis restart), and never touch a lock a different
-    task_id now holds — see PR96-fixes.md "Commit 3" for why the heartbeat
-    needs the reacquire case too, not just renew-or-noop.
+    mid-run (e.g. a Redis restart) so a still-healthy task doesn't lose its
+    lock just because the key was evicted, and never touch a lock a
+    different task_id now holds.
     """
 
     def test_renew_extends_when_still_owner(self):
@@ -331,9 +330,9 @@ class TestStartLockScript(unittest.TestCase):
     "superseded" only when a *different* task_id currently holds it, and on
     a Redis error block in a sleep-and-retry loop (never proceed unprotected,
     never call Task.retry()) until either the check succeeds or the attempt
-    cap is exhausted — see PR96-fixes.md "Commit 4" for why Task.retry()
-    (Commit 3's design) can silently drop the message it was meant to
-    protect, and why blocking is safe under acks_late.
+    cap is exhausted — see utils/celery_heartbeat_singleton.py's module
+    docstring for why Task.retry() can silently drop the message it was
+    meant to protect, and why blocking is safe under acks_late.
     """
 
     def test_renews_when_already_owner(self):
@@ -465,8 +464,8 @@ class TestCallSkipsWhenSuperseded(unittest.TestCase):
 class TestLockAndRunOverride(unittest.TestCase):
     """lock_and_run's publish-failure cleanup must pass task_id through to
     unlock() explicitly, instead of celery_singleton's upstream `self.unlock
-    (lock)` (no task_id) — see the class docstring on lock_and_run and
-    PR96-fixes.md "Commit 2" finding 2 for why the bare call is wrong here.
+    (lock)` (no task_id) — see lock_and_run's own docstring for why the bare
+    call is wrong here.
     """
 
     def test_cleanup_passes_task_id_through_on_publish_failure(self):
