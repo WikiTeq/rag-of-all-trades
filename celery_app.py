@@ -22,6 +22,18 @@ celery_app.conf.worker_prefetch_multiplier = 1
 celery_app.conf.task_acks_late = True
 celery_app.conf.task_reject_on_worker_lost = True
 
+# Redis broker's default visibility_timeout (1h) treats any task still
+# unacked after that long as lost and redelivers its message — under the
+# same task_id, to any worker with a free slot — even if the original task
+# is still alive and healthy. Since task_acks_late keeps a message unacked
+# for the task's entire runtime, a genuinely long-running ingestion job
+# (e.g. large backlog) could hit this and end up with two live executions
+# sharing one task_id, which HeartbeatingSingleton's ownership check cannot
+# tell apart from a legitimate redelivery of an actually-dead task. Raised
+# well past any expected real task runtime so this redelivery path is only
+# ever reached by a task that's actually stuck, not one that's just slow.
+celery_app.conf.broker_transport_options = {"visibility_timeout": 21600}  # 6h
+
 # Disable unnecessary tracking
 celery_app.conf.task_track_started = False
 celery_app.conf.task_send_sent_event = False
