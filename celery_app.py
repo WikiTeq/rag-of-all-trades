@@ -2,8 +2,8 @@ import logging
 
 from celery import Celery
 from celery.signals import worker_process_init, worker_process_shutdown
-from celery_singleton import Singleton
 
+from utils.celery_heartbeat_singleton import HeartbeatingSingleton
 from utils.celery_utils import ingestion_task_name
 from utils.config import settings
 from utils.db import engine
@@ -21,6 +21,18 @@ celery_app = Celery(
 celery_app.conf.worker_prefetch_multiplier = 1
 celery_app.conf.task_acks_late = True
 celery_app.conf.task_reject_on_worker_lost = True
+
+# Redis broker's default visibility_timeout (1h) treats any task still
+# unacked after that long as lost and redelivers its message — under the
+# same task_id, to any worker with a free slot — even if the original task
+# is still alive and healthy. Since task_acks_late keeps a message unacked
+# for the task's entire runtime, a genuinely long-running ingestion job
+# (e.g. large backlog) could hit this and end up with two live executions
+# sharing one task_id, which HeartbeatingSingleton's ownership check cannot
+# tell apart from a legitimate redelivery of an actually-dead task. Raised
+# well past any expected real task runtime so this redelivery path is only
+# ever reached by a task that's actually stuck, not one that's just slow.
+celery_app.conf.broker_transport_options = {"visibility_timeout": 21600}  # 6h
 
 # Disable unnecessary tracking
 celery_app.conf.task_track_started = False
@@ -53,7 +65,7 @@ def create_task_for_source(source_config):
     """Register a Celery task and Beat schedule for one source (S3, MediaWiki, etc.)."""
     task_name = ingestion_task_name(source_config)
 
-    @celery_app.task(name=task_name, base=Singleton, ignore_result=True, bind=True)
+    @celery_app.task(name=task_name, base=HeartbeatingSingleton, ignore_result=True, bind=True)
     def run_source(self, pipeline_config=source_config):
         from tasks.factory import IngestionJobFactory
 
