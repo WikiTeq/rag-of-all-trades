@@ -49,6 +49,8 @@ class EnvSettings(BaseSettings):
     CHUNK_RATE_LIMIT: str = "30/minute"
     REPHRASE_RATE_LIMIT: str = "30/minute"
 
+    ENABLE_ACL: bool = False
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def parse_cors_origins(cls, v):

@@ -675,8 +675,40 @@ The following parameters are supported by all connector types:
 | `enabled` | bool | `true` | Set to `false` to skip this connector entirely — no Celery task or Beat schedule is registered. |
 | `schedules` | string | — | Cron expression or interval (in seconds) defining how often the connector runs. |
 | `request_delay` | float | `0` | Delay in seconds between processing each item. Useful for rate-limiting requests to external APIs. |
+| `acl_owner` | string | — | Email added to a document's ACL when the connector resolves an empty ACL (see [ACL support](#acl-support)). Only used when `ENABLE_ACL=true`. |
 
 > Environment variables (`${...}`) in the config file are evaluated at runtime.
+
+### ACL support
+
+Connectors may resolve and store an access control list (ACL) per document,
+gated behind the `ENABLE_ACL` environment variable (default `false`). When
+disabled, ACL resolution is skipped entirely and no `acl` field is stored.
+
+When enabled, each connector implements `get_acl_list()` to resolve the flat
+list of email identities allowed to access a document, or `['*']` for a
+publicly accessible document. The resolved list is sanitized (trimmed,
+lowercased, de-duplicated, sorted) and stored under the `acl` key in document
+metadata — excluded from both the LLM context and the embedding text, so it
+never affects retrieval or generation.
+
+ACL rules:
+
+- Missing or empty `acl` — the document is fully private (no one has access).
+- `acl` containing `*` — the document is public (everyone has access).
+- `acl` containing specific emails — only those identities have access.
+- If a connector resolves an empty ACL and `acl_owner` is configured, the
+  document's ACL falls back to `[acl_owner]` instead of staying empty (this
+  models a connector's acting user owning a document that would otherwise be
+  inaccessible even to them, e.g. a personal Google Drive file). This
+  fallback does not apply if ACL resolution fails — a failure is treated as
+  a genuinely empty (private) ACL.
+- When a document's ACL changes on the remote source, the next ingestion run
+  re-ingests the document (even if its content is unchanged) so the stored
+  `acl` stays current.
+
+This task covers ACL storage and updating only — ACL-based filtering at
+query/retrieval time is not implemented yet.
 
 ```yaml
 sources: # holds the list of sources to ingest from (Connectors)
