@@ -10,3 +10,8 @@ class BaseMetadataSchema(BaseModel):
     source_name: str = Field(description="Human-readable name of the source instance")
     file_name: str = Field(description="File name used by the vector store")
     last_modified: str = Field(description="ISO string of the item's last modified timestamp")
+
+
+class WebMetadataSchema(BaseModel):
+    url: str = Field(description="URL of the scraped page")
+    title: str = Field(description="HTML title of the page, empty when unavailable")
