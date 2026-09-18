@@ -1,4 +1,5 @@
 from tasks.base import IngestionJob
+from tasks.database_ingestion import DatabaseIngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.github_ingestion import GitHubIngestionJob
 from tasks.imap_ingestion import IMAPIngestionJob
@@ -42,3 +43,4 @@ IngestionJobFactory.register("imap", IMAPIngestionJob)
 IngestionJobFactory.register("onedrive", OneDriveIngestionJob)
 IngestionJobFactory.register("sharepoint", SharePointIngestionJob)
 IngestionJobFactory.register("github", GitHubIngestionJob)
+IngestionJobFactory.register("database", DatabaseIngestionJob)
