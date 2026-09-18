@@ -310,6 +310,29 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             # Falls back to bare filename when relative_to raises ValueError
             self.assertEqual(job.get_item_name(item), "file.txt")
 
+    def test_get_extra_metadata_returns_file_fields(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_path = Path(temp_dir) / "doc.md"
+            file_path.write_text("hello", encoding="utf-8")
+
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+            item = IngestionItem(id=f"file://{file_path}", source_ref=file_path)
+            meta = job.get_extra_metadata(item, "", {})
+
+            self.assertEqual(meta["file_path"], str(file_path))
+            self.assertEqual(meta["file_extension"], ".md")
+            self.assertEqual(meta["file_size"], file_path.stat().st_size)
+
+    def test_get_extra_metadata_fallback_file_size_on_oserror(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+            missing = Path(temp_dir) / "ghost.txt"
+            item = IngestionItem(id=f"file://{missing}", source_ref=missing)
+            meta = job.get_extra_metadata(item, "", {})
+
+            self.assertEqual(meta["file_size"], 0)
+            self.assertEqual(meta["file_extension"], ".txt")
+
 
 if __name__ == "__main__":
     unittest.main()
