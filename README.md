@@ -914,6 +914,57 @@ curl -X 'GET' \
 }
 ```
 
+### /dashboard
+
+This endpoint serves a small live dashboard with:
+* Number of vector items
+* Total vector table size
+* Number of currently running Celery jobs
+* Number of configured connectors and their `name/type/schedule`
+* Latest 10 ingestion runs with:
+  * start timestamp
+  * duration
+  * ingested count
+  * skipped count
+  * status (`success`/`error`/`running`)
+  * connector (`name` + `type`)
+
+Updates stream over Server-Sent Events (`GET /dashboard/stream`, same basic auth): the
+server pushes a fresh stats payload when data changes (new runs, document changes, size)
+and at least every 30 seconds, with heartbeats keeping the connection alive. The page
+falls back to interval polling automatically if the stream is unavailable.
+
+Dashboard is disabled by default and protected with HTTP Basic Auth.
+
+Enable it in `.env`:
+
+```dotenv
+ENABLE_DASHBOARD=1
+DASHBOARD_USER=admin
+DASHBOARD_PASS=admin
+```
+
+Open the page:
+
+```bash
+curl -u admin:admin \
+  'http://localhost:8000/dashboard'
+```
+
+### Known limitations
+
+If a worker container is killed (or the whole stack is stopped) while an
+ingestion run is in progress, its `ingestion_runs` row stays in `running`
+status: only the worker itself can end a run, and a hard kill never gets to
+do that. The dashboard then shows that run as running until newer runs push
+it out of the "Latest 10" list. The ingestion itself is not affected: tasks
+are acknowledged late and requeued on worker loss, so the work re-runs after
+restart and creates a fresh run row.
+
+Planned fix: reconcile stuck rows to an `interrupted` status on worker boot
+(`worker_process_init` already runs per worker) plus a matching dashboard
+pill, so interrupted runs stop reading as live.
+
 ## Integration examples
 
 ### OpenWebUI
