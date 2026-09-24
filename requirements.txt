@@ -55,6 +55,11 @@ dropbox==12.0.2
 
 # Confluence connector
 llama-index-readers-confluence==0.7.0
+# GitLab connector
+llama-index-readers-gitlab==0.6.0
+
+# llama-index-readers-gitlab 0.5.1 depends on python-gitlab<5 and >=4.8.0
+python-gitlab==4.13.0
 
 # Environment management
 python-dotenv==1.2.1
