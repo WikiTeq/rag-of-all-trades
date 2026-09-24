@@ -186,8 +186,7 @@ sources:
   #  config:
   #    gitlab_url: "${GITLAB1_URL}"          # e.g. https://gitlab.com
   #    personal_token: "${GITLAB1_TOKEN}"
-  #    project_id: 12345678                  # integer project ID; required unless group_id is set, mutually exclusive with group_id
-  #    #group_id: 999                        # integer group ID, for group-wide issue queries (repository files not supported in group mode); mutually exclusive with project_id
+  #    project_id: 12345678                  # integer project ID, required
   #    ref: "main"                           # optional, branch/tag/commit, default "main"
   #    #path: "docs"                         # optional, limit to sub-directory
   #    #file_path: "README.md"               # optional, single file only

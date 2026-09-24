@@ -28,13 +28,8 @@ class GitLabIngestionJob(IngestionJob):
     Configuration (config.yaml):
         - config.gitlab_url: GitLab server URL (required, e.g. "https://gitlab.com")
         - config.personal_token: GitLab personal access token (required)
-        - config.project_id: GitLab project ID, integer. Mutually exclusive with
-          group_id — one of the two is required. Ingests repository files (and,
-          if include_issues is set, that project's issues only).
-        - config.group_id: GitLab group ID, integer. Mutually exclusive with
-          project_id — one of the two is required. Ingests issues across every
-          project in the group (include_issues must be set; repository files
-          are not supported in group mode).
+        - config.project_id: GitLab project ID, integer (required). Ingests that
+          project's repository files and, if include_issues is set, its issues.
         - config.ref: Branch or commit ref for repository files (optional, default "main")
         - config.path: Sub-directory path to limit repository file loading (optional)
         - config.file_path: Single file path to load, instead of a directory (optional)
@@ -79,20 +74,11 @@ class GitLabIngestionJob(IngestionJob):
         if not self.personal_token:
             raise ValueError("personal_token is required in GitLab connector config")
 
-        # Project / group
+        # Project
         self.project_id: int | None = cfg.get("project_id")
-        self.group_id: int | None = cfg.get("group_id")
 
-        if not self.project_id and not self.group_id:
-            raise ValueError("At least one of project_id or group_id is required in GitLab connector config")
-
-        if self.project_id and self.group_id:
-            raise ValueError(
-                "project_id and group_id are mutually exclusive in GitLab connector config: "
-                "repository files only ever come from project_id, while issues would silently "
-                "switch to all group issues (overwriting project-scoped results) if group_id is "
-                "also set. Configure one connector per scope instead."
-            )
+        if not self.project_id:
+            raise ValueError("project_id is required in GitLab connector config")
 
         # Repository options
         self.ref: str = str(cfg.get("ref", "main"))
@@ -122,42 +108,26 @@ class GitLabIngestionJob(IngestionJob):
 
         gl = gitlab.Gitlab(self.gitlab_url, private_token=self.personal_token)
 
-        self._repo_reader: GitLabRepositoryReader | None = None
-        self._issues_reader: GitLabIssuesReader | None = None
+        self._repo_reader = GitLabRepositoryReader(
+            gitlab_client=gl,
+            project_id=self.project_id,
+        )
         # GitLabRepositoryReader's Document.extra_info never exposes the project's
         # web_url/path_with_namespace, only the numeric project_id (not a valid
         # browse-URL path segment) — fetch it once here so get_extra_metadata() can
         # build a real browse URL instead of the reader's broken raw API link.
-        self._project_web_url: str | None = None
+        self._project_web_url: str = gl.projects.get(self.project_id).web_url
 
-        if self.project_id:
-            self._repo_reader = GitLabRepositoryReader(
-                gitlab_client=gl,
-                project_id=self.project_id,
-            )
-            self._project_web_url = gl.projects.get(self.project_id).web_url
-
+        self._issues_reader: GitLabIssuesReader | None = None
         if self.include_issues:
-            # GitLabIssuesReader.load_data() requires project_id or group_id at
-            # call time, even though both are optional in its constructor
-            # signature. The check above (line 67-68) already guarantees at
-            # least one of self.project_id / self.group_id is set here, so
-            # this reader is never constructed with both None.
             self._issues_reader = GitLabIssuesReader(
                 gitlab_client=gl,
-                project_id=self.project_id if self.project_id else None,
-                group_id=self.group_id if self.group_id else None,
-            )
-
-        if self._repo_reader is None and self._issues_reader is None:
-            raise ValueError(
-                "Invalid GitLab connector config: no ingestion target enabled. "
-                "Set project_id for repository ingestion or enable include_issues for group/project issues."
+                project_id=self.project_id,
             )
 
         logger.info(
             f"Initialized GitLab connector (url={self.gitlab_url!r}, "
-            f"project_id={self.project_id}, group_id={self.group_id}, "
+            f"project_id={self.project_id}, "
             f"ref={self.ref!r}, include_issues={self.include_issues})"
         )
 
@@ -215,10 +185,9 @@ class GitLabIngestionJob(IngestionJob):
                     non_archived=self.issues_non_archived,
                     scope=self.issues_scope,
                 )
-                scope = self.project_id or self.group_id
                 for doc in docs:
                     yield IngestionItem(
-                        id=f"gitlab:{scope}:issue:{self._issue_identity(doc)}",
+                        id=f"gitlab:{self.project_id}:issue:{self._issue_identity(doc)}",
                         source_ref=doc,
                         last_modified=parse_timestamp(
                             doc.metadata.get("created_at")  # GitLabIssuesReader does not expose updated_at
@@ -231,26 +200,22 @@ class GitLabIngestionJob(IngestionJob):
     def _issue_identity(self, doc: Any) -> str:
         """Return a stable, unique identifier for a GitLab issue document.
 
-        doc.doc_id is the GitLab iid, which is project-scoped: two projects in
-        the same group can share an iid, so it collides when only group_id is
-        configured. The reader does not expose GitLab's instance-global issue
-        id in metadata, but it does expose the API self-link ("url"), which is
-        unique per project+issue (e.g. ".../projects/<project_id>/issues/<id>")
-        and is safe to use as the identity key in both project- and
-        group-scoped ingestion. Used by both list_items() and get_item_name()
-        so item.id and item_name stay consistent for version tracking.
+        doc.doc_id is the GitLab iid, which is project-scoped. The reader does
+        not expose GitLab's instance-global issue id in metadata, but it does
+        expose the API self-link ("url"), which is unique per project+issue
+        (e.g. ".../projects/<project_id>/issues/<id>"). Used by both
+        list_items() and get_item_name() so item.id and item_name stay
+        consistent for version tracking.
 
         Raises if "url" is missing or empty rather than falling back to
-        doc.doc_id (the iid): that fallback would silently reintroduce the
-        group-scoped collision this method exists to prevent, so a missing
-        url must fail the item instead of passing through quietly.
+        doc.doc_id (the iid), so a reader response missing this field fails
+        the item instead of passing through with a degraded identity.
         """
         issue_url = (doc.metadata or {}).get("url")
         if not issue_url:
             raise ValueError(
                 f"[{self.source_name}] GitLab issue {doc.doc_id!r} has no 'url' metadata; "
-                "cannot build a stable identity without it (project-scoped iid alone can "
-                "collide across projects in group-scoped ingestion)"
+                "cannot build a stable identity without it"
             )
         return issue_url
 
@@ -283,13 +248,10 @@ class GitLabIngestionJob(IngestionJob):
         _issue_identity() returns the full API self-link (e.g.
         ".../projects/12345/issues/7") for use as the stable tracker key in
         item.id. Using that same full URL for get_item_name() via
-        slugify(full_url) produces an ugly, hard-to-read name — but the id
-        must still be unique across projects, which the iid alone is not in
-        group-scoped ingestion (two projects in one group can both have issue
-        #7). Extract "<project_id>_<iid>" from the URL instead: short and
-        readable, but still unique per project+issue regardless of scope
-        mode. Falls back to the full identity if the URL doesn't match the
-        expected GitLab API shape.
+        slugify(full_url) produces an ugly, hard-to-read name. Extract
+        "<project_id>_<iid>" from the URL instead: short and readable, but
+        still unique per project+issue. Falls back to the full identity if
+        the URL doesn't match the expected GitLab API shape.
         """
         identity = self._issue_identity(doc)
         match = self._ISSUE_URL_RE.search(identity)

@@ -17,7 +17,6 @@ def _make_config(
     gitlab_url="https://gitlab.com",
     personal_token=None,
     project_id=12345,
-    group_id=None,
     ref="main",
     path=None,
     file_path=None,
@@ -39,7 +38,6 @@ def _make_config(
             "gitlab_url": gitlab_url,
             "personal_token": personal_token or "test_token",
             "project_id": project_id,
-            "group_id": group_id,
             "ref": ref,
             "path": path,
             "file_path": file_path,
@@ -127,25 +125,10 @@ class TestGitLabIngestionJob(unittest.TestCase):
     def test_source_type(self):
         self.assertEqual(self._make_job().source_type, "gitlab")
 
-    def test_init_fetches_project_web_url_when_project_id_set(self):
+    def test_init_fetches_project_web_url(self):
         job = self._make_job(project_id=12345)
         self.mock_gitlab_client.projects.get.assert_called_once_with(12345)
         self.assertEqual(job._project_web_url, "https://gitlab.com/mygroup/myrepo")
-
-    def test_init_skips_web_url_fetch_in_group_only_mode(self):
-        job = GitLabIngestionJob(
-            {
-                "name": "x",
-                "config": {
-                    "gitlab_url": "https://gitlab.com",
-                    "personal_token": "t",
-                    "group_id": 999,
-                    "include_issues": True,
-                },
-            }
-        )
-        self.mock_gitlab_client.projects.get.assert_not_called()
-        self.assertIsNone(job._project_web_url)
 
     # ------------------------------------------------------------------
     # Validation
@@ -159,7 +142,7 @@ class TestGitLabIngestionJob(unittest.TestCase):
         with self.assertRaises(ValueError):
             GitLabIngestionJob({"name": "x", "config": {"gitlab_url": "https://gitlab.com", "project_id": 1}})
 
-    def test_missing_project_and_group_raises(self):
+    def test_missing_project_id_raises(self):
         with self.assertRaises(ValueError):
             GitLabIngestionJob(
                 {
@@ -171,49 +154,10 @@ class TestGitLabIngestionJob(unittest.TestCase):
                 }
             )
 
-    def test_project_and_group_both_set_raises(self):
-        with self.assertRaises(ValueError):
-            GitLabIngestionJob(
-                {
-                    "name": "x",
-                    "config": {
-                        "gitlab_url": "https://gitlab.com",
-                        "personal_token": "t",
-                        "project_id": 12345,
-                        "group_id": 999,
-                        "include_issues": True,
-                    },
-                }
-            )
-
-    def test_group_id_only_with_issues_is_valid(self):
-        job = GitLabIngestionJob(
-            {
-                "name": "x",
-                "config": {
-                    "gitlab_url": "https://gitlab.com",
-                    "personal_token": "t",
-                    "group_id": 999,
-                    "include_issues": True,
-                },
-            }
-        )
-        self.assertIsNone(job.project_id)
-        self.assertEqual(job.group_id, 999)
-
-    def test_issues_reader_never_constructed_with_both_project_and_group_none(self):
-        # Regression test for discussion_r3760429901: GitLabIssuesReader.load_data()
-        # produces zero results if neither project_id nor group_id is passed. The
-        # __init__ guard (test_missing_project_and_group_raises) should make that
-        # combination unreachable whenever include_issues=True; assert it directly
-        # against the reader's actual constructor call, not just via config validation.
-        self._make_job(project_id=12345, group_id=None, include_issues=True)
+    def test_issues_reader_constructed_with_project_id(self):
+        self._make_job(project_id=12345, include_issues=True)
         _, kwargs = self.mock_issues_reader_class.call_args
-        self.assertFalse(kwargs["project_id"] is None and kwargs["group_id"] is None)
-
-        self._make_job(project_id=None, group_id=999, include_issues=True)
-        _, kwargs = self.mock_issues_reader_class.call_args
-        self.assertFalse(kwargs["project_id"] is None and kwargs["group_id"] is None)
+        self.assertEqual(kwargs["project_id"], 12345)
 
     # ------------------------------------------------------------------
     # list_items — files
@@ -296,9 +240,8 @@ class TestGitLabIngestionJob(unittest.TestCase):
         self.assertIn(":issue:", items[0].id)
 
     def test_list_items_issue_id_format(self):
-        # item.id uses the issue's API self-link ("url"), not the project-scoped
-        # iid, so that group-only ingestion doesn't collide across projects that
-        # share an iid (see discussion_r3760508294).
+        # item.id uses the issue's API self-link ("url"), not the bare iid
+        # (see discussion_r3760508294).
         self.mock_repo_reader.load_data.return_value = []
         self.mock_issues_reader.load_data.return_value = [_make_issue_doc("7")]
         job = self._make_job(project_id=12345, include_issues=True)
@@ -309,9 +252,8 @@ class TestGitLabIngestionJob(unittest.TestCase):
         )
 
     def test_list_items_issue_missing_url_raises(self):
-        # Falling back to doc_id (the project-scoped iid) would silently
-        # reintroduce the group-scoped collision _issue_identity exists to
-        # prevent, so a missing "url" must fail the item, not fall back.
+        # A missing "url" must fail the item rather than silently falling
+        # back to doc_id (the bare iid).
         self.mock_repo_reader.load_data.return_value = []
         doc = _make_issue_doc("7")
         del doc.metadata["url"]
@@ -336,36 +278,6 @@ class TestGitLabIngestionJob(unittest.TestCase):
         job = self._make_job(project_id=12345, include_issues=True)
         with self.assertRaises(ValueError):
             job._issue_identity(doc)
-
-    def test_list_items_issue_id_no_collision_across_projects_in_group(self):
-        # Regression test: two projects in the same group can share an iid.
-        # Using the url keeps their item.id unique when only group_id is set.
-        self.mock_repo_reader.load_data.return_value = []
-        doc_a = _make_issue_doc("5")
-        doc_a.metadata["url"] = "https://gitlab.com/api/v4/projects/111/issues/5"
-        doc_b = _make_issue_doc("5")
-        doc_b.metadata["url"] = "https://gitlab.com/api/v4/projects/222/issues/5"
-        self.mock_issues_reader.load_data.return_value = [doc_a, doc_b]
-        job = self._make_job(project_id=None, group_id=999, include_issues=True)
-        items = list(job.list_items())
-        self.assertEqual(len(items), 2)
-        self.assertNotEqual(items[0].id, items[1].id)
-
-    def test_get_item_name_issue_no_collision_across_projects_in_group(self):
-        # Regression test for the same iid-collision class, but for
-        # get_item_name() (the metadata-tracker key) rather than item.id:
-        # _issue_short_id() embeds project_id from the url, so two projects
-        # in the same group sharing an iid still get distinct tracker keys.
-        doc_a = _make_issue_doc("5")
-        doc_a.metadata["url"] = "https://gitlab.com/api/v4/projects/111/issues/5"
-        doc_b = _make_issue_doc("5")
-        doc_b.metadata["url"] = "https://gitlab.com/api/v4/projects/222/issues/5"
-        job = self._make_job(project_id=None, group_id=999, include_issues=True)
-        item_a = IngestionItem(id="gitlab:999:issue:a", source_ref=doc_a)
-        item_b = IngestionItem(id="gitlab:999:issue:b", source_ref=doc_b)
-        self.assertNotEqual(job.get_item_name(item_a), job.get_item_name(item_b))
-        self.assertEqual(job.get_item_name(item_a), "gitlab_issue_test_gitlab_111_5")
-        self.assertEqual(job.get_item_name(item_b), "gitlab_issue_test_gitlab_222_5")
 
     def test_get_item_name_issue_no_collision_across_sources(self):
         # Two configured sources on different GitLab instances can share the
@@ -433,8 +345,7 @@ class TestGitLabIngestionJob(unittest.TestCase):
 
     def test_get_item_name_issue(self):
         # Name uses a short "<project_id>_<iid>" extracted from the unique url
-        # (not slugify(full_url), which is unreadable, and not the bare iid,
-        # which collides across projects in a group) — per review feedback.
+        # (not slugify(full_url), which is unreadable) — per review feedback.
         # source_name is prefixed too, since project_id alone can also collide
         # across different GitLab instances configured as separate sources.
         doc = _make_issue_doc(iid="42")
@@ -798,24 +709,6 @@ class TestGitLabIngestionJob(unittest.TestCase):
         job = self._make_job(include_issues=True)
         job.issues_confidential = GitLabIngestionJob._parse_bool_optional("true")
         self.assertTrue(job.issues_confidential)
-
-    # ------------------------------------------------------------------
-    # Fail-fast: group_id only + include_issues=False raises ValueError
-    # ------------------------------------------------------------------
-
-    def test_group_id_only_no_issues_raises(self):
-        with self.assertRaises(ValueError):
-            GitLabIngestionJob(
-                {
-                    "name": "x",
-                    "config": {
-                        "gitlab_url": "https://gitlab.com",
-                        "personal_token": "test_token",
-                        "group_id": 999,
-                        "include_issues": False,
-                    },
-                }
-            )
 
     # ------------------------------------------------------------------
     # issue last_modified uses created_at (updated_at not exposed by reader)
