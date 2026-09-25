@@ -280,19 +280,42 @@ class TestBoxIngestionJob(unittest.TestCase):
         items = list(self._make_job().list_items())
         self.assertIs(items[0].source_ref, box_file)
 
-    def test_get_raw_content_returns_decoded_bytes(self):
+    def test_get_raw_content_uses_markdown_conversion(self):
         box_file = _make_box_file(file_id="f1")
         self.mock_get_content.return_value = b"Box file content"
         self.mock_meta.return_value = {"box_file_id": "f1", "name": "report.pdf", "path_collection": "All Files"}
         item = IngestionItem(id="box:f1", source_ref=box_file)
-        self.assertEqual(self._make_job().get_raw_content(item), "Box file content")
+        job = self._make_job()
+        job.convert_to_markdown = MagicMock(return_value="Converted text")
+        self.assertEqual(job.get_raw_content(item), "Converted text")
+
+    def test_get_raw_content_passes_file_extension_as_hint(self):
+        box_file = _make_box_file(file_id="f1", name="report.pdf")
+        self.mock_get_content.return_value = b"raw bytes"
+        self.mock_meta.return_value = {"box_file_id": "f1", "name": "report.pdf", "path_collection": "All Files"}
+        item = IngestionItem(id="box:f1", source_ref=box_file)
+        job = self._make_job()
+        job.convert_to_markdown = MagicMock(return_value="Converted text")
+        job.get_raw_content(item)
+        job.convert_to_markdown.assert_called_once_with(b"raw bytes", file_extension=".pdf")
+
+    def test_get_raw_content_falls_back_on_empty_conversion(self):
+        box_file = _make_box_file(file_id="f1")
+        self.mock_get_content.return_value = b"Box file content"
+        self.mock_meta.return_value = {"box_file_id": "f1", "name": "report.pdf", "path_collection": "All Files"}
+        item = IngestionItem(id="box:f1", source_ref=box_file)
+        job = self._make_job()
+        job.convert_to_markdown = MagicMock(return_value="")
+        self.assertEqual(job.get_raw_content(item), "Box file content")
 
     def test_get_raw_content_populates_metadata_cache(self):
         box_file = _make_box_file(file_id="f99", name="x.pdf")
         self.mock_get_content.return_value = b"content"
         self.mock_meta.return_value = {"box_file_id": "f99", "name": "x.pdf", "path_collection": "All Files"}
         item = IngestionItem(id="box:f99", source_ref=box_file)
-        self._make_job().get_raw_content(item)
+        job = self._make_job()
+        job.convert_to_markdown = MagicMock(return_value="Converted text")
+        job.get_raw_content(item)
         self.assertEqual(item._metadata_cache["box_file_id"], "f99")
         self.assertEqual(item._metadata_cache["box_file_name"], "x.pdf")
         self.assertEqual(item._metadata_cache["path_collection"], "All Files")
@@ -315,6 +338,7 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.mock_meta.return_value = {"box_file_id": "meta1", "name": "doc.pdf", "path_collection": "All Files/Docs"}
         item = IngestionItem(id="box:meta1", source_ref=box_file)
         job = self._make_job()
+        job.convert_to_markdown = MagicMock(return_value="Converted text")
         job.get_raw_content(item)
         extra = job.get_extra_metadata(item, "content", {})
         self.assertEqual(extra["box_file_id"], "meta1")

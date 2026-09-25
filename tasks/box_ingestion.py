@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -231,7 +232,9 @@ class BoxIngestionJob(IngestionJob):
         item._metadata_cache["path_collection"] = meta.get("path_collection") or ""
 
         content_bytes = get_file_content_by_id(box_client=self.box_client, box_file_id=box_file.id)
-        return content_bytes.decode("utf-8", errors="replace")
+        file_extension = os.path.splitext(box_file.name or "")[1] or None
+        converted = self.convert_to_markdown(content_bytes, file_extension=file_extension)
+        return converted or content_bytes.decode("utf-8", errors="ignore")
 
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe name for the Box file."""
