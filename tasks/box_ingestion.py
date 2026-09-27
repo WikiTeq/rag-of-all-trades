@@ -17,6 +17,10 @@ from utils.text import slugify
 
 logger = logging.getLogger(__name__)
 
+# Box's search API caps results per page at 200; used to page through
+# search_resources() results via offset until a short page signals the end.
+_SEARCH_PAGE_SIZE = 200
+
 
 class BoxIngestionJob(IngestionJob):
     """Ingestion connector for Box cloud storage.
@@ -161,26 +165,41 @@ class BoxIngestionJob(IngestionJob):
         reader = BoxReader(box_client=self.box_client)
         file_ids: list[str] = []
 
-        if self.folder_id is not None or self.file_ids is not None:
-            logger.info(f"[{self.source_name}] Listing files by folder/file IDs from Box")
+        # BoxReader.list_resources() prefers file_ids over folder_id when both are
+        # passed in the same call (it's an if/elif internally), silently dropping
+        # the folder. Call it once per mode so both are actually ingested.
+        if self.folder_id is not None:
+            logger.info(f"[{self.source_name}] Listing files from Box folder {self.folder_id!r}")
             try:
-                file_ids += reader.list_resources(
-                    folder_id=self.folder_id,
-                    file_ids=self.file_ids,
-                    is_recursive=self.is_recursive,
-                )
+                file_ids += reader.list_resources(folder_id=self.folder_id, is_recursive=self.is_recursive)
             except Exception:
-                logger.exception(f"[{self.source_name}] Failed to list files by folder/file IDs")
+                logger.exception(f"[{self.source_name}] Failed to list files by folder_id")
+                raise
+
+        if self.file_ids is not None:
+            logger.info(f"[{self.source_name}] Listing files by file IDs from Box")
+            try:
+                file_ids += reader.list_resources(file_ids=self.file_ids)
+            except Exception:
+                logger.exception(f"[{self.source_name}] Failed to list files by file_ids")
                 raise
 
         if self.search_query is not None:
             logger.info(f"[{self.source_name}] Searching Box by content query: {self.search_query!r}")
             try:
-                file_ids += reader.search_resources(
-                    query=self.search_query,
-                    file_extensions=self.search_file_extensions,
-                    ancestor_folder_ids=self.search_ancestor_folder_ids,
-                )
+                offset = 0
+                while True:
+                    page = reader.search_resources(
+                        query=self.search_query,
+                        file_extensions=self.search_file_extensions,
+                        ancestor_folder_ids=self.search_ancestor_folder_ids,
+                        limit=_SEARCH_PAGE_SIZE,
+                        offset=offset,
+                    )
+                    file_ids += page
+                    if len(page) < _SEARCH_PAGE_SIZE:
+                        break
+                    offset += _SEARCH_PAGE_SIZE
             except Exception:
                 logger.exception(f"[{self.source_name}] Failed to search files by content query")
                 raise
@@ -188,11 +207,15 @@ class BoxIngestionJob(IngestionJob):
         if self.metadata_template is not None and self.metadata_ancestor_folder_id is not None:
             logger.info(f"[{self.source_name}] Searching Box by metadata template: {self.metadata_template!r}")
             try:
+                # search_resources_by_metadata() has no way to page past the first
+                # result set: the underlying reader helper discards the API's
+                # next_marker, so only the first page is ever reachable here.
                 file_ids += reader.search_resources_by_metadata(
                     from_=self.metadata_template,
                     ancestor_folder_id=self.metadata_ancestor_folder_id,
                     query=self.metadata_query,
                     query_params=self.metadata_query_params,
+                    limit=_SEARCH_PAGE_SIZE,
                 )
             except Exception:
                 logger.exception(f"[{self.source_name}] Failed to search files by metadata")
@@ -222,6 +245,11 @@ class BoxIngestionJob(IngestionJob):
                 last_modified=last_modified,
             )
 
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        """Return the Box file's SHA-1 hash to skip re-downloading unchanged files."""
+        box_file: File = item.source_ref
+        return box_file.sha_1 or None
+
     def get_raw_content(self, item: IngestionItem) -> str:
         """Download and return the text content of the Box file."""
         box_file: File = item.source_ref
@@ -230,6 +258,7 @@ class BoxIngestionJob(IngestionJob):
         item._metadata_cache["box_file_id"] = meta.get("box_file_id") or ""
         item._metadata_cache["box_file_name"] = meta.get("name") or ""
         item._metadata_cache["path_collection"] = meta.get("path_collection") or ""
+        item._metadata_cache["box_file_url"] = f"https://app.box.com/file/{box_file.id}" if box_file.id else ""
 
         content_bytes = get_file_content_by_id(box_client=self.box_client, box_file_id=box_file.id)
         file_extension = os.path.splitext(box_file.name or "")[1] or None
@@ -249,4 +278,5 @@ class BoxIngestionJob(IngestionJob):
             "box_file_id": item._metadata_cache.get("box_file_id", ""),
             "box_file_name": item._metadata_cache.get("box_file_name", ""),
             "path_collection": item._metadata_cache.get("path_collection", ""),
+            "box_file_url": item._metadata_cache.get("box_file_url", ""),
         }

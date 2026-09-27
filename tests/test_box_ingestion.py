@@ -18,11 +18,16 @@ def _make_config(**kwargs) -> dict:
 
 
 def _make_box_file(
-    file_id="file123", name="report.pdf", path_collection="All Files/Reports", modified_at="2024-01-15T10:30:00+00:00"
+    file_id="file123",
+    name="report.pdf",
+    path_collection="All Files/Reports",
+    modified_at="2024-01-15T10:30:00+00:00",
+    sha_1="abc123sha1",
 ):
     box_file = MagicMock()
     box_file.id = file_id
     box_file.name = name
+    box_file.sha_1 = sha_1
     box_file.modified_at = MagicMock()
     box_file.modified_at.isoformat.return_value = modified_at
     box_file.path_collection = MagicMock()
@@ -186,12 +191,25 @@ class TestBoxIngestionJob(unittest.TestCase):
 
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].id, "box:abc")
-        self.mock_reader.list_resources.assert_called_once_with(folder_id=None, file_ids=["abc"], is_recursive=False)
+        self.mock_reader.list_resources.assert_called_once_with(file_ids=["abc"])
 
     def test_list_items_passes_is_recursive(self):
         self.mock_reader.list_resources.return_value = []
         list(self._make_job(is_recursive="true").list_items())
-        self.mock_reader.list_resources.assert_called_once_with(folder_id="0", file_ids=None, is_recursive=True)
+        self.mock_reader.list_resources.assert_called_once_with(folder_id="0", is_recursive=True)
+
+    def test_list_items_folder_and_file_ids_both_ingested(self):
+        f1, f2 = _make_box_file("f1"), _make_box_file("f2")
+        self.mock_reader.list_resources.side_effect = [["f1"], ["f2"]]
+        self.mock_get_files.return_value = [f1, f2]
+
+        job = self._make_job(folder_id="0", file_ids="f2")
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 2)
+        self.assertEqual(self.mock_reader.list_resources.call_count, 2)
+        self.mock_reader.list_resources.assert_any_call(folder_id="0", is_recursive=False)
+        self.mock_reader.list_resources.assert_any_call(file_ids=["f2"])
 
     def test_list_items_search_mode(self):
         box_file = _make_box_file("s1")
@@ -206,7 +224,33 @@ class TestBoxIngestionJob(unittest.TestCase):
             query="quarterly",
             file_extensions=None,
             ancestor_folder_ids=None,
+            limit=200,
+            offset=0,
         )
+
+    def test_list_items_search_mode_paginates(self):
+        box_file_first = _make_box_file("id0")
+        box_file_last = _make_box_file("s1")
+        full_page = [f"id{i}" for i in range(200)]
+        self.mock_reader.search_resources.side_effect = [full_page, ["s1"]]
+        self.mock_get_files.return_value = [box_file_first, box_file_last]
+
+        job = self._make_job(folder_id=None, search_query="quarterly")
+        items = list(job.list_items())
+
+        self.assertEqual(self.mock_reader.search_resources.call_count, 2)
+        self.mock_reader.search_resources.assert_any_call(
+            query="quarterly", file_extensions=None, ancestor_folder_ids=None, limit=200, offset=0
+        )
+        self.mock_reader.search_resources.assert_any_call(
+            query="quarterly", file_extensions=None, ancestor_folder_ids=None, limit=200, offset=200
+        )
+        # Both pages' results must reach get_box_files_details after dedup -
+        # a regression that dropped the first page would still pass the
+        # call-count/offset assertions above but fail here.
+        called_file_ids = self.mock_get_files.call_args.kwargs.get("file_ids")
+        self.assertEqual(set(called_file_ids), {*full_page, "s1"})
+        self.assertEqual({item.id for item in items}, {"box:id0", "box:s1"})
 
     def test_list_items_metadata_search_mode(self):
         box_file = _make_box_file("m1")
@@ -228,6 +272,7 @@ class TestBoxIngestionJob(unittest.TestCase):
             ancestor_folder_id="0",
             query="status = :status",
             query_params={"status": "active"},
+            limit=200,
         )
 
     def test_list_items_combined_modes_deduplicates(self):
@@ -279,6 +324,16 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.mock_get_files.return_value = [box_file]
         items = list(self._make_job().list_items())
         self.assertIs(items[0].source_ref, box_file)
+
+    def test_get_item_checksum_returns_sha1(self):
+        box_file = _make_box_file(file_id="f1", sha_1="deadbeef")
+        item = IngestionItem(id="box:f1", source_ref=box_file)
+        self.assertEqual(self._make_job().get_item_checksum(item), "deadbeef")
+
+    def test_get_item_checksum_returns_none_when_missing(self):
+        box_file = _make_box_file(file_id="f1", sha_1="")
+        item = IngestionItem(id="box:f1", source_ref=box_file)
+        self.assertIsNone(self._make_job().get_item_checksum(item))
 
     def test_get_raw_content_uses_markdown_conversion(self):
         box_file = _make_box_file(file_id="f1")
@@ -344,6 +399,7 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.assertEqual(extra["box_file_id"], "meta1")
         self.assertEqual(extra["box_file_name"], "doc.pdf")
         self.assertEqual(extra["path_collection"], "All Files/Docs")
+        self.assertEqual(extra["box_file_url"], "https://app.box.com/file/meta1")
 
     def test_parse_kv_pairs(self):
         result = BoxIngestionJob._parse_kv_pairs("status=active,owner=alice")
