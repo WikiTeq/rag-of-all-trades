@@ -17,9 +17,20 @@ from utils.text import slugify
 
 logger = logging.getLogger(__name__)
 
-# Box's search API caps results per page at 200; used to page through
-# search_resources() results via offset until a short page signals the end.
+# Box's content search API (search_for_content) caps results per page at 200;
+# used to page through search_resources() results via offset until a short
+# page signals the end.
 _SEARCH_PAGE_SIZE = 200
+
+# Box's metadata query API (search_by_metadata_query) caps limit at 100 -
+# a different, lower ceiling than content search's 200. Confirmed against
+# the installed box_sdk_gen SearchManager.search_by_metadata_query docstring
+# ("A value between 0 and 100").
+_METADATA_SEARCH_PAGE_SIZE = 100
+
+# Box's folder-items API (get_folder_items) accepts up to 1000 items per page;
+# requesting the max reduces the number of paginated calls for large folders.
+_FOLDER_PAGE_SIZE = 1000
 
 
 class BoxIngestionJob(IngestionJob):
@@ -160,6 +171,67 @@ class BoxIngestionJob(IngestionJob):
                 result[k.strip()] = v.strip()
         return result
 
+    def _list_folder_file_ids(self, folder_id: str, is_recursive: bool) -> list[str]:
+        """List file IDs in a Box folder, paginating via marker so no items past the
+        first page are missed.
+
+        BoxReader.list_resources()'s folder path (get_box_folder_files_details())
+        calls get_folder_items() without pagination, so files beyond the first page
+        are silently dropped. That method's traversal logic (file vs. folder entries,
+        optional recursion) is small enough to reimplement faithfully here against
+        the raw SDK client, purely to add the pagination the wrapper lacks. This is
+        a narrow, targeted shim for that one gap, not a general reader replacement -
+        replace it with the wrapper directly if a future BoxReader version exposes
+        marker pagination on this path.
+        """
+        file_ids: list[str] = []
+        marker: str | None = None
+        while True:
+            items = self.box_client.folders.get_folder_items(
+                folder_id, usemarker=True, marker=marker, limit=_FOLDER_PAGE_SIZE
+            )
+            for item in items.entries:
+                if item.type == "file":
+                    file_ids.append(item.id)
+                elif item.type == "folder" and is_recursive:
+                    file_ids += self._list_folder_file_ids(item.id, is_recursive)
+            next_marker = items.next_marker
+            if not next_marker or next_marker == marker:
+                break
+            marker = next_marker
+        return file_ids
+
+    def _search_metadata_file_ids(self) -> list[str]:
+        """Search Box files by metadata template, paginating via marker.
+
+        BoxReader.search_resources_by_metadata() discards the API's next_marker
+        internally, so only the first page is ever reachable through it. This calls
+        the raw SDK search manager directly to add pagination.
+
+        Unlike the reader's own helper (which catches BoxAPIError and silently
+        returns an empty result), an error here propagates and fails the job.
+        Silently treating a failed search as "no matches" is the exact kind of
+        silent data loss this fix exists to remove.
+        """
+        file_ids: list[str] = []
+        marker: str | None = None
+        while True:
+            results = self.box_client.search.search_by_metadata_query(
+                from_=self.metadata_template,
+                ancestor_folder_id=self.metadata_ancestor_folder_id,
+                query=self.metadata_query,
+                query_params=self.metadata_query_params,
+                limit=_METADATA_SEARCH_PAGE_SIZE,
+                marker=marker,
+                fields=["id"],
+            )
+            file_ids += [entry.id for entry in results.entries if entry.type == "file"]
+            next_marker = results.next_marker
+            if not next_marker or next_marker == marker:
+                break
+            marker = next_marker
+        return file_ids
+
     def list_items(self) -> Iterator[IngestionItem]:
         """Discover Box file IDs via configured modes and yield one IngestionItem per file."""
         reader = BoxReader(box_client=self.box_client)
@@ -171,7 +243,7 @@ class BoxIngestionJob(IngestionJob):
         if self.folder_id is not None:
             logger.info(f"[{self.source_name}] Listing files from Box folder {self.folder_id!r}")
             try:
-                file_ids += reader.list_resources(folder_id=self.folder_id, is_recursive=self.is_recursive)
+                file_ids += self._list_folder_file_ids(self.folder_id, self.is_recursive)
             except Exception:
                 logger.exception(f"[{self.source_name}] Failed to list files by folder_id")
                 raise
@@ -207,16 +279,11 @@ class BoxIngestionJob(IngestionJob):
         if self.metadata_template is not None and self.metadata_ancestor_folder_id is not None:
             logger.info(f"[{self.source_name}] Searching Box by metadata template: {self.metadata_template!r}")
             try:
-                # search_resources_by_metadata() has no way to page past the first
-                # result set: the underlying reader helper discards the API's
-                # next_marker, so only the first page is ever reachable here.
-                file_ids += reader.search_resources_by_metadata(
-                    from_=self.metadata_template,
-                    ancestor_folder_id=self.metadata_ancestor_folder_id,
-                    query=self.metadata_query,
-                    query_params=self.metadata_query_params,
-                    limit=_SEARCH_PAGE_SIZE,
-                )
+                # BoxReader.search_resources_by_metadata() discards the API's
+                # next_marker, so only the first page is reachable through it.
+                # Call the raw SDK search manager directly to page through
+                # all results via marker-based pagination.
+                file_ids += self._search_metadata_file_ids()
             except Exception:
                 logger.exception(f"[{self.source_name}] Failed to search files by metadata")
                 raise

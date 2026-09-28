@@ -35,6 +35,29 @@ def _make_box_file(
     return box_file
 
 
+def _make_entry(entry_id, entry_type="file"):
+    entry = MagicMock()
+    entry.id = entry_id
+    entry.type = entry_type
+    return entry
+
+
+def _make_items_page(entries, next_marker=None):
+    """Fake box_sdk_gen Items response for get_folder_items()."""
+    page = MagicMock()
+    page.entries = entries
+    page.next_marker = next_marker
+    return page
+
+
+def _make_metadata_results_page(entries, next_marker=None):
+    """Fake box_sdk_gen MetadataQueryResults response for search_by_metadata_query()."""
+    page = MagicMock()
+    page.entries = entries
+    page.next_marker = next_marker
+    return page
+
+
 class TestBoxIngestionJob(unittest.TestCase):
     def setUp(self):
         self.reader_patcher = patch("tasks.box_ingestion.BoxReader")
@@ -52,26 +75,33 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.meta_patcher = patch("tasks.box_ingestion.box_file_to_llama_document_metadata")
         self.mock_meta = self.meta_patcher.start()
 
-        self.box_sdk_patcher = patch.dict(
-            "sys.modules",
-            {
-                "box_sdk_gen": MagicMock(
-                    BoxCCGAuth=MagicMock(return_value=MagicMock()),
-                    BoxJWTAuth=MagicMock(return_value=MagicMock()),
-                    BoxClient=MagicMock(return_value=MagicMock()),
-                    CCGConfig=MagicMock(return_value=MagicMock()),
-                    JWTConfig=MagicMock(return_value=MagicMock()),
-                ),
-            },
-        )
-        self.box_sdk_patcher.start()
+        # tasks.box_ingestion does `from box_sdk_gen import BoxClient, ...`, binding
+        # these names at import time - patching them here (rather than patching
+        # sys.modules["box_sdk_gen"]) is what actually intercepts self.box_client.
+        self.box_client_patcher = patch("tasks.box_ingestion.BoxClient")
+        self.mock_box_client_class = self.box_client_patcher.start()
+        self.mock_box_client = MagicMock()
+        self.mock_box_client_class.return_value = self.mock_box_client
+
+        self.ccg_auth_patcher = patch("tasks.box_ingestion.BoxCCGAuth", return_value=MagicMock())
+        self.ccg_auth_patcher.start()
+        self.jwt_auth_patcher = patch("tasks.box_ingestion.BoxJWTAuth", return_value=MagicMock())
+        self.jwt_auth_patcher.start()
+        self.ccg_config_patcher = patch("tasks.box_ingestion.CCGConfig", return_value=MagicMock())
+        self.ccg_config_patcher.start()
+        self.jwt_config_patcher = patch("tasks.box_ingestion.JWTConfig", return_value=MagicMock())
+        self.jwt_config_patcher.start()
 
     def tearDown(self):
         self.reader_patcher.stop()
         self.get_files_patcher.stop()
         self.get_content_patcher.stop()
         self.meta_patcher.stop()
-        self.box_sdk_patcher.stop()
+        self.box_client_patcher.stop()
+        self.ccg_auth_patcher.stop()
+        self.jwt_auth_patcher.stop()
+        self.ccg_config_patcher.stop()
+        self.jwt_config_patcher.stop()
 
     def _make_job(self, **kwargs) -> BoxIngestionJob:
         return BoxIngestionJob(_make_config(**kwargs))
@@ -171,7 +201,9 @@ class TestBoxIngestionJob(unittest.TestCase):
 
     def test_list_items_folder_mode(self):
         f1, f2 = _make_box_file("f1"), _make_box_file("f2", name="notes.docx")
-        self.mock_reader.list_resources.return_value = ["f1", "f2"]
+        self.mock_box_client.folders.get_folder_items.return_value = _make_items_page(
+            [_make_entry("f1"), _make_entry("f2")]
+        )
         self.mock_get_files.return_value = [f1, f2]
 
         items = list(self._make_job().list_items())
@@ -194,22 +226,57 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.mock_reader.list_resources.assert_called_once_with(file_ids=["abc"])
 
     def test_list_items_passes_is_recursive(self):
-        self.mock_reader.list_resources.return_value = []
+        subfolder_entry = _make_entry("sub1", entry_type="folder")
+        self.mock_box_client.folders.get_folder_items.side_effect = [
+            _make_items_page([subfolder_entry]),
+            _make_items_page([]),  # contents of "sub1"
+        ]
         list(self._make_job(is_recursive="true").list_items())
-        self.mock_reader.list_resources.assert_called_once_with(folder_id="0", is_recursive=True)
+        self.mock_box_client.folders.get_folder_items.assert_any_call("0", usemarker=True, marker=None, limit=1000)
+        self.mock_box_client.folders.get_folder_items.assert_any_call("sub1", usemarker=True, marker=None, limit=1000)
+
+    def test_list_items_folder_mode_not_recursive_skips_subfolders(self):
+        subfolder_entry = _make_entry("sub1", entry_type="folder")
+        file_entry = _make_entry("f1")
+        self.mock_box_client.folders.get_folder_items.return_value = _make_items_page([subfolder_entry, file_entry])
+        self.mock_get_files.return_value = [_make_box_file("f1")]
+
+        job = self._make_job(is_recursive="false")
+        items = list(job.list_items())
+
+        self.assertEqual(len(items), 1)
+        self.mock_box_client.folders.get_folder_items.assert_called_once_with(
+            "0", usemarker=True, marker=None, limit=1000
+        )
+
+    def test_list_items_folder_mode_paginates(self):
+        page1 = _make_items_page([_make_entry("f1")], next_marker="marker-2")
+        page2 = _make_items_page([_make_entry("f2")], next_marker=None)
+        self.mock_box_client.folders.get_folder_items.side_effect = [page1, page2]
+        self.mock_get_files.return_value = [_make_box_file("f1"), _make_box_file("f2")]
+
+        items = list(self._make_job().list_items())
+
+        self.assertEqual({item.id for item in items}, {"box:f1", "box:f2"})
+        self.mock_box_client.folders.get_folder_items.assert_any_call("0", usemarker=True, marker=None, limit=1000)
+        self.mock_box_client.folders.get_folder_items.assert_any_call(
+            "0", usemarker=True, marker="marker-2", limit=1000
+        )
 
     def test_list_items_folder_and_file_ids_both_ingested(self):
         f1, f2 = _make_box_file("f1"), _make_box_file("f2")
-        self.mock_reader.list_resources.side_effect = [["f1"], ["f2"]]
+        self.mock_box_client.folders.get_folder_items.return_value = _make_items_page([_make_entry("f1")])
+        self.mock_reader.list_resources.return_value = ["f2"]
         self.mock_get_files.return_value = [f1, f2]
 
         job = self._make_job(folder_id="0", file_ids="f2")
         items = list(job.list_items())
 
         self.assertEqual(len(items), 2)
-        self.assertEqual(self.mock_reader.list_resources.call_count, 2)
-        self.mock_reader.list_resources.assert_any_call(folder_id="0", is_recursive=False)
-        self.mock_reader.list_resources.assert_any_call(file_ids=["f2"])
+        self.mock_box_client.folders.get_folder_items.assert_called_once_with(
+            "0", usemarker=True, marker=None, limit=1000
+        )
+        self.mock_reader.list_resources.assert_called_once_with(file_ids=["f2"])
 
     def test_list_items_search_mode(self):
         box_file = _make_box_file("s1")
@@ -254,7 +321,9 @@ class TestBoxIngestionJob(unittest.TestCase):
 
     def test_list_items_metadata_search_mode(self):
         box_file = _make_box_file("m1")
-        self.mock_reader.search_resources_by_metadata.return_value = ["m1"]
+        self.mock_box_client.search.search_by_metadata_query.return_value = _make_metadata_results_page(
+            [_make_entry("m1")]
+        )
         self.mock_get_files.return_value = [box_file]
 
         job = self._make_job(
@@ -267,17 +336,94 @@ class TestBoxIngestionJob(unittest.TestCase):
         items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
-        self.mock_reader.search_resources_by_metadata.assert_called_once_with(
+        self.mock_box_client.search.search_by_metadata_query.assert_called_once_with(
             from_="enterprise_123.myTemplate",
             ancestor_folder_id="0",
             query="status = :status",
             query_params={"status": "active"},
-            limit=200,
+            limit=100,
+            marker=None,
+            fields=["id"],
         )
+
+    def test_list_items_metadata_search_mode_paginates(self):
+        page1 = _make_metadata_results_page([_make_entry("m1")], next_marker="marker-2")
+        page2 = _make_metadata_results_page([_make_entry("m2")], next_marker=None)
+        self.mock_box_client.search.search_by_metadata_query.side_effect = [page1, page2]
+        self.mock_get_files.return_value = [_make_box_file("m1"), _make_box_file("m2")]
+
+        job = self._make_job(
+            folder_id=None,
+            metadata_template="enterprise_123.myTemplate",
+            metadata_ancestor_folder_id="0",
+        )
+        items = list(job.list_items())
+
+        self.assertEqual({item.id for item in items}, {"box:m1", "box:m2"})
+        self.assertEqual(self.mock_box_client.search.search_by_metadata_query.call_count, 2)
+        self.mock_box_client.search.search_by_metadata_query.assert_any_call(
+            from_="enterprise_123.myTemplate",
+            ancestor_folder_id="0",
+            query=None,
+            query_params=None,
+            limit=100,
+            marker=None,
+            fields=["id"],
+        )
+        self.mock_box_client.search.search_by_metadata_query.assert_any_call(
+            from_="enterprise_123.myTemplate",
+            ancestor_folder_id="0",
+            query=None,
+            query_params=None,
+            limit=100,
+            marker="marker-2",
+            fields=["id"],
+        )
+
+    def test_list_items_metadata_search_ignores_non_file_entries(self):
+        self.mock_box_client.search.search_by_metadata_query.return_value = _make_metadata_results_page(
+            [_make_entry("m1"), _make_entry("folder1", entry_type="folder")]
+        )
+        self.mock_get_files.return_value = [_make_box_file("m1")]
+
+        job = self._make_job(
+            folder_id=None,
+            metadata_template="enterprise_123.myTemplate",
+            metadata_ancestor_folder_id="0",
+        )
+        items = list(job.list_items())
+
+        self.assertEqual({item.id for item in items}, {"box:m1"})
+
+    def test_list_items_metadata_search_propagates_api_errors(self):
+        # Unlike BoxReader.search_resources_by_metadata() (which swallows
+        # BoxAPIError and returns []), a failed metadata search here must fail
+        # the job rather than silently reporting zero matches.
+        self.mock_box_client.search.search_by_metadata_query.side_effect = RuntimeError("Box API error")
+        job = self._make_job(
+            folder_id=None,
+            metadata_template="enterprise_123.myTemplate",
+            metadata_ancestor_folder_id="0",
+        )
+        with self.assertRaises(RuntimeError):
+            list(job.list_items())
+
+    def test_list_items_folder_mode_stops_on_repeated_marker(self):
+        # Defensive guard: if the API ever returns the same marker twice, stop
+        # instead of looping forever. Entries from the page where the repeat is
+        # detected are still collected - only the next call is skipped.
+        self.mock_box_client.folders.get_folder_items.side_effect = [
+            _make_items_page([_make_entry("f1")], next_marker="same-marker"),
+            _make_items_page([_make_entry("f2")], next_marker="same-marker"),
+        ]
+        self.mock_get_files.return_value = [_make_box_file("f1"), _make_box_file("f2")]
+        items = list(self._make_job().list_items())
+        self.assertEqual(self.mock_box_client.folders.get_folder_items.call_count, 2)
+        self.assertEqual({item.id for item in items}, {"box:f1", "box:f2"})
 
     def test_list_items_combined_modes_deduplicates(self):
         f1, f2 = _make_box_file("f1"), _make_box_file("s1")
-        self.mock_reader.list_resources.return_value = ["f1"]
+        self.mock_box_client.folders.get_folder_items.return_value = _make_items_page([_make_entry("f1")])
         self.mock_reader.search_resources.return_value = ["f1", "s1"]  # f1 duplicate
         self.mock_get_files.return_value = [f1, f2]
 
@@ -290,17 +436,17 @@ class TestBoxIngestionJob(unittest.TestCase):
         self.assertEqual(len(args.kwargs.get("file_ids", args.args[1] if len(args.args) > 1 else [])), 2)
 
     def test_list_items_empty(self):
-        self.mock_reader.list_resources.return_value = []
+        self.mock_box_client.folders.get_folder_items.return_value = _make_items_page([])
         self.assertEqual(list(self._make_job().list_items()), [])
 
     def test_list_items_raises_on_reader_error(self):
-        self.mock_reader.list_resources.side_effect = RuntimeError("auth failed")
+        self.mock_box_client.folders.get_folder_items.side_effect = RuntimeError("auth failed")
         with self.assertRaises(RuntimeError):
             list(self._make_job().list_items())
 
     def test_list_items_parses_last_modified(self):
         box_file = _make_box_file(modified_at="2024-06-01T12:00:00+00:00")
-        self.mock_reader.list_resources.return_value = ["file123"]
+        self.mock_box_client.folders.get_folder_items.return_value = _make_items_page([_make_entry("file123")])
         self.mock_get_files.return_value = [box_file]
         items = list(self._make_job().list_items())
         self.assertEqual(items[0].last_modified, datetime(2024, 6, 1, 12, 0, 0, tzinfo=UTC))
@@ -308,7 +454,7 @@ class TestBoxIngestionJob(unittest.TestCase):
     def test_list_items_falls_back_to_now_on_missing_modified_at(self):
         box_file = _make_box_file()
         box_file.modified_at = None
-        self.mock_reader.list_resources.return_value = ["file123"]
+        self.mock_box_client.folders.get_folder_items.return_value = _make_items_page([_make_entry("file123")])
         self.mock_get_files.return_value = [box_file]
         before = datetime.now(UTC)
         items = list(self._make_job().list_items())
@@ -320,7 +466,7 @@ class TestBoxIngestionJob(unittest.TestCase):
 
     def test_list_items_source_ref_is_box_file(self):
         box_file = _make_box_file()
-        self.mock_reader.list_resources.return_value = ["file123"]
+        self.mock_box_client.folders.get_folder_items.return_value = _make_items_page([_make_entry("file123")])
         self.mock_get_files.return_value = [box_file]
         items = list(self._make_job().list_items())
         self.assertIs(items[0].source_ref, box_file)
