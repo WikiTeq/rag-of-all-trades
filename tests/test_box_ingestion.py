@@ -2,6 +2,8 @@ import unittest
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
+from box_sdk_gen.managers.search import SearchForContentType
+
 from tasks.box_ingestion import BoxIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 
@@ -55,6 +57,13 @@ def _make_metadata_results_page(entries, next_marker=None):
     page = MagicMock()
     page.entries = entries
     page.next_marker = next_marker
+    return page
+
+
+def _make_search_results_page(entries):
+    """Fake box_sdk_gen SearchResults response for search_for_content()."""
+    page = MagicMock()
+    page.entries = entries
     return page
 
 
@@ -280,17 +289,19 @@ class TestBoxIngestionJob(unittest.TestCase):
 
     def test_list_items_search_mode(self):
         box_file = _make_box_file("s1")
-        self.mock_reader.search_resources.return_value = ["s1"]
+        self.mock_box_client.search.search_for_content.return_value = _make_search_results_page([_make_entry("s1")])
         self.mock_get_files.return_value = [box_file]
 
         job = self._make_job(folder_id=None, search_query="quarterly")
         items = list(job.list_items())
 
         self.assertEqual(len(items), 1)
-        self.mock_reader.search_resources.assert_called_once_with(
+        self.mock_box_client.search.search_for_content.assert_called_once_with(
             query="quarterly",
             file_extensions=None,
             ancestor_folder_ids=None,
+            type=SearchForContentType.FILE,
+            fields=["id"],
             limit=200,
             offset=0,
         )
@@ -298,26 +309,48 @@ class TestBoxIngestionJob(unittest.TestCase):
     def test_list_items_search_mode_paginates(self):
         box_file_first = _make_box_file("id0")
         box_file_last = _make_box_file("s1")
-        full_page = [f"id{i}" for i in range(200)]
-        self.mock_reader.search_resources.side_effect = [full_page, ["s1"]]
+        full_page = _make_search_results_page([_make_entry(f"id{i}") for i in range(200)])
+        last_page = _make_search_results_page([_make_entry("s1")])
+        self.mock_box_client.search.search_for_content.side_effect = [full_page, last_page]
         self.mock_get_files.return_value = [box_file_first, box_file_last]
 
         job = self._make_job(folder_id=None, search_query="quarterly")
         items = list(job.list_items())
 
-        self.assertEqual(self.mock_reader.search_resources.call_count, 2)
-        self.mock_reader.search_resources.assert_any_call(
-            query="quarterly", file_extensions=None, ancestor_folder_ids=None, limit=200, offset=0
+        self.assertEqual(self.mock_box_client.search.search_for_content.call_count, 2)
+        self.mock_box_client.search.search_for_content.assert_any_call(
+            query="quarterly",
+            file_extensions=None,
+            ancestor_folder_ids=None,
+            type=SearchForContentType.FILE,
+            fields=["id"],
+            limit=200,
+            offset=0,
         )
-        self.mock_reader.search_resources.assert_any_call(
-            query="quarterly", file_extensions=None, ancestor_folder_ids=None, limit=200, offset=200
+        self.mock_box_client.search.search_for_content.assert_any_call(
+            query="quarterly",
+            file_extensions=None,
+            ancestor_folder_ids=None,
+            type=SearchForContentType.FILE,
+            fields=["id"],
+            limit=200,
+            offset=200,
         )
         # Both pages' results must reach get_box_files_details after dedup -
         # a regression that dropped the first page would still pass the
         # call-count/offset assertions above but fail here.
         called_file_ids = self.mock_get_files.call_args.kwargs.get("file_ids")
-        self.assertEqual(set(called_file_ids), {*full_page, "s1"})
+        self.assertEqual(set(called_file_ids), {f"id{i}" for i in range(200)} | {"s1"})
         self.assertEqual({item.id for item in items}, {"box:id0", "box:s1"})
+
+    def test_list_items_search_mode_propagates_api_errors(self):
+        # Unlike BoxReader.search_resources() (which swallows BoxAPIError and
+        # returns []), a failed content search here must fail the job rather
+        # than silently reporting zero matches.
+        self.mock_box_client.search.search_for_content.side_effect = RuntimeError("Box API error")
+        job = self._make_job(folder_id=None, search_query="quarterly")
+        with self.assertRaises(RuntimeError):
+            list(job.list_items())
 
     def test_list_items_metadata_search_mode(self):
         box_file = _make_box_file("m1")
@@ -424,7 +457,9 @@ class TestBoxIngestionJob(unittest.TestCase):
     def test_list_items_combined_modes_deduplicates(self):
         f1, f2 = _make_box_file("f1"), _make_box_file("s1")
         self.mock_box_client.folders.get_folder_items.return_value = _make_items_page([_make_entry("f1")])
-        self.mock_reader.search_resources.return_value = ["f1", "s1"]  # f1 duplicate
+        self.mock_box_client.search.search_for_content.return_value = _make_search_results_page(
+            [_make_entry("f1"), _make_entry("s1")]  # f1 duplicate
+        )
         self.mock_get_files.return_value = [f1, f2]
 
         job = self._make_job(folder_id="0", search_query="quarterly")

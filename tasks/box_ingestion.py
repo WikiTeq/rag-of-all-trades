@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from box_sdk_gen import BoxCCGAuth, BoxClient, BoxJWTAuth, CCGConfig, JWTConfig
+from box_sdk_gen.managers.search import SearchForContentType
 from box_sdk_gen.schemas.file import File
 from llama_index.readers.box import BoxReader
 from llama_index.readers.box.BoxAPI.box_api import get_box_files_details, get_file_content_by_id
@@ -232,6 +233,36 @@ class BoxIngestionJob(IngestionJob):
             marker = next_marker
         return file_ids
 
+    def _search_content_file_ids(self) -> list[str]:
+        """Search Box files by content query, paginating via offset.
+
+        BoxReader.search_resources() calls the reader's search_files() helper,
+        which catches BoxAPIError and silently returns an empty list. A real API
+        error then looks identical to "no matches": the pagination loop below
+        would see a short page and stop, and list_items() would log
+        "Found 0 file(s)" and return successfully. This calls the raw SDK search
+        manager directly so an error propagates and fails the job instead -
+        matching _search_metadata_file_ids()'s error-propagation behavior.
+        """
+        file_ids: list[str] = []
+        offset = 0
+        while True:
+            results = self.box_client.search.search_for_content(
+                query=self.search_query,
+                file_extensions=self.search_file_extensions,
+                ancestor_folder_ids=self.search_ancestor_folder_ids,
+                type=SearchForContentType.FILE,
+                fields=["id"],
+                limit=_SEARCH_PAGE_SIZE,
+                offset=offset,
+            )
+            page = results.entries or []
+            file_ids += [entry.id for entry in page]
+            if len(page) < _SEARCH_PAGE_SIZE:
+                break
+            offset += _SEARCH_PAGE_SIZE
+        return file_ids
+
     def list_items(self) -> Iterator[IngestionItem]:
         """Discover Box file IDs via configured modes and yield one IngestionItem per file."""
         reader = BoxReader(box_client=self.box_client)
@@ -259,19 +290,11 @@ class BoxIngestionJob(IngestionJob):
         if self.search_query is not None:
             logger.info(f"[{self.source_name}] Searching Box by content query: {self.search_query!r}")
             try:
-                offset = 0
-                while True:
-                    page = reader.search_resources(
-                        query=self.search_query,
-                        file_extensions=self.search_file_extensions,
-                        ancestor_folder_ids=self.search_ancestor_folder_ids,
-                        limit=_SEARCH_PAGE_SIZE,
-                        offset=offset,
-                    )
-                    file_ids += page
-                    if len(page) < _SEARCH_PAGE_SIZE:
-                        break
-                    offset += _SEARCH_PAGE_SIZE
+                # BoxReader.search_resources() swallows BoxAPIError and returns an
+                # empty list, masking a failed search as "no matches". Call the raw
+                # SDK search manager directly so an error propagates and fails the
+                # job instead.
+                file_ids += self._search_content_file_ids()
             except Exception:
                 logger.exception(f"[{self.source_name}] Failed to search files by content query")
                 raise
