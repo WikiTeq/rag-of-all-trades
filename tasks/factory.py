@@ -1,4 +1,5 @@
 from tasks.base import IngestionJob
+from tasks.box_ingestion import BoxIngestionJob
 from tasks.confluence_ingestion import ConfluenceIngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.dropbox_ingestion import DropboxIngestionJob
@@ -33,6 +34,7 @@ class IngestionJobFactory:
         return job_class(config)
 
 
+IngestionJobFactory.register("box", BoxIngestionJob)
 IngestionJobFactory.register("s3", S3IngestionJob)
 IngestionJobFactory.register("mediawiki", MediaWikiIngestionJob)
 IngestionJobFactory.register("jira", JiraIngestionJob)
