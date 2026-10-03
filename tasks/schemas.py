@@ -10,3 +10,9 @@ class BaseMetadataSchema(BaseModel):
     source_name: str = Field(description="Human-readable name of the source instance")
     file_name: str = Field(description="File name used by the vector store")
     last_modified: str = Field(description="ISO string of the item's last modified timestamp")
+
+
+class DirectoryMetadataSchema(BaseModel):
+    file_path: str = Field(description="Absolute path to the ingested file")
+    file_extension: str = Field(description="File extension including leading dot, e.g. .md")
+    file_size: int = Field(description="File size in bytes")
