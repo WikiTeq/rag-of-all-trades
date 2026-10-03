@@ -6,6 +6,7 @@ from jira import JIRA
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.schemas import JiraMetadataSchema
 from utils.parse import parse_bool, parse_timestamp
 from utils.text import slugify
 
@@ -236,17 +237,17 @@ class JiraIngestionJob(IngestionJob):
         issue = item.source_ref
         fields = issue.fields
 
-        return {
-            "url": item._metadata_cache.get("issue_url", ""),
-            "title": getattr(fields, "summary", "") or "",
-            "id": issue.id,
-            "assignee": self._safe_display_name(getattr(fields, "assignee", None)),
-            "reporter": self._safe_display_name(getattr(fields, "reporter", None)),
-            "status": self._safe_get(fields, "status", "name") or "",
-            "labels": list(getattr(fields, "labels", []) or []),
-            "project": self._safe_get(fields, "project", "name") or "",
-            "priority": self._safe_get(fields, "priority", "name") or "",
-        }
+        return JiraMetadataSchema(
+            url=item._metadata_cache.get("issue_url", ""),
+            title=getattr(fields, "summary", "") or "",
+            id=issue.id,
+            assignee=self._safe_display_name(getattr(fields, "assignee", None)),
+            reporter=self._safe_display_name(getattr(fields, "reporter", None)),
+            status=self._safe_get(fields, "status", "name") or "",
+            labels=list(getattr(fields, "labels", []) or []),
+            project=self._safe_get(fields, "project", "name") or "",
+            priority=self._safe_get(fields, "priority", "name") or "",
+        ).model_dump()
 
     # ------------------------------------------------------------------
     # Internal helpers
