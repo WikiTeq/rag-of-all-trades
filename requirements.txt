@@ -56,6 +56,12 @@ dropbox==12.0.2
 # Confluence connector
 llama-index-readers-confluence==0.7.0
 
+# Office file parsing for LlamaIndex SimpleDirectoryReader (Directory and SharePoint connectors).
+# Without these, .docx and .xlsx files fail to parse and are skipped.
+# docx2txt is pinned to 0.8 because llama-index-readers-confluence requires >=0.8,<0.9.
+docx2txt==0.8
+openpyxl==3.1.5
+
 # Environment management
 python-dotenv==1.2.1
 
