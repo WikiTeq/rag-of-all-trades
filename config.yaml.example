@@ -1,4 +1,4 @@
-# Optional. Custom User-Agent sent by all connectors that make HTTP requests.
+# Optional. Custom User-Agent sent by the MediaWiki, Jira, Pipedrive, SerpAPI and Web (crawl) connectors.
 # Default: rag-of-all-trades/1.0
 #user_agent: "rag-of-all-trades/1.0"
 

@@ -29,6 +29,13 @@ def _default_config(**overrides):
     return {"name": "test_wiki", "config": cfg}
 
 
+@pytest.fixture(autouse=True)
+def _mock_mwclient_site():
+    """The job always builds an mwclient.Site; keep tests off the network."""
+    with patch("tasks.mediawiki_ingestion.mwclient.Site"):
+        yield
+
+
 def _make_job(config=None, **reader_attrs):
     """Create a MediaWikiIngestionJob with a mocked reader.
 
@@ -177,7 +184,7 @@ class TestInitialization:
         assert job.source_type == "mediawiki"
 
     def test_verify_ssl_default_true(self):
-        """SSL verification is enabled by default; no custom Site is injected."""
+        """SSL verification is enabled by default."""
         cfg = _default_config(host="example.com")
         with (
             patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
@@ -186,7 +193,7 @@ class TestInitialization:
             MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
             job = MediaWikiIngestionJob(cfg)
             assert job.verify_ssl is True
-            MockSite.assert_not_called()
+            assert MockSite.call_args.kwargs["connection_options"] is None
 
     def test_verify_ssl_disabled_injects_site(self):
         """verify_ssl=False builds a custom mwclient Site with verify=False."""
@@ -305,8 +312,7 @@ class TestInitialization:
             MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
             job = MediaWikiIngestionJob(cfg)
             assert job is not None
-            # No network overrides → Site not built eagerly
-            MockSite.assert_not_called()
+            MockSite.assert_called_once()
 
     def test_user_agent_override(self):
         """user_agent sets the session User-Agent and injects a custom Site."""
@@ -350,8 +356,8 @@ class TestInitialization:
             assert mock_session.headers["User-Agent"] == ua
             assert mock_session.headers["X-Custom"] == "ok"
 
-    def test_no_custom_site_when_defaults(self):
-        """Default network options leave MediaWikiReader's Site creation alone."""
+    def test_site_always_injected_with_pool_session(self):
+        """The job always injects its own Site so the User-Agent applies to the first request."""
         cfg = _default_config(host="example.com")
         with (
             patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
@@ -359,7 +365,8 @@ class TestInitialization:
         ):
             MockReader.return_value = Mock(host="example.com", path="/w/", scheme="https")
             MediaWikiIngestionJob(cfg)
-            MockSite.assert_not_called()
+            MockSite.assert_called_once()
+            assert MockSite.call_args.kwargs["pool"] is not None
 
 
 # ---------------------------------------------------------------------------
@@ -931,9 +938,39 @@ class TestGetItemChecksum:
 
 
 class TestMediaWikiUserAgent:
-    def test_user_agent_set_on_mwclient_connection(self):
-        with patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader:
+    def _build(self, cfg, global_ua=None):
+        with (
+            patch("tasks.mediawiki_ingestion.MediaWikiReader") as MockReader,
+            patch("tasks.mediawiki_ingestion.mwclient.Site"),
+            patch("tasks.mediawiki_ingestion.requests.Session") as MockSession,
+            patch("tasks.base.settings") as mock_settings,
+        ):
+            mock_settings.yaml = {"user_agent": global_ua} if global_ua else {}
             mock_reader = MagicMock()
+            mock_reader.host, mock_reader.path, mock_reader.scheme = "example.com", "/w/", "https"
             MockReader.return_value = mock_reader
-            MediaWikiIngestionJob(_default_config(host="example.com"))
-        mock_reader.site.connection.headers.update.assert_called_with({"User-Agent": "rag-of-all-trades/1.0"})
+            mock_session = Mock()
+            mock_session.headers = {}
+            MockSession.return_value = mock_session
+            MediaWikiIngestionJob(cfg)
+        return mock_reader, mock_session
+
+    def test_global_user_agent_set_before_login(self):
+        cfg = _default_config(host="example.com", username="u", password="p")
+        reader, session = self._build(cfg, global_ua="global-ua/2.0")
+        assert session.headers["User-Agent"] == "global-ua/2.0"
+        assert reader._site is not None
+        reader.login.assert_called_once_with("u", "p")
+
+    def test_default_user_agent_without_global_config(self):
+        _, session = self._build(_default_config(host="example.com"))
+        assert session.headers["User-Agent"] == "rag-of-all-trades/1.0"
+
+    def test_connector_user_agent_wins_over_global(self):
+        _, session = self._build(_default_config(host="example.com", user_agent="mine/1.0"), global_ua="global-ua/2.0")
+        assert session.headers["User-Agent"] == "mine/1.0"
+
+    def test_custom_headers_user_agent_wins_over_global(self):
+        cfg = _default_config(host="example.com", custom_headers={"User-Agent": "hdr/1.0"})
+        _, session = self._build(cfg, global_ua="global-ua/2.0")
+        assert session.headers["User-Agent"] == "hdr/1.0"

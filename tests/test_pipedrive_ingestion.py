@@ -365,6 +365,11 @@ class TestPipedriveGetDocumentMetadata(unittest.TestCase):
         _, kwargs = mock_get.call_args
         self.assertEqual(kwargs["headers"]["User-Agent"], "test-agent/1.0")
 
+    def test_api_requests_send_user_agent_header(self):
+        with patch.object(PipedriveClient, "get", return_value={"data": {}}):
+            client = PipedriveClient(api_token="tok", max_retries=1, user_agent="test-agent/1.0")
+        self.assertEqual(client._retry._session.headers["User-Agent"], "test-agent/1.0")
+
 
 if __name__ == "__main__":
     unittest.main()

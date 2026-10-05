@@ -7,7 +7,6 @@ from urllib.parse import urlparse, urlsplit
 import mwclient
 import requests
 from llama_index.readers.mediawiki import MediaWikiReader
-from mwclient.client import USER_AGENT
 from requests.adapters import HTTPAdapter
 
 from tasks.base import IngestionJob
@@ -69,7 +68,7 @@ class MediaWikiIngestionJob(IngestionJob):
                 - config.verify_ssl: Whether to verify SSL certificates (optional, default True)
                 - config.resolve_to_ip: IP address to resolve the API hostname to (optional)
                 - config.custom_headers: Dict of extra HTTP headers to send (optional)
-                - config.user_agent: Override HTTP User-Agent (optional, default mwclient UA)
+                - config.user_agent: Override HTTP User-Agent (optional, default is the global user_agent)
                 - config.load_semantics: Query Semantic MediaWiki properties per page and attach
                   them as metadata (optional, default False)
 
@@ -112,11 +111,16 @@ class MediaWikiIngestionJob(IngestionJob):
 
         self.verify_ssl = parse_bool(cfg.get("verify_ssl"), default=True)
         resolve_to_ip = (cfg.get("resolve_to_ip") or "").strip() or None
-        user_agent = (cfg.get("user_agent") or "").strip() or None
         custom_headers = cfg.get("custom_headers")
         if custom_headers is not None and not isinstance(custom_headers, dict):
             logger.warning("custom_headers must be a dict; ignoring value of type %s", type(custom_headers).__name__)
             custom_headers = None
+        # Precedence: config.user_agent, then a User-Agent in custom_headers, then the global user_agent.
+        user_agent = (
+            (cfg.get("user_agent") or "").strip()
+            or ((custom_headers or {}).get("User-Agent") or "").strip()
+            or self.user_agent
+        )
 
         self._reader = MediaWikiReader(
             host=host,
@@ -129,22 +133,21 @@ class MediaWikiIngestionJob(IngestionJob):
         )
 
         # MediaWikiReader builds mwclient.Site lazily without connection options.
-        # When network overrides are set, pre-create Site with a custom session
-        # and inject it so login/list/fetch all use the same HTTP configuration.
+        # Pre-create Site with a custom session and inject it so the User-Agent
+        # and any network overrides apply from the first request (login included).
         #
         # NOTE (tech debt): Prefer pushing verify_ssl / resolve_to_ip /
         # custom_headers / user_agent into MediaWikiReader itself (constructor
         # fields or a configure_http() that owns Site creation) so this job
         # only maps config and does not touch _site / mwclient.Site
-        if not self.verify_ssl or resolve_to_ip or custom_headers or user_agent:
-            self._reader._site = self._build_mwclient_site(
-                host=host,
-                path=path,
-                scheme=scheme,
-                resolve_to_ip=resolve_to_ip,
-                custom_headers=custom_headers,
-                user_agent=user_agent,
-            )
+        self._reader._site = self._build_mwclient_site(
+            host=host,
+            path=path,
+            scheme=scheme,
+            resolve_to_ip=resolve_to_ip,
+            custom_headers=custom_headers,
+            user_agent=user_agent,
+        )
 
         username = cfg.get("username")
         password = cfg.get("password")
@@ -152,7 +155,6 @@ class MediaWikiIngestionJob(IngestionJob):
             self._reader.login(username, password)
 
         self.load_semantics = parse_bool(cfg.get("load_semantics"))
-        self._reader.site.connection.headers.update({"User-Agent": self.user_agent})
 
         logger.info(
             "Initialized MediaWiki connector for %s://%s%s",
@@ -168,7 +170,7 @@ class MediaWikiIngestionJob(IngestionJob):
         scheme: str,
         resolve_to_ip: str | None,
         custom_headers: dict[str, str] | None,
-        user_agent: str | None,
+        user_agent: str,
     ) -> mwclient.Site:
         """Build an mwclient Site with SSL, DNS override, and header options.
 
@@ -176,14 +178,10 @@ class MediaWikiIngestionJob(IngestionJob):
         and header/SSL settings apply to every API call.
         """
         session = requests.Session()
-        # When pool is set, mwclient skips its default User-Agent — restore it
-        # (or use config.user_agent). Dedicated user_agent wins over custom_headers.
-        session.headers["User-Agent"] = user_agent or USER_AGENT
-
+        # When pool is set, mwclient skips its default User-Agent, so set it here.
         if custom_headers:
             session.headers.update(custom_headers)
-            if user_agent:
-                session.headers["User-Agent"] = user_agent
+        session.headers["User-Agent"] = user_agent
 
         connection_options: dict[str, Any] = {}
         if not self.verify_ssl:

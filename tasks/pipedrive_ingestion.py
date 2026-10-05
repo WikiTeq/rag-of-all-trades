@@ -60,6 +60,7 @@ class PipedriveClient:
         self._user_agent = user_agent
         self._retry = RetrySession(max_retries=max_retries)
         self._retry._session.params = {"api_token": api_token}  # type: ignore[assignment]
+        self._retry._session.headers["User-Agent"] = user_agent
 
         # Cached resolvers for ID → name lookups
         self._user_resolver = CachedResolver(self._fetch_user, logger)

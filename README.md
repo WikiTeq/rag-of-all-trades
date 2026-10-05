@@ -259,7 +259,7 @@ Optional network settings:
 | --- | --- | --- |
 | `verify_ssl` | `true` | TLS certificate verification |
 | `resolve_to_ip` | unset | Connect to this IP while keeping hostname for Host/SNI (like `curl --resolve`) |
-| `user_agent` | mwclient default | Override HTTP `User-Agent` (wins over `custom_headers`) |
+| `user_agent` | global `user_agent` | Override HTTP `User-Agent` for this connector (wins over `custom_headers` and the global value) |
 | `custom_headers` | unset | Extra HTTP headers on all MediaWiki API requests |
 
 
@@ -299,6 +299,8 @@ SERPAPI1_SCHEDULES=3600
 ### Web Connector
 
 The Web connector ingests content from web pages using the LlamaIndex `BeautifulSoupWebReader` (URLs mode) or `SitemapReader` (sitemap mode). The two modes are mutually exclusive.
+
+The global `user_agent` is sent on requests the connector makes itself, which are the page fetches during a crawl (`depth` > 0). The LlamaIndex `BeautifulSoupWebReader` and `SitemapReader` do not accept custom headers, so requests made by those readers (fetching a page when `depth` is 0, and loading the sitemap) use the library default agent.
 
 **URLs mode** — scrape a fixed list of pages:
 
@@ -800,7 +802,7 @@ The following parameters are set at the root level of `config.yaml` and apply to
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `user_agent` | string | `rag-of-all-trades/1.0` | Custom `User-Agent` header sent by all connectors that make HTTP requests. |
+| `user_agent` | string | `rag-of-all-trades/1.0` | Custom `User-Agent` header. Sent by the MediaWiki, Jira, Pipedrive and SerpAPI connectors, and by Web crawl requests (see the Web connector notes). Other connectors do not read this key yet. |
 
 Example:
 
