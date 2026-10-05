@@ -69,6 +69,13 @@ class TestSlackIngestionJob(unittest.TestCase):
     def _make_job(self, **kwargs):
         return SlackIngestionJob(_make_config(**kwargs))
 
+    def test_client_sends_global_user_agent(self):
+        self.mock_client.headers = {}
+        with patch("tasks.base.settings") as mock_settings:
+            mock_settings.yaml = {"user_agent": "global-ua/2.0"}
+            self._make_job()
+        self.assertEqual(self.mock_client.headers["User-Agent"], "global-ua/2.0")
+
     def _setup_client(self, history_messages=None, replies_messages=None):
         """Wire up mock responses on the client."""
         if history_messages is not None:

@@ -1,4 +1,5 @@
-# Optional. Custom User-Agent sent by the MediaWiki, Jira, Pipedrive, SerpAPI and Web (crawl) connectors.
+# Optional. Custom User-Agent sent by the MediaWiki, Jira, Pipedrive, SerpAPI, Confluence, Slack,
+# Notion, Dropbox, OneDrive and Web (crawl) connectors. See README for exceptions.
 # Default: rag-of-all-trades/1.0
 #user_agent: "rag-of-all-trades/1.0"
 

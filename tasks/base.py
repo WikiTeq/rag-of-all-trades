@@ -17,10 +17,9 @@ from tasks.helper_classes.metadata_tracker import MetadataTracker
 from tasks.helper_classes.vector_store import VectorStoreManager
 from tasks.schemas import BaseMetadataSchema
 from utils.config import settings
+from utils.http import DEFAULT_USER_AGENT
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_USER_AGENT = "rag-of-all-trades/1.0"
 
 
 class IngestionJob(ABC):

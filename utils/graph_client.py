@@ -6,8 +6,9 @@ from typing import Any
 from urllib.parse import quote
 
 import msal
+import requests
 
-from utils.http import RetrySession
+from utils.http import DEFAULT_USER_AGENT, RetrySession
 
 logger = logging.getLogger(__name__)
 
@@ -40,22 +41,32 @@ class GraphClient:
         tenant_id: str,
         max_retries: int = 3,
         max_file_size_bytes: int = 52428800,  # 50 MB
+        user_agent: str = DEFAULT_USER_AGENT,
     ) -> None:
         self.client_id = client_id
         self.client_secret = client_secret
         self.tenant_id = tenant_id
         self.max_file_size_bytes = max_file_size_bytes
+        self.user_agent = user_agent
 
         self._msal_app = self._build_msal_app()
         self._api_session = RetrySession(max_retries=max_retries, timeout=30)
         self._download_session = RetrySession(max_retries=max_retries, timeout=120)
+        self._api_session._session.headers["User-Agent"] = user_agent
+        self._download_session._session.headers["User-Agent"] = user_agent
 
     def _build_msal_app(self) -> msal.ConfidentialClientApplication:
         return msal.ConfidentialClientApplication(
             client_id=self.client_id,
             client_credential=self.client_secret,
             authority=f"https://login.microsoftonline.com/{self.tenant_id}",
+            http_client=self._build_msal_session(),
         )
+
+    def _build_msal_session(self) -> requests.Session:
+        session = requests.Session()
+        session.headers["User-Agent"] = self.user_agent
+        return session
 
     def _get_access_token(self) -> str:
         result = self._msal_app.acquire_token_for_client(scopes=self.SCOPES)

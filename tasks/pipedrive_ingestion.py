@@ -11,7 +11,7 @@ import requests
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 from utils.cache import CachedResolver
-from utils.http import RetrySession
+from utils.http import DEFAULT_USER_AGENT, RetrySession
 from utils.parse import parse_timestamp
 from utils.text import html_to_markdown, slugify
 
@@ -56,7 +56,7 @@ class PipedriveClient:
     429 / 5xx responses via RetrySession.
     """
 
-    def __init__(self, api_token: str, max_retries: int, user_agent: str = "rag-of-all-trades/1.0"):
+    def __init__(self, api_token: str, max_retries: int, user_agent: str = DEFAULT_USER_AGENT):
         self._user_agent = user_agent
         self._retry = RetrySession(max_retries=max_retries)
         self._retry._session.params = {"api_token": api_token}  # type: ignore[assignment]
