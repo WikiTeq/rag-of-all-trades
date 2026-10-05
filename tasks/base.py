@@ -37,8 +37,8 @@ class IngestionJob(ABC):
 
     @property
     def user_agent(self) -> str:
-        """Return the configured User-Agent string, or the default if not set."""
-        return settings.yaml.get("user_agent", DEFAULT_USER_AGENT)
+        """Return the configured User-Agent string, or the default if unset or blank."""
+        return str(settings.yaml.get("user_agent") or "").strip() or DEFAULT_USER_AGENT
 
     def __init__(self, config: dict):
         """Initialize the ingestion job with configuration and core components.

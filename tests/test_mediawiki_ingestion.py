@@ -970,6 +970,11 @@ class TestMediaWikiUserAgent:
         _, session = self._build(_default_config(host="example.com", user_agent="mine/1.0"), global_ua="global-ua/2.0")
         assert session.headers["User-Agent"] == "mine/1.0"
 
+    def test_non_string_custom_headers_user_agent_does_not_raise(self):
+        cfg = _default_config(host="example.com", custom_headers={"User-Agent": 123})
+        _, session = self._build(cfg, global_ua="global-ua/2.0")
+        assert session.headers["User-Agent"] == "123"
+
     def test_custom_headers_user_agent_wins_over_global(self):
         cfg = _default_config(host="example.com", custom_headers={"User-Agent": "hdr/1.0"})
         _, session = self._build(cfg, global_ua="global-ua/2.0")

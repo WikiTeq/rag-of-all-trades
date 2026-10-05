@@ -280,11 +280,12 @@ class TestIngestionJob:
             mock_settings.yaml = {"user_agent": "my-bot/2.0"}
             assert job.user_agent == "my-bot/2.0"
 
-    def test_user_agent_returns_empty_string_when_explicitly_set(self, base_config):
+    @pytest.mark.parametrize("value", ["", "   ", None])
+    def test_user_agent_returns_default_when_blank(self, base_config, value):
         job = DummyIngestionJob(base_config)
         with patch("tasks.base.settings") as mock_settings:
-            mock_settings.yaml = {"user_agent": ""}
-            assert job.user_agent == ""
+            mock_settings.yaml = {"user_agent": value}
+            assert job.user_agent == DEFAULT_USER_AGENT
 
     def test_run_reports_totals(self, base_config):
         item1 = IngestionItem(id="item-1", source_ref="src")

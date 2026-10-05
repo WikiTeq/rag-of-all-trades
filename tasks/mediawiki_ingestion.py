@@ -118,7 +118,7 @@ class MediaWikiIngestionJob(IngestionJob):
         # Precedence: config.user_agent, then a User-Agent in custom_headers, then the global user_agent.
         user_agent = (
             (cfg.get("user_agent") or "").strip()
-            or ((custom_headers or {}).get("User-Agent") or "").strip()
+            or str((custom_headers or {}).get("User-Agent") or "").strip()
             or self.user_agent
         )
 
