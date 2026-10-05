@@ -47,6 +47,10 @@ class SharePointIngestionJob(IngestionJob):
     def source_type(self) -> str:
         return "sharepoint"
 
+    @property
+    def content_format(self) -> str:
+        return "text"
+
     def __init__(self, config: dict):
         super().__init__(config)
 
