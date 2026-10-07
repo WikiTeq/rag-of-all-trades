@@ -1,4 +1,5 @@
 from llama_index.core import Settings, VectorStoreIndex
+from llama_index.core.postprocessor import SimilarityPostprocessor
 from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 from llama_index.core.schema import NodeWithScore
@@ -12,6 +13,7 @@ from llama_index.core.vector_stores.types import (
 )
 
 from api.v1.chunk_retrieval.schema import MetadataFilterItem
+from utils.config import DEFAULT_SIMILARITY_CUTOFF
 from utils.llm_embedding import embed_model, llm
 
 Settings.llm = llm
@@ -48,9 +50,15 @@ _OPERATOR_MAP: dict[str, FilterOperator] = {
 
 
 class RAGQueryEngine:
-    def __init__(self, vector_store: VectorStore, hybrid_search: bool = False):
+    def __init__(
+        self,
+        vector_store: VectorStore,
+        hybrid_search: bool = False,
+        default_similarity_cutoff: float = DEFAULT_SIMILARITY_CUTOFF,
+    ):
         self.vector_store = vector_store
         self.hybrid_search = hybrid_search
+        self.default_similarity_cutoff = default_similarity_cutoff
         self._index_cache = None  # Cache the index to avoid recreating it
 
     def _build_filter_object(self, metadata: list[MetadataFilterItem] | None) -> MetadataFilters | None:
@@ -93,12 +101,13 @@ class RAGQueryEngine:
             )
         return refs
 
-    # Retrieve top K with optional metadata filter
+    # Retrieve top K with optional metadata filter, dropping nodes scored below the similarity cutoff
     def retrieve_top_k(
         self,
         query: str,
         top_k: int = 5,
         metadata: list[MetadataFilterItem] | None = None,
+        similarity_cutoff: float | None = None,
     ) -> list[NodeWithScore]:
         # Use cached index to avoid recreating on every query
         if self._index_cache is None:
@@ -112,8 +121,9 @@ class RAGQueryEngine:
                 similarity_top_k=top_k,
                 filters=metadata_filters,
             )
-            nodes = retriever.retrieve(query)
-            return nodes[:top_k]
+            nodes = retriever.retrieve(query)[:top_k]
+            cutoff = self.default_similarity_cutoff if similarity_cutoff is None else similarity_cutoff
+            return SimilarityPostprocessor(similarity_cutoff=cutoff).postprocess_nodes(nodes)
 
         # Hybrid search: fuse a dense-similarity retriever and a sparse
         # full-text (ts_rank) retriever via reciprocal rank fusion (RRF),

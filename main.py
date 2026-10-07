@@ -96,7 +96,11 @@ async def app_lifespan(app: FastAPI):
     )
 
     # Initialize RAG engine
-    app.state.rag_engine = RAGQueryEngine(app.state.vector_store, hybrid_search=postgres.get("hybrid_search", True))
+    app.state.rag_engine = RAGQueryEngine(
+        app.state.vector_store,
+        hybrid_search=postgres.get("hybrid_search", True),
+        default_similarity_cutoff=settings.SIMILARITY_CUTOFF,
+    )
     logger.info("Vector store and RAG engine initialized")
 
     # Yield to FastAPI runtime
