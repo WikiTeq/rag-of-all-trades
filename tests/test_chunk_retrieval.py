@@ -172,6 +172,7 @@ async def test_query_endpoint_passes_metadata_filters_to_engine():
     payload = Mock()
     payload.query = "test"
     payload.top_k = 5
+    payload.similarity_cutoff = None
     payload.metadata_filters = [_filter_adapter.validate_python({"name": "project", "operator": "EQ", "value": "MAIT"})]
 
     with patch("api.v1.chunk_retrieval.routes.format_chunks", return_value=[]):
@@ -181,7 +182,9 @@ async def test_query_endpoint_passes_metadata_filters_to_engine():
             rag_engine=rag_engine,
         )
 
-    rag_engine.retrieve_top_k.assert_called_once_with(query="test", top_k=5, metadata=payload.metadata_filters)
+    rag_engine.retrieve_top_k.assert_called_once_with(
+        query="test", top_k=5, metadata=payload.metadata_filters, similarity_cutoff=None
+    )
 
 
 @pytest.mark.asyncio
@@ -193,6 +196,7 @@ async def test_query_endpoint_passes_empty_list_when_no_filters():
     payload = Mock()
     payload.query = "test"
     payload.top_k = 5
+    payload.similarity_cutoff = 0.4
     payload.metadata_filters = None
 
     with patch("api.v1.chunk_retrieval.routes.format_chunks", return_value=[]):
@@ -202,4 +206,46 @@ async def test_query_endpoint_passes_empty_list_when_no_filters():
             rag_engine=rag_engine,
         )
 
-    rag_engine.retrieve_top_k.assert_called_once_with(query="test", top_k=5, metadata=[])
+    rag_engine.retrieve_top_k.assert_called_once_with(query="test", top_k=5, metadata=[], similarity_cutoff=0.4)
+
+
+class TestRetrieveTopKSimilarityCutoff:
+    @staticmethod
+    def _engine_returning(scores, **engine_kwargs):
+        engine = RAGQueryEngine(vector_store=Mock(), **engine_kwargs)
+        engine._index_cache = Mock()
+        engine._index_cache.as_retriever.return_value.retrieve.return_value = [
+            _DummyNodeWithScore(f"chunk-{i}", score=s) for i, s in enumerate(scores)
+        ]
+        return engine
+
+    def test_default_cutoff_is_0_1(self):
+        engine = self._engine_returning([0.05, 0.1, 0.9])
+        assert [n.score for n in engine.retrieve_top_k("q")] == [0.1, 0.9]
+
+    def test_request_cutoff_overrides_default(self):
+        engine = self._engine_returning([0.2, 0.5, 0.9])
+        assert [n.score for n in engine.retrieve_top_k("q", similarity_cutoff=0.5)] == [0.5, 0.9]
+
+    def test_engine_default_used_when_request_cutoff_is_none(self):
+        engine = self._engine_returning([0.2, 0.5, 0.9], default_similarity_cutoff=0.6)
+        assert [n.score for n in engine.retrieve_top_k("q", similarity_cutoff=None)] == [0.9]
+
+    def test_zero_cutoff_keeps_low_scores(self):
+        engine = self._engine_returning([0.01, 0.9])
+        assert len(engine.retrieve_top_k("q", similarity_cutoff=0.0)) == 2
+
+    def test_all_nodes_below_cutoff_returns_empty_list(self):
+        engine = self._engine_returning([0.01, 0.02])
+        assert engine.retrieve_top_k("q") == []
+
+
+class TestSimilarityCutoffSchema:
+    @pytest.mark.parametrize("value", [0.0, 0.1, 1.0])
+    def test_valid_values_accepted(self, value):
+        assert QueryRequest(query="test", similarity_cutoff=value).similarity_cutoff == value
+
+    @pytest.mark.parametrize("value", [-0.01, 1.01])
+    def test_out_of_range_rejected(self, value):
+        with pytest.raises(ValidationError):
+            QueryRequest(query="test", similarity_cutoff=value)

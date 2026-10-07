@@ -279,6 +279,7 @@ vector_store:
   hybrid_search: true
   chunk_size: 512
   chunk_overlap: 50
+  similarity_cutoff: 0.1 # default minimum score (0.0-1.0) for retrieved chunks
   hnsw:
     hnsw_m: 16
     hnsw_ef_construction: 64

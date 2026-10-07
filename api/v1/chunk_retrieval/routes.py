@@ -57,7 +57,10 @@ async def query_endpoint(
         metadata_filters = payload.metadata_filters or []
 
         nodes_with_score = rag_engine.retrieve_top_k(
-            query=payload.query, top_k=payload.top_k, metadata=metadata_filters
+            query=payload.query,
+            top_k=payload.top_k,
+            metadata=metadata_filters,
+            similarity_cutoff=payload.similarity_cutoff,
         )
 
         chunks = format_chunks(nodes_with_score)
