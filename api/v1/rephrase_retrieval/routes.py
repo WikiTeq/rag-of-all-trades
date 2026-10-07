@@ -61,7 +61,12 @@ async def query_endpoint(
     Rephrase top-k chunks using LLM.
     """
     try:
-        nodes_with_score = await asyncio.to_thread(rag_engine.retrieve_top_k, query=payload.query, top_k=payload.top_k)
+        nodes_with_score = await asyncio.to_thread(
+            rag_engine.retrieve_top_k,
+            query=payload.query,
+            top_k=payload.top_k,
+            similarity_cutoff=payload.similarity_cutoff,
+        )
 
         if not nodes_with_score:
             return QueryResponse(answer="No relevant content found.", references=[])

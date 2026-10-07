@@ -40,12 +40,14 @@ async def test_retrieve_chunks_response_returns_expected_shape():
         query="hello",
         top_k=3,
         metadata_filters={"source_name": "docs"},
+        similarity_cutoff=0.25,
     )
 
     rag_engine.retrieve_top_k.assert_called_once_with(
         query="hello",
         top_k=3,
         metadata={"source_name": "docs"},
+        similarity_cutoff=0.25,
     )
     assert "references" in result
     assert "raw" in result
@@ -103,9 +105,10 @@ async def test_rephrase_chunks_response_success():
             rag_engine=rag_engine,
             query="question",
             top_k=2,
+            similarity_cutoff=0.25,
         )
 
-    rag_engine.retrieve_top_k.assert_called_once_with(query="question", top_k=2)
+    rag_engine.retrieve_top_k.assert_called_once_with(query="question", top_k=2, similarity_cutoff=0.25)
     assert result["answer"] == "Rephrased output"
     assert len(result["references"]) == 1
 
