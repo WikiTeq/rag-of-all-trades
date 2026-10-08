@@ -463,7 +463,7 @@ sources:
       # sharepoint_folder_id can be provided instead of sharepoint_folder_path
       sharepoint_folder_path: "Documents/Reports"
       sharepoint_type: "file"                   # "file" (default) or "page"
-      recursive: true
+      recursive: true                           # see "Known limitation" below
       schedules: "${SHAREPOINT1_SCHEDULES}"
 
   # Loading SharePoint site pages
@@ -491,6 +491,11 @@ SHAREPOINT2_CLIENT_SECRET=your-azure-app-client-secret
 SHAREPOINT2_TENANT_ID=your-azure-tenant-id
 SHAREPOINT2_SCHEDULES=3600
 ```
+
+> **Known limitation:** `recursive: false` only takes effect when `sharepoint_folder_path` is also set.
+> Without it (listing from the drive root), the upstream `llama-index-readers-microsoft-sharepoint`
+> reader always traverses subfolders, whatever the `recursive` value. This is an upstream bug
+> ([run-llama/llama_index#22320](https://github.com/run-llama/llama_index/issues/22320)).
 
 ### Slack Connector
 
