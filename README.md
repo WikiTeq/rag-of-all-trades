@@ -349,6 +349,12 @@ Supports two authentication modes:
 - **Basic auth** (`auth_type: basic`) — email + API token, for Jira Cloud
 - **Personal Access Token** (`auth_type: token`) — PAT as Bearer header, for Jira Server / Data Center
 
+Descriptions and comments are read through the Jira REST API v3, which returns Atlassian Document Format
+(ADF). ADF is converted to Markdown with [pyadf](https://pypi.org/project/pyadf/): headings, lists, tables,
+links and code blocks keep their structure. If pyadf rejects a document (for example one with a
+`decisionList` node), the connector logs a warning and indexes its plain text instead. Jira Server / Data
+Center has no v3 API: set `rest_api_version: "2"` for those instances.
+
 ```yaml
 # config.yaml
 
@@ -366,6 +372,7 @@ sources:
       # Optional: load top N comments per issue
       load_comments: false            # optional, default false
       max_comments: 10                # optional, default 10
+      rest_api_version: "3"           # optional, "3" (default, Jira Cloud) or "2" (Server / Data Center)
 ```
 
 ```dotenv

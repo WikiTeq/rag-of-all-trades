@@ -118,6 +118,8 @@ sources:
   #    # Bonus: load top N comments per issue
   #    load_comments: false      # optional, default false
   #    max_comments: 10          # optional, default 10
+  #    # "3" (default) returns ADF, converted to Markdown. Jira Server / Data Center needs "2".
+  #    rest_api_version: "3"     # optional, "3" or "2"
   #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
   #- type: "pipedrive"
