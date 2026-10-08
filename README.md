@@ -802,7 +802,7 @@ The following parameters are set at the root level of `config.yaml` and apply to
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `user_agent` | string | `rag-of-all-trades/1.0` | Custom `User-Agent` header. Sent by the MediaWiki, Jira, Pipedrive, SerpAPI, Confluence, Slack, Notion, Dropbox and OneDrive connectors, and by Web crawl requests (see the Web connector notes). The Dropbox SDK appends its own version suffix to the value. GitHub and SharePoint cannot send it because their LlamaIndex readers accept no custom headers. S3, IMAP and Directory do not make HTTP requests with a configurable agent. |
+| `user_agent` | string | `rag-of-all-trades/1.0` | Custom `User-Agent` header. Sent by the MediaWiki, Jira, Pipedrive, SerpAPI, Confluence, Slack, Notion, Dropbox, OneDrive and GitHub connectors, and by Web crawl requests (see the Web connector notes). The Dropbox SDK appends its own version suffix to the value. SharePoint cannot send it because its LlamaIndex reader builds each request itself and accepts no custom headers. S3, IMAP and Directory do not make HTTP requests with a configurable agent. |
 
 Example:
 

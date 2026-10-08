@@ -171,6 +171,12 @@ class GitHubIngestionJob(IngestionJob):
             self._github_client = GithubClient(github_token=personal_token)
             issues_client = GitHubIssuesClient(github_token=personal_token)
 
+        # The clients copy these dicts into every request: a personal token reads _headers,
+        # GitHub App auth rebuilds the headers from _base_headers each time.
+        for client in (self._github_client, issues_client):
+            client._headers["User-Agent"] = self.user_agent
+            client._base_headers["User-Agent"] = self.user_agent
+
         filter_dirs: tuple | None = None
         if include_dirs:
             filter_dirs = (
