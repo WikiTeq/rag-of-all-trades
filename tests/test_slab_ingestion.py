@@ -203,6 +203,46 @@ class TestSlabGetRawContent(unittest.TestCase):
         result = job.get_raw_content(item)
         self.assertIn("Hello world", result)
 
+    def test_quill_delta_formatting_converted_to_markdown(self):
+        job = _make_job()
+        delta = json.dumps(
+            [
+                {"insert": "Heading"},
+                {"insert": "\n", "attributes": {"header": 1}},
+                {"insert": "bold", "attributes": {"bold": True}},
+                {"insert": " and "},
+                {"insert": "link", "attributes": {"link": "https://example.com"}},
+                {"insert": "\n"},
+                {"insert": "item"},
+                {"insert": "\n", "attributes": {"list": "bullet"}},
+            ]
+        )
+        item = IngestionItem(id="p1", source_ref={"id": "p1", "title": "", "content": delta})
+        result = job.get_raw_content(item)
+        self.assertIn("# Heading", result)
+        self.assertIn("**bold**", result)
+        self.assertIn("[link](https://example.com)", result)
+        self.assertIn("* item", result)
+
+    def test_quill_delta_embed_only_ops_ignored(self):
+        job = _make_job()
+        item = IngestionItem(
+            id="p1",
+            source_ref={"id": "p1", "title": "", "content": json.dumps([{"insert": {"divider": True}}, "junk"])},
+        )
+        self.assertIsInstance(job.get_raw_content(item), str)
+
+    def test_delta_render_failure_falls_back_to_plain_text(self):
+        job = _make_job()
+        delta = json.dumps([{"insert": "Hello "}, {"insert": "world", "attributes": "bold"}, {"insert": "\n"}])
+        item = IngestionItem(id="p1", source_ref={"id": "p1", "title": "", "content": delta})
+        self.assertEqual(job.get_raw_content(item), "Hello world")
+
+    def test_invalid_json_content_returned_as_is(self):
+        job = _make_job()
+        item = IngestionItem(id="p1", source_ref={"id": "p1", "title": "", "content": "not json"})
+        self.assertEqual(job.get_raw_content(item), "not json")
+
     def test_quill_delta_dict_format(self):
         job = _make_job()
         delta = json.dumps({"ops": [{"insert": "Hello "}, {"insert": "world\n"}]})

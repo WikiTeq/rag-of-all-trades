@@ -349,6 +349,8 @@ Metadata collected per post includes: `url`, `title`, `topic_id`, `topic_name`, 
 When `topic_ids` is configured, only posts belonging to those topics are ingested.
 When omitted, all organisation posts are fetched using cursor-based pagination.
 
+Post content is stored by Slab as Quill Delta JSON. The connector renders it to HTML with [quill-delta](https://pypi.org/project/quill-delta/) and converts that to Markdown with MarkItDown, so headings, emphasis, links and lists are kept. Code blocks and embeds such as dividers are not preserved.
+
 > **Plan requirement:** Slab's API and webhooks are only available on the Business or Enterprise plan
 > ([Slab developer tools docs](https://help.slab.com/en/articles/6545629-developer-tools-api-webhooks)).
 > On the Free plan, this connector cannot be used. Instead, use Slab's

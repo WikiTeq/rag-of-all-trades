@@ -1,3 +1,4 @@
+import io
 import json
 import logging
 import time
@@ -5,6 +6,8 @@ from collections.abc import Iterator
 from typing import Any
 
 import requests.exceptions
+from delta import html as delta_html
+from markitdown import MarkItDown
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -166,6 +169,7 @@ class SlabIngestionJob(IngestionJob):
             source_name=self.source_name,
         )
         self._org_host: str | None = None
+        self._md = MarkItDown()
 
         logger.info(f"[{self.source_name}] Initialized Slab connector (topic_ids={self.topic_ids or 'all'})")
 
@@ -279,14 +283,14 @@ class SlabIngestionJob(IngestionJob):
 
         logger.info(f"[{self.source_name}] Found {total} post(s) from {len(self.topic_ids)} topic(s)")
 
-    @staticmethod
-    def _extract_content(raw: str) -> str:
-        """Extract plain text from Slab content.
+    def _extract_content(self, raw: str) -> str:
+        """Convert Slab content to Markdown.
 
-        Slab stores content as a Quill delta JSON array of insert ops.
-        Each op has an ``insert`` key that is either a plain string or an
-        embedded object (image, hr, etc.) which we skip.
-        Falls back to returning the raw value as a string if it is not valid JSON.
+        Slab stores content as a Quill delta JSON array of ops. The ops are
+        rendered to HTML with ``quill-delta`` and converted to Markdown with
+        MarkItDown. Falls back to returning the raw value as a string if it is
+        not valid JSON. If rendering fails, returns the plain text of the string inserts;
+        if only the Markdown conversion fails, returns the rendered HTML.
         """
         if not raw:
             return ""
@@ -298,12 +302,22 @@ class SlabIngestionJob(IngestionJob):
             ops = ops["ops"]
         if not isinstance(ops, list):
             return str(ops)
-        parts = []
-        for op in ops:
-            insert = op.get("insert") if isinstance(op, dict) else None
-            if isinstance(insert, str):
-                parts.append(insert)
-        return "".join(parts).strip()
+        ops = [op for op in ops if isinstance(op, dict)]
+        if not ops:
+            return ""
+        try:
+            rendered = delta_html.render(ops)
+        except Exception:
+            logger.warning(f"[{self.source_name}] Delta rendering failed, using plain text", exc_info=True)
+            return "".join(op["insert"] for op in ops if isinstance(op.get("insert"), str)).strip()
+        if not rendered:
+            return ""
+        try:
+            result = self._md.convert_stream(io.BytesIO(rendered.encode("utf-8")), file_extension=".html")
+        except Exception:
+            logger.warning(f"[{self.source_name}] Markdown conversion failed, using rendered HTML", exc_info=True)
+            return rendered
+        return (result.text_content or "").strip()
 
     @staticmethod
     def _make_item(post: dict) -> IngestionItem:
