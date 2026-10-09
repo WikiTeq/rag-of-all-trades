@@ -20,6 +20,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Notion ingestion from pages and databases via a Notion integration token
 * Dropbox ingestion — files and folders from Dropbox using the official Dropbox SDK with flexible path and extension filters
 * Confluence ingestion from Cloud and Server/Data Center instances via LlamaIndex reader
+* Slab knowledge-base ingestion via the Slab GraphQL API, with topic filtering and hierarchy metadata
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -39,6 +40,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * OneDrive (OneDrive for Business — App authentication)
 * Notion
 * Dropbox
+* Slab
 
 ## Embeddings support
 
@@ -338,6 +340,44 @@ WEB2_SCHEDULES=60
 ```
 
 No other credentials are required for public web pages.
+
+### Slab Connector
+
+The Slab connector ingests posts from a [Slab](https://slab.com/) knowledge base via the Slab GraphQL API.
+Metadata collected per post includes: `url`, `title`, `topic_id`, `topic_name`, `topic_parent_id`, `topic_parent_name`, `topic_ancestors`.
+
+When `topic_ids` is configured, only posts belonging to those topics are ingested.
+When omitted, all organisation posts are fetched using cursor-based pagination.
+
+Post content is stored by Slab as Quill Delta JSON. The connector renders it to HTML with [quill-delta](https://pypi.org/project/quill-delta/) and converts that to Markdown with MarkItDown, so headings, emphasis, links and lists are kept. Code blocks and embeds such as dividers are not preserved.
+
+> **Plan requirement:** Slab's API and webhooks are only available on the Business or Enterprise plan
+> ([Slab developer tools docs](https://help.slab.com/en/articles/6545629-developer-tools-api-webhooks)).
+> On the Free plan, this connector cannot be used. Instead, use Slab's
+> [full export](https://help.slab.com/en/articles/2271952-export-or-download-your-content) feature to
+> download all pages as Markdown, then ingest the exported files with the [Directory Connector](#directory-connector).
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "slab"
+    name: "slab1"
+    config:
+      api_token: "${SLAB1_API_TOKEN}"
+      # topic_ids: "topic_abc123,topic_def456"  # optional
+      max_retries: 3      # optional, default 3
+      retry_delay: 2      # optional, seconds between retries (default 2)
+      search_batch_size: 100  # optional, posts per search page (default 100)
+      schedules: "${SLAB1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+SLAB1_API_TOKEN=your-slab-api-token
+SLAB1_SCHEDULES=3600
+```
 
 ### Jira Connector
 
