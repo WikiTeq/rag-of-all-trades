@@ -1,8 +1,10 @@
 import logging
 import os
+from typing import Any
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.schemas import S3MetadataSchema
 from utils.parse import parse_list
 from utils.s3_client import get_s3_client
 from utils.text import sanitize_ascii_key
@@ -81,3 +83,12 @@ class S3IngestionJob(IngestionJob):
     def get_item_name(self, item: IngestionItem):
         _, key = item.source_ref
         return sanitize_ascii_key(key, max_len=255)
+
+    def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return S3-specific metadata fields."""
+        bucket, key = item.source_ref
+        return S3MetadataSchema(
+            bucket=bucket,
+            object_key=key,
+            file_extension=os.path.splitext(key)[1],
+        ).model_dump()
