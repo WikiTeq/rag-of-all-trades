@@ -30,6 +30,7 @@ class SerpAPIIngestionJob(IngestionJob):
         self.search_queries = queries
         self.serpapi_endpoint = "https://serpapi.com/search"
         self._session = RetrySession()
+        self._session._session.headers["User-Agent"] = self.user_agent
 
     def list_items(self):
         for query in self.search_queries:

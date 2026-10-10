@@ -259,7 +259,7 @@ Optional network settings:
 | --- | --- | --- |
 | `verify_ssl` | `true` | TLS certificate verification |
 | `resolve_to_ip` | unset | Connect to this IP while keeping hostname for Host/SNI (like `curl --resolve`) |
-| `user_agent` | mwclient default | Override HTTP `User-Agent` (wins over `custom_headers`) |
+| `user_agent` | global `user_agent` | Override HTTP `User-Agent` for this connector (wins over `custom_headers` and the global value) |
 | `custom_headers` | unset | Extra HTTP headers on all MediaWiki API requests |
 
 
@@ -299,6 +299,8 @@ SERPAPI1_SCHEDULES=3600
 ### Web Connector
 
 The Web connector ingests content from web pages using the LlamaIndex `BeautifulSoupWebReader` (URLs mode) or `SitemapReader` (sitemap mode). The two modes are mutually exclusive.
+
+The global `user_agent` is sent on requests the connector makes itself, which are the page fetches during a crawl (`depth` > 0). The LlamaIndex `BeautifulSoupWebReader` and `SitemapReader` do not accept custom headers, so requests made by those readers (fetching a page when `depth` is 0, and loading the sitemap) use the library default agent.
 
 **URLs mode** — scrape a fixed list of pages:
 
@@ -794,6 +796,20 @@ DROPBOX1_SCHEDULES=3600
 ## Reference of the `config.yaml`
 
 The `config.yaml` file contains the main configuration of the service.
+
+### Global parameters
+
+The following parameters are set at the root level of `config.yaml` and apply to the entire service:
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `user_agent` | string | `rag-of-all-trades/1.0` | Custom `User-Agent` header. Sent by the MediaWiki, Jira, Pipedrive, SerpAPI, Confluence, Slack, Notion, Dropbox, OneDrive and GitHub connectors, and by Web crawl requests (see the Web connector notes). The Dropbox SDK appends its own version suffix to the value. SharePoint cannot send it because its LlamaIndex reader builds each request itself and accepts no custom headers. S3, IMAP and Directory do not make HTTP requests with a configurable agent. |
+
+Example:
+
+```yaml
+user_agent: "my-bot/2.0"
+```
 
 ### Common connector parameters
 
