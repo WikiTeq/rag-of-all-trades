@@ -1,3 +1,4 @@
+import hashlib
 import unittest
 from datetime import UTC, datetime
 from unittest.mock import Mock, patch
@@ -337,11 +338,70 @@ class TestGitLabIngestionJob(unittest.TestCase):
     # get_item_name
     # ------------------------------------------------------------------
 
-    def test_get_item_name_file(self):
-        doc = _make_file_doc(file_path="docs/guide.md")
-        item = IngestionItem(id="gitlab:1:file:docs/guide.md", source_ref=doc)
+    def _file_name(
+        self, source_name="test_gitlab", item_id="gitlab:1:main:file:docs/guide.md", file_path="docs/guide.md"
+    ):
         job = self._make_job()
-        self.assertEqual(job.get_item_name(item), "docs_guide.md")
+        job.source_name = source_name
+        item = IngestionItem(id=item_id, source_ref=_make_file_doc(file_path=file_path))
+        return job.get_item_name(item)
+
+    def test_get_item_name_file_is_stable_and_readable(self):
+        name = self._file_name()
+        digest = hashlib.sha256(b"test_gitlab\0gitlab:1:main:file:docs/guide.md").hexdigest()[:32]
+        self.assertEqual(name, f"gitlab_file_{digest}_docs_guide.md")
+        self.assertEqual(name, self._file_name())
+
+    def test_get_item_name_file_no_collision_between_slash_and_underscore_paths(self):
+        self.assertNotEqual(
+            self._file_name(item_id="gitlab:1:main:file:docs/guide.md", file_path="docs/guide.md"),
+            self._file_name(item_id="gitlab:1:main:file:docs_guide.md", file_path="docs_guide.md"),
+        )
+
+    def test_get_item_name_file_no_collision_across_sources(self):
+        self.assertNotEqual(self._file_name(source_name="gitlab_a"), self._file_name(source_name="gitlab_b"))
+
+    def test_get_item_name_file_no_collision_across_refs(self):
+        self.assertNotEqual(
+            self._file_name(item_id="gitlab:1:main:file:README.md", file_path="README.md"),
+            self._file_name(item_id="gitlab:1:develop:file:README.md", file_path="README.md"),
+        )
+
+    def test_get_item_name_file_no_collision_at_source_and_path_boundary(self):
+        # Joining source and path with "_" would make these two names equal.
+        name_a = self._file_name(source_name="s", item_id="gitlab:1:main:file:x_README.md", file_path="x_README.md")
+        name_b = self._file_name(source_name="s_x", item_id="gitlab:1:main:file:README.md", file_path="README.md")
+        self.assertNotEqual(name_a, name_b)
+
+    def test_get_item_name_file_long_source_name_keeps_unique_digest(self):
+        long_source = "s" * 300
+        name_main = self._file_name(
+            source_name=long_source, item_id="gitlab:1:main:file:README.md", file_path="README.md"
+        )
+        name_dev = self._file_name(
+            source_name=long_source, item_id="gitlab:1:develop:file:README.md", file_path="README.md"
+        )
+        self.assertNotEqual(name_main, name_dev)
+
+    def test_get_item_name_file_empty_path_still_namespaced_by_source(self):
+        doc = Mock()
+        doc.doc_id = None
+        doc.metadata = {"file_path": ""}
+        item = IngestionItem(id="gitlab:1:main:file:x", source_ref=doc)
+        job_a = self._make_job()
+        job_a.source_name = "gitlab_a"
+        job_b = self._make_job()
+        job_b.source_name = "gitlab_b"
+        name_a = job_a.get_item_name(item)
+        self.assertTrue(name_a.startswith("gitlab_file_"))
+        self.assertNotEqual(name_a, job_b.get_item_name(item))
+
+    def test_get_item_name_file_falls_back_to_doc_id_when_file_path_empty(self):
+        doc = Mock()
+        doc.doc_id = "from/doc_id.md"
+        doc.metadata = {"file_path": ""}
+        item = IngestionItem(id="gitlab:1:main:file:from/doc_id.md", source_ref=doc)
+        self.assertTrue(self._make_job().get_item_name(item).endswith("_from_doc_id.md"))
 
     def test_get_item_name_issue(self):
         # Name uses a short "<project_id>_<iid>" extracted from the unique url
@@ -367,19 +427,14 @@ class TestGitLabIngestionJob(unittest.TestCase):
         with self.assertRaises(ValueError):
             job.get_item_name(item)
 
-    def test_get_item_name_file_no_doc_id_or_file_path_falls_back_to_item_id(self):
-        doc = Mock()
-        doc.doc_id = None
-        doc.metadata = {}
-        item = IngestionItem(id="gitlab:1:file:fallback", source_ref=doc)
+    def test_get_item_name_file_truncates_to_255_and_keeps_digest(self):
         job = self._make_job()
-        self.assertEqual(job.get_item_name(item), "gitlab:1:file:fallback")
-
-    def test_get_item_name_truncates_to_255(self):
-        doc = _make_file_doc(file_path="a/" * 200 + "file.md")
-        item = IngestionItem(id="gitlab:1:file:x", source_ref=doc)
-        job = self._make_job()
-        self.assertLessEqual(len(job.get_item_name(item)), 255)
+        long_path = "a/" * 200 + "file.md"
+        item = IngestionItem(id=f"gitlab:1:main:file:{long_path}", source_ref=_make_file_doc(file_path=long_path))
+        name = job.get_item_name(item)
+        digest = hashlib.sha256(f"test_gitlab\0{item.id}".encode()).hexdigest()[:32]
+        self.assertEqual(len(name), 255)
+        self.assertTrue(name.startswith(f"gitlab_file_{digest}_"))
 
     # ------------------------------------------------------------------
     # get_extra_metadata — files
