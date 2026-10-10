@@ -20,6 +20,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Notion ingestion from pages and databases via a Notion integration token
 * Dropbox ingestion — files and folders from Dropbox using the official Dropbox SDK with flexible path and extension filters
 * Confluence ingestion from Cloud and Server/Data Center instances via LlamaIndex reader
+* BookStack ingestion of shelves, books, chapters, and pages via the REST API
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -39,6 +40,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * OneDrive (OneDrive for Business — App authentication)
 * Notion
 * Dropbox
+* BookStack
 
 ## Embeddings support
 
@@ -788,6 +790,37 @@ sources:
 
 DROPBOX1_ACCESS_TOKEN=sl.xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 DROPBOX1_SCHEDULES=3600
+```
+
+### BookStack Connector
+
+Ingests shelves, books, chapters, and pages from a [BookStack](https://www.bookstackapp.com/) instance using the BookStack REST API.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "bookstack"
+    name: "bookstack1"
+    config:
+      base_url: "${BOOKSTACK1_BASE_URL}"
+      token_id: "${BOOKSTACK1_TOKEN_ID}"
+      token_secret: "${BOOKSTACK1_TOKEN_SECRET}"
+      item_types:              # optional, default: pages
+        - "shelves"
+        - "books"
+        - "chapters"
+        - "pages"
+      schedules: "${BOOKSTACK1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+BOOKSTACK1_BASE_URL=https://wiki.example.com
+BOOKSTACK1_TOKEN_ID=your-token-id-here
+BOOKSTACK1_TOKEN_SECRET=your-token-secret-here
+BOOKSTACK1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
