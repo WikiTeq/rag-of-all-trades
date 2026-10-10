@@ -1,4 +1,5 @@
 # Standard library imports
+import hashlib
 import logging
 import re
 from collections.abc import Iterator
@@ -235,10 +236,17 @@ class GitLabIngestionJob(IngestionJob):
             # pattern as the Slack connector's get_item_name().
             name = f"gitlab_issue_{self.source_name}_{slugify(self._issue_short_id(doc))}"
         else:
-            file_path = extra.get("file_path", doc.doc_id or "")
-            name = slugify(file_path) if file_path else ""
+            file_path = extra.get("file_path") or doc.doc_id or ""
+            # slugify() maps "/" to "_", so "docs/guide.md" and "docs_guide.md"
+            # would share one tracker key. Hash (source_name, item.id) instead:
+            # item.id holds project, ref and the raw path. The NUL separator keeps
+            # the pair unambiguous, 128 bits make accidental collisions negligible,
+            # and the digest sits first so the 255 cut can only trim the readable tail.
+            digest = hashlib.sha256(f"{self.source_name}\0{item.id}".encode()).hexdigest()[:32]
+            prefix = f"gitlab_file_{digest}"
+            return f"{prefix}_{slugify(file_path)}"[:255] if file_path else prefix
 
-        return name[:255] if name else item.id[:255]
+        return name[:255]
 
     _ISSUE_URL_RE = re.compile(r"/projects/(?P<project_id>\d+)/issues/(?P<iid>\d+)/?$")
 
