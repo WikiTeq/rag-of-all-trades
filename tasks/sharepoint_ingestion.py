@@ -40,7 +40,9 @@ class SharePointIngestionJob(IngestionJob):
         - config.sharepoint_folder_id: Folder ID within the drive (optional)
         - config.drive_name: Name of the document library / drive (optional)
         - config.sharepoint_type: "file" or "page" (optional, default "file")
-        - config.recursive: traverse subfolders recursively (optional, default true)
+        - config.recursive: traverse subfolders recursively (optional, default true).
+          Ignored when sharepoint_folder_path is unset: the upstream reader always
+          recurses from the drive root (run-llama/llama_index#22320).
     """
 
     @property

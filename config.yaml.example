@@ -179,6 +179,8 @@ sources:
   #    # sharepoint_folder_id can be provided instead of sharepoint_folder_path
   #    sharepoint_folder_path: "Documents/Reports"
   #    sharepoint_type: "file"  # "file" (default) or "page"
+  #    # recursive: false only works when sharepoint_folder_path is set. Without it, the
+  #    # upstream reader always traverses subfolders (run-llama/llama_index#22320).
   #    recursive: true
   #    schedules: "${SHAREPOINT1_SCHEDULES}"
 
