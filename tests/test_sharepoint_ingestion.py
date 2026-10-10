@@ -91,6 +91,10 @@ class TestSharePointIngestionInit(unittest.TestCase):
         job = _make_job()
         self.assertEqual(job.source_type, "sharepoint")
 
+    def test_content_format_is_text(self):
+        job = _make_job()
+        self.assertEqual(job.content_format, "text")
+
     def test_optional_fields_none_when_empty(self):
         job = _make_job()
         self.assertIsNone(job.sharepoint_folder_path)
