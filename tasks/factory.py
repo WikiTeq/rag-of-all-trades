@@ -12,6 +12,7 @@ from tasks.pipedrive_ingestion import PipedriveIngestionJob
 from tasks.s3_ingestion import S3IngestionJob
 from tasks.serpapi_ingestion import SerpAPIIngestionJob
 from tasks.sharepoint_ingestion import SharePointIngestionJob
+from tasks.slab_ingestion import SlabIngestionJob
 from tasks.slack_ingestion import SlackIngestionJob
 from tasks.web_ingestion import WebIngestionJob
 
@@ -48,3 +49,4 @@ IngestionJobFactory.register("github", GitHubIngestionJob)
 IngestionJobFactory.register("notion", NotionIngestionJob)
 IngestionJobFactory.register("dropbox", DropboxIngestionJob)
 IngestionJobFactory.register("confluence", ConfluenceIngestionJob)
+IngestionJobFactory.register("slab", SlabIngestionJob)
