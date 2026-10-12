@@ -213,6 +213,7 @@ components:
       properties:
         query:
           type: string
+          pattern: \S
           title: Query
         top_k:
           type: integer
@@ -270,6 +271,7 @@ components:
       properties:
         query:
           type: string
+          pattern: \S
           title: Query
         top_k:
           type: integer

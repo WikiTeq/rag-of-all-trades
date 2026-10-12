@@ -1,18 +1,11 @@
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field
 
-from api.v1.shared_schema import SourceReference, TopK
+from api.v1.shared_schema import SourceReference
 
 
 class QueryRequest(BaseModel):
-    query: str
-    top_k: TopK = 20
-
-    @field_validator("query")
-    @classmethod
-    def validate_query(cls, value: str) -> str:
-        if not value or not value.strip():
-            raise ValueError("Query cannot be empty")
-        return value
+    query: str = Field(pattern=r"\S")
+    top_k: int = Field(default=20, ge=1, le=100)
 
 
 class QueryResponse(BaseModel):
