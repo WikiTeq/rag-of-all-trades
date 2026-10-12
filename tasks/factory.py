@@ -1,5 +1,6 @@
 from tasks.base import IngestionJob
 from tasks.confluence_ingestion import ConfluenceIngestionJob
+from tasks.database_ingestion import DatabaseIngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.dropbox_ingestion import DropboxIngestionJob
 from tasks.github_ingestion import GitHubIngestionJob
@@ -48,3 +49,4 @@ IngestionJobFactory.register("github", GitHubIngestionJob)
 IngestionJobFactory.register("notion", NotionIngestionJob)
 IngestionJobFactory.register("dropbox", DropboxIngestionJob)
 IngestionJobFactory.register("confluence", ConfluenceIngestionJob)
+IngestionJobFactory.register("database", DatabaseIngestionJob)
