@@ -15,3 +15,12 @@ repos:
         args: [--fix]
       # Formatting (replaces black)
       - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: generate-openapi
+        name: Generate OpenAPI spec
+        language: system
+        entry: python generate_openapi.py
+        pass_filenames: false
+        files: \.py$
