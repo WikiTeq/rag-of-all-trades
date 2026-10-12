@@ -12,6 +12,7 @@ from requests.adapters import HTTPAdapter
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.schemas import MediaWikiMetadataSchema
 from utils.parse import parse_bool
 from utils.text import slugify
 
@@ -432,11 +433,14 @@ class MediaWikiIngestionJob(IngestionJob):
         extra: dict[str, Any] = {}
         if self.load_semantics:
             extra.update(self._load_semantic_properties(page_record.title, page_record.namespace))
-        extra["title"] = page_record.title
-        extra["page_id"] = page_record.pageid
-        extra["namespace"] = page_record.namespace
-        if page_record.url:
-            extra["url"] = page_record.url
-        else:
+        extra.update(
+            MediaWikiMetadataSchema(
+                title=page_record.title,
+                page_id=page_record.pageid,
+                namespace=page_record.namespace,
+                url=page_record.url or None,
+            ).model_dump(exclude_none=True)
+        )
+        if not page_record.url:
             logger.warning(f"URL not found for page: {page_record.title}")
         return extra
