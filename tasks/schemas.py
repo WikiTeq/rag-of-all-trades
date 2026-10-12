@@ -10,3 +10,12 @@ class BaseMetadataSchema(BaseModel):
     source_name: str = Field(description="Human-readable name of the source instance")
     file_name: str = Field(description="File name used by the vector store")
     last_modified: str = Field(description="ISO string of the item's last modified timestamp")
+
+
+class PipedriveMetadataSchema(BaseModel):
+    entity_type: str = Field(description="Pipedrive entity type, e.g. deals or persons")
+    pipedrive_id: str = Field(description="Pipedrive record ID as a string")
+    title: str = Field(description="Human-readable record title")
+    url: str = Field(description="Pipedrive app URL of the record")
+    add_time: str = Field(description="ISO timestamp when the record was created")
+    update_time: str = Field(description="ISO timestamp when the record was last updated")

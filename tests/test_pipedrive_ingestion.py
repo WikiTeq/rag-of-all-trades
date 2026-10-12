@@ -263,6 +263,25 @@ class TestPipedriveGetDocumentMetadata(unittest.TestCase):
         meta = job.get_extra_metadata(item, "", {})
         self.assertEqual(meta.get("entity_type"), "persons")
 
+    def test_extra_metadata_conforms_to_schema(self):
+        """Core extra metadata must validate against PipedriveMetadataSchema."""
+        from tasks.schemas import BaseMetadataSchema, PipedriveMetadataSchema
+
+        job = _make_job()
+        item = IngestionItem(
+            id="pipedrive:deals:388",
+            source_ref={"type": "deals", "data": {"id": 388, "title": "Big Deal"}},
+            last_modified=None,
+        )
+        meta = job.get_extra_metadata(item, "", {})
+
+        validated = PipedriveMetadataSchema(**meta)
+        self.assertEqual(validated.pipedrive_id, "388")
+        self.assertEqual(validated.entity_type, "deals")
+        self.assertEqual(validated.url, "https://testcompany.pipedrive.com/deal/388/detail")
+        # Schema fields must not collide with the reserved base metadata keys
+        self.assertTrue(set(PipedriveMetadataSchema.model_fields).isdisjoint(BaseMetadataSchema.model_fields))
+
     def test_record_title_strips_html_from_note_content(self):
         job = _make_job()
         record = {"id": 99, "content": "<p>This is a <b>bold</b> note.</p>"}
