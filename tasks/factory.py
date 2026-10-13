@@ -1,5 +1,6 @@
 from tasks.base import IngestionJob
 from tasks.bookstack_ingestion import BookStackIngestionJob
+from tasks.box_ingestion import BoxIngestionJob
 from tasks.confluence_ingestion import ConfluenceIngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.dropbox_ingestion import DropboxIngestionJob
@@ -35,6 +36,7 @@ class IngestionJobFactory:
 
 
 IngestionJobFactory.register("bookstack", BookStackIngestionJob)
+IngestionJobFactory.register("box", BoxIngestionJob)
 IngestionJobFactory.register("s3", S3IngestionJob)
 IngestionJobFactory.register("mediawiki", MediaWikiIngestionJob)
 IngestionJobFactory.register("jira", JiraIngestionJob)
