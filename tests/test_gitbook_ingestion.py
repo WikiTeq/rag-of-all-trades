@@ -508,8 +508,20 @@ class TestListItemsSessionLeak(unittest.TestCase):
         self.mock_client_cls.return_value = self.mock_client
         self.addCleanup(patcher.stop)
 
+    def test_client_built_once_with_api_token(self):
+        job = GitBookIngestionJob(_make_config())
+        self.mock_client.list_spaces.return_value = []
+        list(job.list_items())
+        job.get_raw_content(_make_item())
+        self.mock_client_cls.assert_called_once_with("test-token")
+
+    def test_get_raw_content_does_not_close_client(self):
+        self.mock_client.get_page.return_value = {"document": {"nodes": []}}
+        job = GitBookIngestionJob(_make_config())
+        job.get_raw_content(_make_item())
+        self.mock_client.close.assert_not_called()
+
     def test_client_closed_on_resolve_failure(self):
-        self.mock_client._resolve_space_ids = MagicMock(side_effect=Exception("auth failed"))
         self.mock_client.list_spaces.side_effect = Exception("auth failed")
         job = GitBookIngestionJob(_make_config())
         list(job.list_items())
