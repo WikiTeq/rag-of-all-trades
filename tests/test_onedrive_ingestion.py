@@ -57,6 +57,12 @@ class TestOneDriveIngestionJob(unittest.TestCase):
     def tearDown(self):
         self.patcher.stop()
 
+    def test_graph_client_receives_global_user_agent(self):
+        with patch("tasks.base.settings") as mock_settings:
+            mock_settings.yaml = {"user_agent": "global-ua/2.0"}
+            self._make_job()
+        self.assertEqual(self.mock_graph_class.call_args.kwargs["user_agent"], "global-ua/2.0")
+
     def _make_job(self, **kwargs) -> OneDriveIngestionJob:
         return OneDriveIngestionJob(_make_config(**kwargs))
 

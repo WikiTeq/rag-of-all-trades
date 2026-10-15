@@ -55,7 +55,7 @@ class DropboxIngestionJob(IngestionJob):
                 "Dropbox connector: 'include_directories' and 'exclude_directories' are mutually exclusive"
             )
 
-        self.dbx = Dropbox(access_token)
+        self.dbx = Dropbox(access_token, user_agent=self.user_agent)
         self.md = MarkItDown()
 
     # ------------------------------------------------------------------

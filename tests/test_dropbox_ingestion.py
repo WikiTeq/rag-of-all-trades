@@ -58,6 +58,12 @@ class TestDropboxIngestionInit(unittest.TestCase):
         job = DropboxIngestionJob(_make_config())
         self.assertEqual(job.source_type, "dropbox")
 
+    def test_client_sends_global_user_agent(self):
+        with patch("tasks.base.settings") as mock_settings:
+            mock_settings.yaml = {"user_agent": "global-ua/2.0"}
+            DropboxIngestionJob(_make_config())
+        self.assertEqual(self.mock_dropbox_cls.call_args.kwargs["user_agent"], "global-ua/2.0")
+
     def test_missing_access_token_raises(self):
         with self.assertRaises(ValueError, msg="access_token required"):
             DropboxIngestionJob({"name": "x", "config": {}})
