@@ -25,6 +25,7 @@ def _make_config(
     max_results=50,
     load_comments=False,
     max_comments=10,
+    rest_api_version=None,
 ):
     cfg = {
         "server_url": server_url,
@@ -37,6 +38,8 @@ def _make_config(
     }
     if auth_type == "basic":
         cfg["email"] = email
+    if rest_api_version is not None:
+        cfg["rest_api_version"] = rest_api_version
     return {"name": "test_jira", "config": cfg}
 
 
@@ -59,6 +62,7 @@ def _make_issue(
     issue.key = key
     issue.id = issue_id
     issue.permalink.return_value = permalink
+    issue.raw = {"fields": {"description": description}}
 
     fields = Mock()
     fields.summary = summary
@@ -138,6 +142,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         self.mock_jira_class.assert_called_once_with(
             server="https://jira.example.com",
             basic_auth=("u@example.com", "tok"),
+            options={"rest_api_version": "3"},
         )
 
     def test_token_auth_creates_jira_client_with_bearer_header(self):
@@ -146,8 +151,18 @@ class TestJiraIngestionJob(unittest.TestCase):
             options={
                 "server": "https://jira.example.com",
                 "headers": {"Authorization": "Bearer myPAT"},
+                "rest_api_version": "3",
             }
         )
+
+    def test_rest_api_version_can_be_set_to_2_for_server(self):
+        self._make_job(auth_type="token", api_token="myPAT", rest_api_version=2)
+        options = self.mock_jira_class.call_args.kwargs["options"]
+        self.assertEqual(options["rest_api_version"], "2")
+
+    def test_invalid_rest_api_version_raises(self):
+        with self.assertRaisesRegex(ValueError, "rest_api_version"):
+            self._make_job(rest_api_version="4")
 
     def test_server_url_trailing_slash_is_stripped(self):
         self._make_job(server_url="https://jira.example.com/")
@@ -418,6 +433,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         comment.author = Mock(displayName="Charlie")
         comment.created = "2024-06-01T10:00:00.000+0000"
         comment.body = "Great issue!"
+        comment.raw = {"body": "Great issue!"}
         self.mock_jira.comments.return_value = [comment]
 
         job = self._make_job(load_comments=True, max_comments=5)
@@ -455,6 +471,7 @@ class TestJiraIngestionJob(unittest.TestCase):
             c.author = Mock(displayName=f"User{i}")
             c.created = "2024-06-01T10:00:00.000+0000"
             c.body = f"Comment {i}"
+            c.raw = {"body": f"Comment {i}"}
             all_comments.append(c)
         self.mock_jira.comments.side_effect = lambda issue, max_results=None, order_by=None: (
             all_comments[:max_results] if max_results else all_comments
@@ -479,6 +496,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         comment.author = Mock(displayName="Charlie")
         comment.created = "2024-06-01T10:00:00.000+0000"
         comment.body = "Great issue!"
+        comment.raw = {"body": "Great issue!"}
         self.mock_jira.comments.return_value = [comment]
 
         job = self._make_job(load_comments=True, max_comments=5)
@@ -498,6 +516,7 @@ class TestJiraIngestionJob(unittest.TestCase):
         comment.author = Mock(displayName="Charlie")
         comment.created = "2024-06-01T10:00:00.000+0000"
         comment.body = "   "
+        comment.raw = {"body": "   "}
         self.mock_jira.comments.return_value = [comment]
 
         job = self._make_job(load_comments=True, max_comments=5)
@@ -638,44 +657,99 @@ class TestJiraIngestionJob(unittest.TestCase):
 
         self.assertIn("ADF description text", raw_content)
 
-    def test_get_raw_content_includes_adf_comment_body_when_comments_enabled(self):
+    def test_get_raw_content_renders_adf_structure_as_markdown(self):
         issue = _make_issue(
-            key="TEST-ADF-2",
+            key="TEST-ADF-3",
             description={
                 "type": "doc",
                 "version": 1,
                 "content": [
                     {
-                        "type": "paragraph",
-                        "content": [{"type": "text", "text": "ADF issue description"}],
-                    }
+                        "type": "heading",
+                        "attrs": {"level": 2},
+                        "content": [{"type": "text", "text": "Steps"}],
+                    },
+                    {
+                        "type": "bulletList",
+                        "content": [
+                            {
+                                "type": "listItem",
+                                "content": [
+                                    {
+                                        "type": "paragraph",
+                                        "content": [
+                                            {
+                                                "type": "text",
+                                                "text": "docs",
+                                                "marks": [{"type": "link", "attrs": {"href": "https://example.com"}}],
+                                            }
+                                        ],
+                                    }
+                                ],
+                            }
+                        ],
+                    },
                 ],
             },
         )
+        item = IngestionItem(id="jira:TEST-ADF-3", source_ref=issue)
 
-        comment = Mock()
-        comment.author = Mock(displayName="Alice Example")
-        comment.created = "2024-06-15T10:30:00.000+0000"
-        comment.body = {
-            "type": "doc",
-            "version": 1,
-            "content": [
-                {
-                    "type": "paragraph",
-                    "content": [{"type": "text", "text": "ADF comment body"}],
-                }
-            ],
-        }
-        self.mock_jira.comments.return_value = [comment]
+        raw_content = self._make_job().get_raw_content(item)
 
-        item = IngestionItem(id="jira:TEST-ADF-2", source_ref=issue)
-        job = self._make_job(load_comments=True, max_comments=5)
+        self.assertIn("## Steps", raw_content)
+        self.assertIn("[docs](https://example.com)", raw_content)
 
-        raw_content = job.get_raw_content(item)
+    def test_get_raw_content_keeps_text_next_to_adf_media(self):
+        issue = _make_issue(
+            key="TEST-ADF-4",
+            description={
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": "before image"}]},
+                    {
+                        "type": "mediaSingle",
+                        "content": [{"type": "media", "attrs": {"type": "file", "id": "a", "collection": "c"}}],
+                    },
+                ],
+            },
+        )
+        item = IngestionItem(id="jira:TEST-ADF-4", source_ref=issue)
 
-        self.assertIn("ADF issue description", raw_content)
-        self.assertIn("ADF comment body", raw_content)
-        self.assertIn("Alice Example", raw_content)
+        with self.assertWarns(UserWarning):
+            raw_content = self._make_job().get_raw_content(item)
+
+        self.assertIn("before image", raw_content)
+
+    def test_get_raw_content_falls_back_to_plain_text_for_unsupported_adf_node(self):
+        issue = _make_issue(
+            key="TEST-ADF-5",
+            description={
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {"type": "paragraph", "content": [{"type": "text", "text": "intro"}]},
+                    {
+                        "type": "decisionList",
+                        "attrs": {"localId": "1"},
+                        "content": [
+                            {
+                                "type": "decisionItem",
+                                "attrs": {"localId": "2", "state": "DECIDED"},
+                                "content": [{"type": "text", "text": "ship it"}],
+                            }
+                        ],
+                    },
+                ],
+            },
+        )
+        item = IngestionItem(id="jira:TEST-ADF-5", source_ref=issue)
+
+        with self.assertLogs("tasks.jira_ingestion", level="WARNING"):
+            raw_content = self._make_job().get_raw_content(item)
+
+        self.assertIn("intro", raw_content)
+        self.assertIn("ship it", raw_content)
 
     def test_process_item_skips_duplicate_checksum(self):
         issue = _make_issue(key="TEST-99", description="same content")
