@@ -150,11 +150,7 @@ class GitBookIngestionJob(IngestionJob):
         page = item.source_ref
         space_id = page.get("_space_id", "")
         page_id = page.get("id", "")
-        title = page.get("title", "") or ""
-
-        url = page.get("urls", {}).get("app", "") or ""
-        item._metadata_cache["title"] = title
-        item._metadata_cache["url"] = url
+        title = page.get("title") or ""
 
         try:
             detail = self._client.get_page(space_id, page_id)
@@ -194,10 +190,25 @@ class GitBookIngestionJob(IngestionJob):
         return {
             "space_id": page.get("_space_id", ""),
             "page_id": str(page.get("id", "")),
-            "page_title": item._metadata_cache.get("title", page.get("title", "") or ""),
-            "page_url": item._metadata_cache.get("url", ""),
+            "page_title": page.get("linkTitle") or page.get("title") or "",
+            "page_url": (page.get("urls") or {}).get("app") or "",
             "parent_page_id": str(parent_id) if parent_id else "",
+            "description": page.get("description") or "",
+            "tags": self._tag_slugs(page.get("tags")),
+            "created_at": page.get("createdAt") or "",
+            "updated_at": page.get("updatedAt") or "",
         }
+
+    @staticmethod
+    def _tag_slugs(tags: Any) -> list[str]:
+        """Return the slugs of the page tags, skipping malformed entries."""
+        slugs: list[str] = []
+        for entry in tags or []:
+            tag = entry.get("tag") if isinstance(entry, dict) else None
+            slug = tag.get("tag") if isinstance(tag, dict) else None
+            if slug:
+                slugs.append(slug)
+        return slugs
 
     def _resolve_space_ids(self) -> list[str]:
         """Return configured space IDs, or fetch all accessible ones if none configured."""
