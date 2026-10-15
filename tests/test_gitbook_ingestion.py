@@ -187,6 +187,18 @@ class TestGitBookGetRawContent(unittest.TestCase):
         self.assertEqual(content, "")
         self.assertTrue(any("Empty content" in line for line in cm.output))
 
+    def test_get_raw_content_strips_front_matter_and_keeps_one_title(self):
+        item = _make_item(title="My Page")
+        self.mock_client.get_page.return_value = {"markdown": "---\ndescription: About it\n---\n\n# My Page\n\nBody"}
+        content = self._make_job().get_raw_content(item)
+        self.assertEqual(content, "# My Page\n\nBody")
+
+    def test_get_raw_content_front_matter_only_is_empty(self):
+        self.mock_client.get_page.return_value = {"markdown": "---\ndescription: About it\n---\n"}
+        with self.assertLogs("tasks.gitbook_ingestion", level="WARNING"):
+            content = self._make_job().get_raw_content(_make_item())
+        self.assertEqual(content, "")
+
     def test_get_raw_content_returns_empty_when_markdown_missing_or_not_a_string(self):
         job = self._make_job()
         for detail in ({}, {"markdown": None}, {"markdown": 5}):

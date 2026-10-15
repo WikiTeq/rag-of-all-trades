@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -92,6 +93,9 @@ class GitBookIngestionJob(IngestionJob):
           string or list); if omitted, all spaces accessible to the token are ingested
     """
 
+    # The API prepends a YAML block (for example the page description) to the Markdown.
+    _FRONT_MATTER = re.compile(r"\A---\n.*?\n---\n", re.DOTALL)
+
     @property
     def source_type(self) -> str:
         return "gitbook"
@@ -159,7 +163,7 @@ class GitBookIngestionJob(IngestionJob):
             return ""
 
         markdown = detail.get("markdown")
-        content = markdown.strip() if isinstance(markdown, str) else ""
+        content = self._FRONT_MATTER.sub("", markdown, count=1).strip() if isinstance(markdown, str) else ""
 
         if not content:
             logger.warning(f"[{self.source_name}] Empty content for page {page_id!r} in space {space_id!r}")
