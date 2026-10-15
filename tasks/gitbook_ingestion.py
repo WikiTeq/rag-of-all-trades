@@ -246,14 +246,13 @@ class GitBookIngestionJob(IngestionJob):
         if not api_token:
             raise ValueError("api_token is required in GitBook connector config")
 
-        self._api_token = api_token
         self.space_ids: list[str] = parse_list(cfg.get("space_ids", []))
+        self._client = GitBookClient(api_token)
 
     def list_items(self) -> Iterator[IngestionItem]:
-        client = GitBookClient(self._api_token)
         try:
             try:
-                space_ids = self._resolve_space_ids(client)
+                space_ids = self._resolve_space_ids()
             except Exception as exc:
                 logger.error(f"[{self.source_name}] Failed to resolve space IDs: {exc}")
                 return
@@ -261,7 +260,7 @@ class GitBookIngestionJob(IngestionJob):
             total = 0
             for space_id in space_ids:
                 try:
-                    pages = client.list_pages(space_id)
+                    pages = self._client.list_pages(space_id)
                 except Exception as exc:
                     logger.error(f"[{self.source_name}] Failed to list pages for space {space_id!r}: {exc}")
                     continue
@@ -286,7 +285,7 @@ class GitBookIngestionJob(IngestionJob):
 
             logger.info(f"[{self.source_name}] Found {total} page(s)")
         finally:
-            client.close()
+            self._client.close()
 
     def get_raw_content(self, item: IngestionItem) -> str:
         page = item.source_ref
@@ -298,14 +297,11 @@ class GitBookIngestionJob(IngestionJob):
         item._metadata_cache["title"] = title
         item._metadata_cache["url"] = url
 
-        client = GitBookClient(self._api_token)
         try:
-            detail = client.get_page(space_id, page_id)
+            detail = self._client.get_page(space_id, page_id)
         except Exception as exc:
             logger.error(f"[{self.source_name}] Failed to fetch page {page_id!r} in space {space_id!r}: {exc}")
             return ""
-        finally:
-            client.close()
 
         document = detail.get("document") or {}
         content = GitBookMarkdownConverter.extract(document).strip()
@@ -347,11 +343,11 @@ class GitBookIngestionJob(IngestionJob):
             "parent_page_id": str(parent_id) if parent_id else "",
         }
 
-    def _resolve_space_ids(self, client: GitBookClient) -> list[str]:
+    def _resolve_space_ids(self) -> list[str]:
         """Return configured space IDs, or fetch all accessible ones if none configured."""
         if self.space_ids:
             return self.space_ids
-        spaces = client.list_spaces()
+        spaces = self._client.list_spaces()
         ids = [s["id"] for s in spaces if s.get("id")]
         logger.info(f"[{self.source_name}] Discovered {len(ids)} accessible space(s)")
         return ids
