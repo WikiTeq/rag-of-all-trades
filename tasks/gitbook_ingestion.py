@@ -26,11 +26,32 @@ class GitBookClient:
         }
         self._session = RetrySession()
 
+    def _paginate(self, url: str) -> Iterator[dict]:
+        """Yield every item of a cursor-paginated list endpoint, following `next.page`."""
+        seen: set[str] = set()
+        params: dict[str, str] | None = None
+        while True:
+            resp = self._session.get(url, headers=self._headers, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("items")
+            if not isinstance(items, list):
+                raise ValueError(f"GitBook response from {url} has no `items` list")
+            yield from items
+            next_page = data.get("next")
+            if not next_page:
+                return
+            cursor = next_page.get("page") if isinstance(next_page, dict) else None
+            if not isinstance(cursor, str) or not cursor:
+                raise ValueError(f"GitBook pagination from {url} returned an invalid cursor: {next_page!r}")
+            if cursor in seen:
+                raise ValueError(f"GitBook pagination from {url} repeated cursor {cursor!r}")
+            seen.add(cursor)
+            params = {"page": cursor}
+
     def list_orgs(self) -> list[dict]:
         """Return all organizations accessible to the token."""
-        resp = self._session.get(f"{GITBOOK_API_BASE}/orgs", headers=self._headers)
-        resp.raise_for_status()
-        return resp.json().get("items", [])
+        return list(self._paginate(f"{GITBOOK_API_BASE}/orgs"))
 
     def list_spaces(self) -> list[dict]:
         """Return all spaces accessible to the token across all organizations."""
@@ -39,25 +60,20 @@ class GitBookClient:
             org_id = org.get("id")
             if not org_id:
                 continue
-            url: str | None = f"{GITBOOK_API_BASE}/orgs/{org_id}/spaces"
-            while url:
-                resp = self._session.get(url, headers=self._headers)
-                resp.raise_for_status()
-                data = resp.json()
-                spaces.extend(data.get("items", []))
-                next_cursor = data.get("next", {}).get("page") if isinstance(data.get("next"), dict) else None
-                url = f"{GITBOOK_API_BASE}/orgs/{org_id}/spaces?page={next_cursor}" if next_cursor else None
+            spaces.extend(self._paginate(f"{GITBOOK_API_BASE}/orgs/{org_id}/spaces"))
         return spaces
 
     def list_pages(self, space_id: str) -> list[dict]:
-        """Return the flat page list for a space."""
+        """Return the page tree for a space (nested sub-pages, not paginated)."""
         resp = self._session.get(
             f"{GITBOOK_API_BASE}/spaces/{space_id}/content/pages",
             headers=self._headers,
         )
         resp.raise_for_status()
-        data = resp.json()
-        return data.get("pages", [])
+        pages = resp.json().get("pages")
+        if not isinstance(pages, list):
+            raise ValueError(f"GitBook response for space {space_id!r} has no `pages` list")
+        return pages
 
     def get_page(self, space_id: str, page_id: str) -> dict:
         """Return the page with its content rendered as Markdown in the `markdown` field."""
@@ -112,21 +128,9 @@ class GitBookIngestionJob(IngestionJob):
 
     def list_items(self) -> Iterator[IngestionItem]:
         try:
-            try:
-                space_ids = self._resolve_space_ids()
-            except Exception as exc:
-                logger.error(f"[{self.source_name}] Failed to resolve space IDs: {exc}")
-                return
-
             total = 0
-            for space_id in space_ids:
-                try:
-                    pages = self._client.list_pages(space_id)
-                except Exception as exc:
-                    logger.error(f"[{self.source_name}] Failed to list pages for space {space_id!r}: {exc}")
-                    continue
-
-                for page, parent_id in _flatten_pages(pages):
+            for space_id in self._resolve_space_ids():
+                for page, parent_id in _flatten_pages(self._client.list_pages(space_id)):
                     page_id = page.get("id")
                     if not page_id:
                         logger.warning(
