@@ -73,13 +73,11 @@ class GitBookClient:
         self._session.close()
 
 
-def _flatten_pages(pages: list[dict]) -> Iterator[dict]:
-    """Yield all pages recursively, including nested sub-pages."""
+def _flatten_pages(pages: list[dict], parent_id: str | None = None) -> Iterator[tuple[dict, str | None]]:
+    """Yield every page with its parent page ID, recursing into nested sub-pages."""
     for page in pages:
-        yield page
-        children = page.get("pages", [])
-        if children:
-            yield from _flatten_pages(children)
+        yield page, parent_id
+        yield from _flatten_pages(page.get("pages") or [], page.get("id"))
 
 
 class GitBookIngestionJob(IngestionJob):
@@ -128,7 +126,7 @@ class GitBookIngestionJob(IngestionJob):
                     logger.error(f"[{self.source_name}] Failed to list pages for space {space_id!r}: {exc}")
                     continue
 
-                for page in _flatten_pages(pages):
+                for page, parent_id in _flatten_pages(pages):
                     page_id = page.get("id")
                     if not page_id:
                         logger.warning(
@@ -138,6 +136,7 @@ class GitBookIngestionJob(IngestionJob):
                         continue
 
                     page["_space_id"] = space_id
+                    page["_parent_id"] = parent_id
                     updated_at = parse_timestamp(page.get("updatedAt"))
                     yield IngestionItem(
                         id=f"gitbook:{space_id}:{page_id}",
@@ -190,13 +189,12 @@ class GitBookIngestionJob(IngestionJob):
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         page = item.source_ref
-        parent_id = page.get("parent") or page.get("parentId") or ""
         return {
             "space_id": page.get("_space_id", ""),
             "page_id": str(page.get("id", "")),
             "page_title": page.get("linkTitle") or page.get("title") or "",
             "page_url": (page.get("urls") or {}).get("app") or "",
-            "parent_page_id": str(parent_id) if parent_id else "",
+            "parent_page_id": page.get("_parent_id") or "",
             "description": page.get("description") or "",
             "tags": self._tag_slugs(page.get("tags")),
             "created_at": page.get("createdAt") or "",

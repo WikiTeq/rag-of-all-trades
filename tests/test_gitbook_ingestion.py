@@ -25,7 +25,7 @@ def _make_page(
         "_space_id": space_id,
     }
     if parent:
-        page["parent"] = parent
+        page["_parent_id"] = parent
     return page
 
 
@@ -109,6 +109,8 @@ class TestGitBookListItems(unittest.TestCase):
         ids = {i.id for i in items}
         self.assertIn("gitbook:space1:parent1", ids)
         self.assertIn("gitbook:space1:child1", ids)
+        parents = {i.source_ref["id"]: i.source_ref["_parent_id"] for i in items}
+        self.assertEqual(parents, {"parent1": None, "child1": "parent1"})
 
     def test_list_items_skips_page_with_missing_id(self):
         self.mock_client.list_pages.return_value = [
@@ -254,7 +256,7 @@ class TestGitBookGetExtraMetadata(unittest.TestCase):
         return job.get_extra_metadata(item=item, content="", metadata={})
 
     def test_core_fields(self):
-        extra = self._extra(parent="parent_p")
+        extra = self._extra(_parent_id="parent_p")
         self.assertEqual(extra["space_id"], "s1")
         self.assertEqual(extra["page_id"], "p1")
         self.assertEqual(extra["page_title"], "Test Page")
@@ -398,15 +400,13 @@ class TestListItemsSessionLeak(unittest.TestCase):
 
 class TestFlattenPages(unittest.TestCase):
     def test_flat_list(self):
-        pages = [{"id": "1"}, {"id": "2"}]
-        result = list(_flatten_pages(pages))
-        self.assertEqual(len(result), 2)
+        result = list(_flatten_pages([{"id": "1"}, {"id": "2"}]))
+        self.assertEqual([(p["id"], parent) for p, parent in result], [("1", None), ("2", None)])
 
-    def test_nested_pages(self):
+    def test_nested_pages_carry_parent_id(self):
         pages = [{"id": "1", "pages": [{"id": "1a"}, {"id": "1b", "pages": [{"id": "1b1"}]}]}, {"id": "2"}]
-        result = list(_flatten_pages(pages))
-        ids = [p["id"] for p in result]
-        self.assertEqual(ids, ["1", "1a", "1b", "1b1", "2"])
+        result = [(p["id"], parent) for p, parent in _flatten_pages(pages)]
+        self.assertEqual(result, [("1", None), ("1a", "1"), ("1b", "1"), ("1b1", "1b"), ("2", None)])
 
 
 if __name__ == "__main__":
