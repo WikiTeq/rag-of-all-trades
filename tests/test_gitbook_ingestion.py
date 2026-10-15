@@ -3,7 +3,6 @@ from unittest.mock import MagicMock, patch
 
 from tasks.gitbook_ingestion import (
     GitBookIngestionJob,
-    GitBookMarkdownConverter,
     _flatten_pages,
 )
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -160,39 +159,28 @@ class TestGitBookGetRawContent(unittest.TestCase):
 
     def test_get_raw_content_returns_markdown(self):
         item = _make_item()
-        self.mock_client.get_page.return_value = {
-            "document": {"nodes": [{"type": "paragraph", "nodes": [{"type": "text", "text": "Hello world"}]}]}
-        }
+        self.mock_client.get_page.return_value = {"markdown": "Hello world\n"}
         job = self._make_job()
         content = job.get_raw_content(item)
         self.assertIn("Hello world", content)
 
     def test_get_raw_content_prepends_title(self):
         item = _make_item(title="My Page")
-        self.mock_client.get_page.return_value = {
-            "document": {"nodes": [{"type": "paragraph", "nodes": [{"type": "text", "text": "Body text"}]}]}
-        }
+        self.mock_client.get_page.return_value = {"markdown": "Body text"}
         job = self._make_job()
         content = job.get_raw_content(item)
         self.assertTrue(content.startswith("# My Page"))
 
     def test_get_raw_content_does_not_duplicate_title(self):
         item = _make_item(title="My Page")
-        self.mock_client.get_page.return_value = {
-            "document": {
-                "nodes": [
-                    {"type": "heading-1", "nodes": [{"type": "text", "text": "My Page"}]},
-                    {"type": "paragraph", "nodes": [{"type": "text", "text": "Body"}]},
-                ]
-            }
-        }
+        self.mock_client.get_page.return_value = {"markdown": "# My Page\n\nBody"}
         job = self._make_job()
         content = job.get_raw_content(item)
         self.assertEqual(content.count("My Page"), 1)
 
     def test_get_raw_content_empty_warns_and_returns_empty(self):
         item = _make_item()
-        self.mock_client.get_page.return_value = {"document": {"nodes": []}}
+        self.mock_client.get_page.return_value = {"markdown": "  \n"}
         job = self._make_job()
         with self.assertLogs("tasks.gitbook_ingestion", level="WARNING") as cm:
             content = job.get_raw_content(item)
@@ -201,13 +189,17 @@ class TestGitBookGetRawContent(unittest.TestCase):
 
     def test_get_raw_content_caches_url_and_title(self):
         item = _make_item(title="Cached Page")
-        self.mock_client.get_page.return_value = {
-            "document": {"nodes": [{"type": "paragraph", "nodes": [{"type": "text", "text": "text"}]}]}
-        }
+        self.mock_client.get_page.return_value = {"markdown": "text"}
         job = self._make_job()
         job.get_raw_content(item)
         self.assertEqual(item._metadata_cache["title"], "Cached Page")
         self.assertIn("page1", item._metadata_cache["url"])
+
+    def test_get_raw_content_returns_empty_when_markdown_missing_or_not_a_string(self):
+        job = self._make_job()
+        for detail in ({}, {"markdown": None}, {"markdown": 5}):
+            self.mock_client.get_page.return_value = detail
+            self.assertEqual(job.get_raw_content(_make_item()), "")
 
     def test_get_raw_content_returns_empty_on_api_error(self):
         item = _make_item()
@@ -240,7 +232,7 @@ class TestGitBookGetItemChecksum(unittest.TestCase):
         item = _make_item(updated_at="2024-06-01T12:00:00.000Z")
         checksum = job.get_item_checksum(item)
         self.assertIsNotNone(checksum)
-        self.assertIn("2024-06-01T12:00:00.000Z", checksum)
+        self.assertEqual(checksum, "space1:page1:2024-06-01T12:00:00.000Z")
 
     def test_checksum_none_when_no_updated_at(self):
         job = GitBookIngestionJob(_make_config())
@@ -268,185 +260,6 @@ class TestGitBookGetExtraMetadata(unittest.TestCase):
         object.__setattr__(item, "_metadata_cache", {"title": "", "url": ""})
         extra = job.get_extra_metadata(item=item, content="", metadata={})
         self.assertEqual(extra["parent_page_id"], "")
-
-
-class TestExtractMarkdown(unittest.TestCase):
-    def test_paragraph(self):
-        doc = {"nodes": [{"type": "paragraph", "nodes": [{"type": "text", "text": "Hello"}]}]}
-        self.assertIn("Hello", GitBookMarkdownConverter.extract(doc))
-
-    def test_heading(self):
-        doc = {"nodes": [{"type": "heading-2", "nodes": [{"type": "text", "text": "Title"}]}]}
-        result = GitBookMarkdownConverter.extract(doc)
-        self.assertIn("## Title", result)
-
-    def test_code_block(self):
-        doc = {"nodes": [{"type": "code", "data": {"syntax": "python"}, "nodes": [{"type": "text", "text": "x = 1"}]}]}
-        result = GitBookMarkdownConverter.extract(doc)
-        self.assertIn("```python", result)
-        self.assertIn("x = 1", result)
-
-    def test_empty_document(self):
-        self.assertEqual(GitBookMarkdownConverter.extract({}), "")
-        self.assertEqual(GitBookMarkdownConverter.extract({"nodes": []}), "")
-
-    def test_bold_text(self):
-        doc = {
-            "nodes": [{"type": "paragraph", "nodes": [{"type": "text", "text": "bold", "marks": [{"type": "bold"}]}]}]
-        }
-        result = GitBookMarkdownConverter.extract(doc)
-        self.assertIn("**bold**", result)
-
-
-class TestExtractMarkdownExtended(unittest.TestCase):
-    def test_blockquote_prefixed(self):
-        doc = {
-            "nodes": [
-                {
-                    "type": "blockquote",
-                    "nodes": [
-                        {"type": "paragraph", "nodes": [{"type": "text", "text": "line one"}]},
-                        {"type": "paragraph", "nodes": [{"type": "text", "text": "line two"}]},
-                    ],
-                }
-            ]
-        }
-        result = GitBookMarkdownConverter.extract(doc)
-        for line in result.strip().splitlines():
-            self.assertTrue(line.startswith(">"), f"Expected '>' prefix, got: {line!r}")
-
-    def test_hint_prefixed(self):
-        doc = {
-            "nodes": [
-                {
-                    "type": "hint",
-                    "nodes": [
-                        {"type": "paragraph", "nodes": [{"type": "text", "text": "note line one"}]},
-                        {"type": "paragraph", "nodes": [{"type": "text", "text": "note line two"}]},
-                    ],
-                }
-            ]
-        }
-        result = GitBookMarkdownConverter.extract(doc)
-        for line in result.strip().splitlines():
-            self.assertTrue(line.startswith(">"), f"Expected '>' prefix, got: {line!r}")
-
-    def test_unordered_list(self):
-        doc = {
-            "nodes": [
-                {
-                    "type": "list-unordered",
-                    "nodes": [
-                        {
-                            "type": "list-item",
-                            "nodes": [{"type": "paragraph", "nodes": [{"type": "text", "text": "item A"}]}],
-                        },
-                        {
-                            "type": "list-item",
-                            "nodes": [{"type": "paragraph", "nodes": [{"type": "text", "text": "item B"}]}],
-                        },
-                    ],
-                }
-            ]
-        }
-        result = GitBookMarkdownConverter.extract(doc)
-        self.assertIn("- item A", result)
-        self.assertIn("- item B", result)
-
-    def test_ordered_list(self):
-        doc = {
-            "nodes": [
-                {
-                    "type": "list-ordered",
-                    "nodes": [
-                        {
-                            "type": "list-item",
-                            "nodes": [{"type": "paragraph", "nodes": [{"type": "text", "text": "first"}]}],
-                        },
-                        {
-                            "type": "list-item",
-                            "nodes": [{"type": "paragraph", "nodes": [{"type": "text", "text": "second"}]}],
-                        },
-                    ],
-                }
-            ]
-        }
-        result = GitBookMarkdownConverter.extract(doc)
-        self.assertIn("1. first", result)
-        self.assertIn("2. second", result)
-
-    def test_text_node_with_leaves(self):
-        doc = {
-            "nodes": [
-                {
-                    "type": "paragraph",
-                    "nodes": [
-                        {
-                            "object": "text",
-                            "leaves": [
-                                {"text": "plain", "marks": []},
-                                {"text": "bold", "marks": [{"type": "bold"}]},
-                            ],
-                        }
-                    ],
-                }
-            ]
-        }
-        result = GitBookMarkdownConverter.extract(doc)
-        self.assertIn("plain", result)
-        self.assertIn("**bold**", result)
-
-    def test_link(self):
-        doc = {
-            "nodes": [
-                {
-                    "type": "paragraph",
-                    "nodes": [
-                        {
-                            "type": "link",
-                            "data": {"url": "https://example.com"},
-                            "nodes": [{"type": "text", "text": "click"}],
-                        }
-                    ],
-                }
-            ]
-        }
-        result = GitBookMarkdownConverter.extract(doc)
-        self.assertIn("[click](https://example.com)", result)
-
-    def test_image(self):
-        doc = {"nodes": [{"type": "image", "data": {"src": "https://img.example.com/a.png", "alt": "logo"}}]}
-        result = GitBookMarkdownConverter.extract(doc)
-        self.assertIn("![logo](https://img.example.com/a.png)", result)
-
-    def test_table(self):
-        doc = {
-            "nodes": [
-                {
-                    "type": "table",
-                    "nodes": [
-                        {
-                            "type": "table-row",
-                            "nodes": [
-                                {"type": "table-cell", "nodes": [{"type": "text", "text": "H1"}]},
-                                {"type": "table-cell", "nodes": [{"type": "text", "text": "H2"}]},
-                            ],
-                        },
-                        {
-                            "type": "table-row",
-                            "nodes": [
-                                {"type": "table-cell", "nodes": [{"type": "text", "text": "A"}]},
-                                {"type": "table-cell", "nodes": [{"type": "text", "text": "B"}]},
-                            ],
-                        },
-                    ],
-                }
-            ]
-        }
-        result = GitBookMarkdownConverter.extract(doc)
-        self.assertIn("| H1 | H2 |", result)
-        self.assertIn("| A | B |", result)
-        self.assertIn("---", result)
 
 
 class TestListSpacesPagination(unittest.TestCase):
@@ -500,6 +313,20 @@ class TestListSpacesPagination(unittest.TestCase):
         self.assertEqual({s["id"] for s in spaces}, {"s1", "s2"})
 
 
+class TestGetPageRequest(unittest.TestCase):
+    def test_get_page_requests_markdown_format(self):
+        with patch("tasks.gitbook_ingestion.RetrySession") as session_cls:
+            session = session_cls.return_value
+            session.get.return_value.json.return_value = {"markdown": "# T"}
+            from tasks.gitbook_ingestion import GitBookClient
+
+            result = GitBookClient("test-token").get_page("space1", "page1")
+        self.assertEqual(result, {"markdown": "# T"})
+        _, kwargs = session.get.call_args
+        self.assertEqual(kwargs["params"], {"format": "markdown"})
+        self.assertTrue(session.get.call_args.args[0].endswith("/spaces/space1/content/page/page1"))
+
+
 class TestListItemsSessionLeak(unittest.TestCase):
     def setUp(self):
         patcher = patch("tasks.gitbook_ingestion.GitBookClient")
@@ -516,7 +343,7 @@ class TestListItemsSessionLeak(unittest.TestCase):
         self.mock_client_cls.assert_called_once_with("test-token")
 
     def test_get_raw_content_does_not_close_client(self):
-        self.mock_client.get_page.return_value = {"document": {"nodes": []}}
+        self.mock_client.get_page.return_value = {"markdown": ""}
         job = GitBookIngestionJob(_make_config())
         job.get_raw_content(_make_item())
         self.mock_client.close.assert_not_called()

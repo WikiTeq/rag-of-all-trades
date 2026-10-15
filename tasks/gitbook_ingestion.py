@@ -59,9 +59,10 @@ class GitBookClient:
         return data.get("pages", [])
 
     def get_page(self, space_id: str, page_id: str) -> dict:
-        """Return the full page document including content node tree."""
+        """Return the page with its content rendered as Markdown in the `markdown` field."""
         resp = self._session.get(
             f"{GITBOOK_API_BASE}/spaces/{space_id}/content/page/{page_id}",
+            params={"format": "markdown"},
             headers=self._headers,
         )
         resp.raise_for_status()
@@ -69,148 +70,6 @@ class GitBookClient:
 
     def close(self) -> None:
         self._session.close()
-
-
-class GitBookMarkdownConverter:
-    """Converts a GitBook document node tree to Markdown."""
-
-    @staticmethod
-    def extract(document: dict) -> str:
-        nodes = document.get("nodes", [])
-        if not nodes:
-            return ""
-        return GitBookMarkdownConverter._nodes(nodes)
-
-    @staticmethod
-    def _nodes(nodes: list[dict]) -> str:
-        parts: list[str] = []
-        for node in nodes:
-            parts.append(GitBookMarkdownConverter._node(node))
-        return "\n".join(p for p in parts if p)
-
-    @staticmethod
-    def _leaf(leaf: dict) -> str:
-        text = leaf.get("text", "") or ""
-        marks = {m.get("type") for m in leaf.get("marks", [])}
-        if "bold" in marks:
-            text = f"**{text}**"
-        if "italic" in marks:
-            text = f"*{text}*"
-        if "code" in marks:
-            text = f"`{text}`"
-        return text
-
-    @staticmethod
-    def _node(node: dict) -> str:
-        node_type = node.get("type", "")
-        children = node.get("nodes", [])
-
-        # Text node: may use legacy `text`+`marks` or newer `leaves` array
-        if node.get("object") == "text":
-            leaves = node.get("leaves")
-            if leaves is not None:
-                return "".join(GitBookMarkdownConverter._leaf(lf) for lf in leaves)
-            text = node.get("text", "") or ""
-            marks = {m.get("type") for m in node.get("marks", [])}
-            if "bold" in marks:
-                text = f"**{text}**"
-            if "italic" in marks:
-                text = f"*{text}*"
-            if "code" in marks:
-                text = f"`{text}`"
-            return text
-
-        if node_type == "text":
-            text = node.get("text", "") or ""
-            marks = {m.get("type") for m in node.get("marks", [])}
-            if "bold" in marks:
-                text = f"**{text}**"
-            if "italic" in marks:
-                text = f"*{text}*"
-            if "code" in marks:
-                text = f"`{text}`"
-            return text
-
-        if node_type == "paragraph":
-            inner = GitBookMarkdownConverter._inline(children)
-            return f"{inner}\n" if inner.strip() else ""
-
-        if node_type == "blockquote":
-            inner = GitBookMarkdownConverter._nodes(children)
-            return "\n".join(f"> {line}" for line in inner.splitlines()) + "\n" if inner.strip() else ""
-
-        if node_type.startswith("heading-"):
-            try:
-                level = int(node_type.split("-")[1])
-            except (IndexError, ValueError):
-                level = 1
-            inner = GitBookMarkdownConverter._inline(children)
-            return f"{'#' * level} {inner}\n"
-
-        if node_type in ("list-unordered", "list-ordered"):
-            ordered = node_type == "list-ordered"
-            items: list[str] = []
-            for i, item in enumerate(children):
-                bullet = f"{i + 1}." if ordered else "-"
-                item_nodes = item.get("nodes", [])
-                item_text = GitBookMarkdownConverter._nodes(item_nodes).strip()
-                # Indent continuation lines so they stay inside the list item
-                lines = item_text.splitlines()
-                indent = " " * (len(bullet) + 1)
-                formatted = f"{bullet} {lines[0]}" if lines else f"{bullet}"
-                for line in lines[1:]:
-                    formatted += f"\n{indent}{line}"
-                items.append(formatted)
-            return "\n".join(items) + "\n"
-
-        if node_type == "code":
-            language = node.get("data", {}).get("syntax", "")
-            code_text = GitBookMarkdownConverter._inline(children)
-            return f"```{language}\n{code_text}\n```\n"
-
-        if node_type == "hint":
-            inner = GitBookMarkdownConverter._nodes(children)
-            return "\n".join(f"> {line}" for line in inner.splitlines()) + "\n" if inner.strip() else ""
-
-        if node_type == "divider":
-            return "---\n"
-
-        if node_type == "link":
-            href = node.get("data", {}).get("url", "")
-            inner = GitBookMarkdownConverter._inline(children)
-            return f"[{inner}]({href})" if href else inner
-
-        if node_type == "image":
-            src = node.get("data", {}).get("src", "")
-            alt = node.get("data", {}).get("alt", "")
-            return f"![{alt}]({src})\n" if src else ""
-
-        if node_type == "table":
-            return GitBookMarkdownConverter._table(node)
-
-        # Recurse into any unknown container nodes
-        if children:
-            return GitBookMarkdownConverter._nodes(children)
-
-        return node.get("text", "")
-
-    @staticmethod
-    def _inline(nodes: list[dict]) -> str:
-        return "".join(GitBookMarkdownConverter._node(n) for n in nodes)
-
-    @staticmethod
-    def _table(node: dict) -> str:
-        rows = node.get("nodes", [])
-        md_rows: list[list[str]] = []
-        for row in rows:
-            cells = [GitBookMarkdownConverter._inline(cell.get("nodes", [])) for cell in row.get("nodes", [])]
-            md_rows.append(cells)
-        if not md_rows:
-            return ""
-        header = "| " + " | ".join(md_rows[0]) + " |"
-        separator = "| " + " | ".join("---" for _ in md_rows[0]) + " |"
-        body = "\n".join("| " + " | ".join(r) + " |" for r in md_rows[1:])
-        return "\n".join(filter(None, [header, separator, body])) + "\n"
 
 
 def _flatten_pages(pages: list[dict]) -> Iterator[dict]:
@@ -303,14 +162,11 @@ class GitBookIngestionJob(IngestionJob):
             logger.error(f"[{self.source_name}] Failed to fetch page {page_id!r} in space {space_id!r}: {exc}")
             return ""
 
-        document = detail.get("document") or {}
-        content = GitBookMarkdownConverter.extract(document).strip()
+        markdown = detail.get("markdown")
+        content = markdown.strip() if isinstance(markdown, str) else ""
 
         if not content:
-            logger.warning(
-                f"[{self.source_name}] Empty content for page {page_id!r} in space {space_id!r}. "
-                "Ensure the API token has read access to this space."
-            )
+            logger.warning(f"[{self.source_name}] Empty content for page {page_id!r} in space {space_id!r}")
             return ""
 
         first_line = content.split("\n", 1)[0].lstrip("# ").strip()
