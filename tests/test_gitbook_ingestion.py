@@ -122,18 +122,24 @@ class TestGitBookListItems(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].id, "gitbook:space1:p2")
 
-    def test_list_items_returns_empty_on_api_error(self):
+    def test_list_items_raises_on_space_discovery_error(self):
         self.mock_client.list_spaces.side_effect = Exception("auth failed")
         job = self._make_job()
-        items = list(job.list_items())
-        self.assertEqual(items, [])
+        with self.assertRaisesRegex(Exception, "auth failed"):
+            list(job.list_items())
 
-    def test_list_items_skips_space_on_list_pages_error(self):
+    def test_list_items_raises_on_list_pages_error_after_yielding_earlier_space(self):
         self.mock_client.list_spaces.return_value = [{"id": "space1"}, {"id": "space2"}]
-        self.mock_client.list_pages.side_effect = [Exception("forbidden"), []]
+        self.mock_client.list_pages.side_effect = [
+            [{"id": "p1", "title": "P", "updatedAt": "2024-06-01T00:00:00.000Z"}],
+            Exception("forbidden"),
+        ]
         job = self._make_job()
-        items = list(job.list_items())
-        self.assertEqual(items, [])
+        yielded = []
+        with self.assertRaisesRegex(Exception, "forbidden"):
+            for item in job.list_items():
+                yielded.append(item.id)
+        self.assertEqual(yielded, ["gitbook:space1:p1"])
 
     def test_list_items_last_modified_parsed(self):
         self.mock_client.list_pages.return_value = [
@@ -298,55 +304,116 @@ class TestGitBookGetExtraMetadata(unittest.TestCase):
         self.assertEqual(self._extra(tags=tags)["tags"], ["ok"])
 
 
-class TestListSpacesPagination(unittest.TestCase):
+class TestGitBookPagination(unittest.TestCase):
     def setUp(self):
         patcher = patch("tasks.gitbook_ingestion.RetrySession")
-        self.mock_session_cls = patcher.start()
-        self.mock_session = MagicMock()
-        self.mock_session_cls.return_value = self.mock_session
+        self.mock_session = patcher.start().return_value
         self.addCleanup(patcher.stop)
 
-    def _make_client(self):
+    def _client(self):
         from tasks.gitbook_ingestion import GitBookClient
 
         return GitBookClient("test-token")
 
-    def test_list_spaces_paginates(self):
-        orgs_resp = MagicMock()
-        orgs_resp.json.return_value = {"items": [{"id": "org1"}]}
-        page1_resp = MagicMock()
-        page1_resp.json.return_value = {"items": [{"id": "space1"}], "next": {"page": "cursor1"}}
-        page2_resp = MagicMock()
-        page2_resp.json.return_value = {"items": [{"id": "space2"}], "next": None}
-        self.mock_session.get.side_effect = [orgs_resp, page1_resp, page2_resp]
+    def _respond(self, *payloads):
+        responses = []
+        for payload in payloads:
+            resp = MagicMock()
+            resp.json.return_value = payload
+            responses.append(resp)
+        self.mock_session.get.side_effect = responses
 
-        client = self._make_client()
-        spaces = client.list_spaces()
-        self.assertEqual([s["id"] for s in spaces], ["space1", "space2"])
+    def _requests(self):
+        return [
+            (c.args[0].removeprefix("https://api.gitbook.com/v1"), c.kwargs["params"])
+            for c in self.mock_session.get.call_args_list
+        ]
 
-    def test_list_spaces_no_next(self):
-        orgs_resp = MagicMock()
-        orgs_resp.json.return_value = {"items": [{"id": "org1"}]}
-        spaces_resp = MagicMock()
-        spaces_resp.json.return_value = {"items": [{"id": "spaceA"}]}
-        self.mock_session.get.side_effect = [orgs_resp, spaces_resp]
+    def test_list_orgs_follows_cursor(self):
+        self._respond(
+            {"items": [{"id": "org1"}], "next": {"page": "c1"}},
+            {"items": [{"id": "org2"}], "next": None},
+        )
+        orgs = self._client().list_orgs()
+        self.assertEqual([o["id"] for o in orgs], ["org1", "org2"])
+        self.assertEqual(self._requests(), [("/orgs", None), ("/orgs", {"page": "c1"})])
 
-        client = self._make_client()
-        spaces = client.list_spaces()
-        self.assertEqual(len(spaces), 1)
+    def test_list_spaces_paginates_orgs_and_spaces(self):
+        self._respond(
+            {"items": [{"id": "org1"}], "next": {"page": "o2"}},
+            {"items": [{"id": "org2"}]},
+            {"items": [{"id": "s1"}], "next": {"page": "sc1"}},
+            {"items": [{"id": "s2"}]},
+            {"items": [{"id": "s3"}]},
+        )
+        spaces = self._client().list_spaces()
+        self.assertEqual([s["id"] for s in spaces], ["s1", "s2", "s3"])
+        self.assertEqual(
+            self._requests(),
+            [
+                ("/orgs", None),
+                ("/orgs", {"page": "o2"}),
+                ("/orgs/org1/spaces", None),
+                ("/orgs/org1/spaces", {"page": "sc1"}),
+                ("/orgs/org2/spaces", None),
+            ],
+        )
 
-    def test_list_spaces_multiple_orgs(self):
-        orgs_resp = MagicMock()
-        orgs_resp.json.return_value = {"items": [{"id": "org1"}, {"id": "org2"}]}
-        spaces1_resp = MagicMock()
-        spaces1_resp.json.return_value = {"items": [{"id": "s1"}]}
-        spaces2_resp = MagicMock()
-        spaces2_resp.json.return_value = {"items": [{"id": "s2"}]}
-        self.mock_session.get.side_effect = [orgs_resp, spaces1_resp, spaces2_resp]
+    def test_list_spaces_skips_org_without_id(self):
+        self._respond({"items": [{"name": "no id"}]})
+        self.assertEqual(self._client().list_spaces(), [])
 
-        client = self._make_client()
-        spaces = client.list_spaces()
-        self.assertEqual({s["id"] for s in spaces}, {"s1", "s2"})
+    def test_cursor_is_sent_as_param_not_in_url(self):
+        self._respond({"items": [], "next": {"page": "a&b=c#d"}}, {"items": []})
+        self._client().list_orgs()
+        self.assertEqual(self._requests()[1], ("/orgs", {"page": "a&b=c#d"}))
+
+    def test_empty_page_with_next_cursor_continues(self):
+        self._respond({"items": [], "next": {"page": "c1"}}, {"items": [{"id": "org1"}]})
+        self.assertEqual(self._client().list_orgs(), [{"id": "org1"}])
+
+    def test_invalid_next_cursor_raises(self):
+        for bad in ({"page": ""}, {"page": 5}, "c1"):
+            with self.subTest(next=bad):
+                self._respond({"items": [], "next": bad})
+                with self.assertRaisesRegex(ValueError, "invalid cursor"):
+                    self._client().list_orgs()
+
+    def test_response_without_items_list_raises(self):
+        for bad in ({}, {"items": None}, {"items": "x"}):
+            with self.subTest(payload=bad):
+                self._respond(bad)
+                with self.assertRaisesRegex(ValueError, "no `items` list"):
+                    self._client().list_orgs()
+
+    def test_list_pages_without_pages_list_raises(self):
+        for bad in ({}, {"pages": None}):
+            with self.subTest(payload=bad):
+                self._respond(bad)
+                with self.assertRaisesRegex(ValueError, "no `pages` list"):
+                    self._client().list_pages("space1")
+
+    def test_list_pages_returns_page_tree(self):
+        self._respond({"pages": [{"id": "p1"}]})
+        self.assertEqual(self._client().list_pages("space1"), [{"id": "p1"}])
+
+    def test_repeated_cursor_raises(self):
+        self._respond(
+            {"items": [], "next": {"page": "a"}},
+            {"items": [], "next": {"page": "b"}},
+            {"items": [], "next": {"page": "a"}},
+        )
+        with self.assertRaisesRegex(ValueError, "repeated cursor"):
+            self._client().list_orgs()
+
+    def test_later_page_http_error_propagates(self):
+        ok = MagicMock()
+        ok.json.return_value = {"items": [{"id": "org1"}], "next": {"page": "c1"}}
+        bad = MagicMock()
+        bad.raise_for_status.side_effect = RuntimeError("403")
+        self.mock_session.get.side_effect = [ok, bad]
+        with self.assertRaisesRegex(RuntimeError, "403"):
+            self._client().list_orgs()
 
 
 class TestGetPageRequest(unittest.TestCase):
@@ -387,7 +454,8 @@ class TestListItemsSessionLeak(unittest.TestCase):
     def test_client_closed_on_resolve_failure(self):
         self.mock_client.list_spaces.side_effect = Exception("auth failed")
         job = GitBookIngestionJob(_make_config())
-        list(job.list_items())
+        with self.assertRaises(Exception):
+            list(job.list_items())
         self.mock_client.close.assert_called_once()
 
     def test_client_closed_on_success(self):
