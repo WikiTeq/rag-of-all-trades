@@ -187,14 +187,6 @@ class TestGitBookGetRawContent(unittest.TestCase):
         self.assertEqual(content, "")
         self.assertTrue(any("Empty content" in line for line in cm.output))
 
-    def test_get_raw_content_caches_url_and_title(self):
-        item = _make_item(title="Cached Page")
-        self.mock_client.get_page.return_value = {"markdown": "text"}
-        job = self._make_job()
-        job.get_raw_content(item)
-        self.assertEqual(item._metadata_cache["title"], "Cached Page")
-        self.assertIn("page1", item._metadata_cache["url"])
-
     def test_get_raw_content_returns_empty_when_markdown_missing_or_not_a_string(self):
         job = self._make_job()
         for detail in ({}, {"markdown": None}, {"markdown": 5}):
@@ -243,23 +235,53 @@ class TestGitBookGetItemChecksum(unittest.TestCase):
 
 
 class TestGitBookGetExtraMetadata(unittest.TestCase):
-    def test_extra_metadata_fields(self):
+    def _extra(self, **page_fields):
         job = GitBookIngestionJob(_make_config())
-        item = _make_item(page_id="p1", space_id="s1", parent="parent_p")
-        object.__setattr__(item, "_metadata_cache", {"title": "Page Title", "url": "https://app.gitbook.com/p1"})
-        extra = job.get_extra_metadata(item=item, content="", metadata={})
+        item = _make_item(page_id="p1", space_id="s1")
+        item.source_ref.update(page_fields)
+        return job.get_extra_metadata(item=item, content="", metadata={})
+
+    def test_core_fields(self):
+        extra = self._extra(parent="parent_p")
         self.assertEqual(extra["space_id"], "s1")
         self.assertEqual(extra["page_id"], "p1")
-        self.assertEqual(extra["page_title"], "Page Title")
-        self.assertEqual(extra["page_url"], "https://app.gitbook.com/p1")
+        self.assertEqual(extra["page_title"], "Test Page")
+        self.assertEqual(extra["page_url"], "https://app.gitbook.com/s/s1/page/p1")
         self.assertEqual(extra["parent_page_id"], "parent_p")
 
-    def test_extra_metadata_no_parent(self):
-        job = GitBookIngestionJob(_make_config())
-        item = _make_item()
-        object.__setattr__(item, "_metadata_cache", {"title": "", "url": ""})
-        extra = job.get_extra_metadata(item=item, content="", metadata={})
-        self.assertEqual(extra["parent_page_id"], "")
+    def test_no_parent(self):
+        self.assertEqual(self._extra()["parent_page_id"], "")
+
+    def test_page_title_prefers_link_title(self):
+        self.assertEqual(self._extra(linkTitle="Short")["page_title"], "Short")
+
+    def test_page_title_falls_back_to_title_when_link_title_empty_or_null(self):
+        self.assertEqual(self._extra(linkTitle="")["page_title"], "Test Page")
+        self.assertEqual(self._extra(linkTitle=None)["page_title"], "Test Page")
+
+    def test_description_created_and_updated_dates(self):
+        extra = self._extra(description="About this page", createdAt="2024-01-02T03:04:05.000Z")
+        self.assertEqual(extra["description"], "About this page")
+        self.assertEqual(extra["created_at"], "2024-01-02T03:04:05.000Z")
+        self.assertEqual(extra["updated_at"], "2024-06-01T12:00:00.000Z")
+
+    def test_missing_optional_fields_default_to_empty(self):
+        extra = self._extra(description=None, createdAt=None, tags=None, urls=None)
+        self.assertEqual(extra["description"], "")
+        self.assertEqual(extra["created_at"], "")
+        self.assertEqual(extra["tags"], [])
+        self.assertEqual(extra["page_url"], "")
+
+    def test_tags_are_slugs(self):
+        tags = [
+            {"tag": {"kind": "tag", "tag": "guide"}, "primary": True},
+            {"tag": {"kind": "tag", "tag": "api", "space": "s2"}},
+        ]
+        self.assertEqual(self._extra(tags=tags)["tags"], ["guide", "api"])
+
+    def test_malformed_tags_are_skipped(self):
+        tags = [None, "x", {"primary": True}, {"tag": None}, {"tag": {"tag": ""}}, {"tag": {"tag": "ok"}}]
+        self.assertEqual(self._extra(tags=tags)["tags"], ["ok"])
 
 
 class TestListSpacesPagination(unittest.TestCase):
