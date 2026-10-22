@@ -8,6 +8,8 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_USER_AGENT = "rag-of-all-trades/1.0"
+
 
 class RetrySession:
     """Thin HTTP client with exponential backoff and 429 / 5xx retry logic.

@@ -220,7 +220,7 @@ class WebIngestionJob(IngestionJob):
         crawled: dict[str, None] = {}
         frontier: list[str] = list(seen)
 
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; rag-of-all-trades-bot/1.0)"}
+        headers = {"User-Agent": self.user_agent}
 
         # Fetch levels 0..depth inclusive so leaf pages at the configured depth are
         # actually scraped/cached, not just discovered. Children are only enqueued

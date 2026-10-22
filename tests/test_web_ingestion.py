@@ -343,6 +343,17 @@ class TestWebIngestionCrawl(_WebIngestionTestCase):
         self.assertIn("https://example.com/a", urls)
         self.assertIn("https://example.com/b", urls)
 
+    def test_crawl_sends_configured_user_agent(self):
+        job = self._make_crawl_job(depth=1)
+        job._crawl_cache = {}
+        with (
+            patch("tasks.web_ingestion.requests.get", side_effect=_mock_get({})) as mock_get,
+            patch("tasks.base.settings") as mock_settings,
+        ):
+            mock_settings.yaml = {"user_agent": "global-ua/2.0"}
+            job._crawl(["https://example.com"])
+        self.assertEqual(mock_get.call_args.kwargs["headers"]["User-Agent"], "global-ua/2.0")
+
     def test_crawl_same_domain_only(self):
         job = self._make_crawl_job(depth=1, same_domain_only=True)
         html = _make_html(links=["https://example.com/internal", "https://other.com/external"])
