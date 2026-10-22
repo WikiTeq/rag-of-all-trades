@@ -10,3 +10,9 @@ class BaseMetadataSchema(BaseModel):
     source_name: str = Field(description="Human-readable name of the source instance")
     file_name: str = Field(description="File name used by the vector store")
     last_modified: str = Field(description="ISO string of the item's last modified timestamp")
+
+
+class S3MetadataSchema(BaseModel):
+    bucket: str = Field(description="Name of the S3 bucket the object was ingested from")
+    object_key: str = Field(description="Object key inside the bucket")
+    file_extension: str = Field(description="File extension including leading dot, empty when the key has none")
