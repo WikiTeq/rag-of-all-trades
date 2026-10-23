@@ -33,6 +33,7 @@ requests==2.32.5
 
 # Jira connector
 jira==3.10.5
+pyadf==0.5.2
 
 # Web connector
 llama-index-readers-web==0.6.0

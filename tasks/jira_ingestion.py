@@ -3,6 +3,8 @@ from collections.abc import Iterator
 from typing import Any
 
 from jira import JIRA
+from pyadf import Document as ADFDocument
+from pyadf import PyADFError
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -31,6 +33,9 @@ class JiraIngestionJob(IngestionJob):
         - config.max_results: Maximum number of issues to fetch (optional, default 50)
         - config.load_comments: Whether to load issue comments (optional, default False)
         - config.max_comments: Maximum comments to include per issue (optional, default 10)
+        - config.rest_api_version: Jira REST API version, "3" or "2" (optional, default "3").
+          Version 3 returns descriptions and comments as ADF, which is converted to Markdown.
+          Jira Server / Data Center has no version 3 API and needs "2".
         - config.schedules: Celery schedule in seconds (optional)
     """
 
@@ -77,6 +82,10 @@ class JiraIngestionJob(IngestionJob):
         if self.max_comments <= 0:
             raise ValueError("max_comments must be positive")
 
+        self.rest_api_version = str(cfg.get("rest_api_version", "3"))
+        if self.rest_api_version not in ("2", "3"):
+            raise ValueError("rest_api_version must be '2' or '3' in Jira connector config")
+
         # Build authenticated JIRA client
         self._jira = self._build_client()
 
@@ -92,6 +101,7 @@ class JiraIngestionJob(IngestionJob):
             return JIRA(
                 server=self.server_url,
                 basic_auth=(self.email, self.api_token),
+                options={"rest_api_version": self.rest_api_version},
             )
         else:
             # Personal Access Token — supported by Jira Server / Data Center
@@ -99,6 +109,7 @@ class JiraIngestionJob(IngestionJob):
             options = {
                 "server": self.server_url,
                 "headers": {"Authorization": f"Bearer {self.api_token}"},
+                "rest_api_version": self.rest_api_version,
             }
             return JIRA(options=options)
 
@@ -211,9 +222,10 @@ class JiraIngestionJob(IngestionJob):
         summary = getattr(issue.fields, "summary", "") or ""
         parts.append(f"# {summary}\n")
 
-        description = getattr(issue.fields, "description", "") or ""
+        # Read the raw JSON: the jira library wraps ADF objects in non-dict PropertyHolder instances.
+        description = issue.raw["fields"].get("description") or ""
         if isinstance(description, dict):
-            description = self._extract_adf_text(description)
+            description = self._adf_to_markdown(description, f"{issue.key} description")
         description = description.strip()
         if description:
             parts.append(description)
@@ -267,11 +279,11 @@ class JiraIngestionJob(IngestionJob):
         for comment in comments:
             author = self._safe_display_name(getattr(comment, "author", None))
             created = getattr(comment, "created", "") or ""
-            body = getattr(comment, "body", "") or ""
+            body = comment.raw.get("body") or ""
             if body == "":
                 continue
             if isinstance(body, dict):
-                body = self._extract_adf_text(body)
+                body = self._adf_to_markdown(body, f"{issue.key} comment {getattr(comment, 'id', '')}")
             body = body.strip()
             if not body:
                 continue
@@ -282,34 +294,29 @@ class JiraIngestionJob(IngestionJob):
 
         return "\n\n".join(["## Comments", *lines])
 
+    def _adf_to_markdown(self, adf: dict, where: str) -> str:
+        """Convert an Atlassian Document Format (ADF) document to Markdown.
+
+        pyadf rejects some node types (for example ``decisionList`` and ``layoutSection``).
+        For those documents, fall back to the plain text of the tree so the issue is still indexed.
+        """
+        try:
+            return ADFDocument(adf).to_markdown()
+        except PyADFError as e:
+            logger.warning(
+                f"[{self.source_name}] pyadf could not convert {where}, falling back to plain text: "
+                f"{str(e).splitlines()[0]}"
+            )
+            return "\n".join(JiraIngestionJob._adf_text_nodes(adf))
+
     @staticmethod
-    def _extract_adf_text(adf: dict) -> str:
-        """Recursively extract plain text from an Atlassian Document Format (ADF) node."""
-        text_parts: list[str] = []
-
-        def walk(node: Any) -> None:
-            if isinstance(node, dict):
-                node_type = node.get("type", "")
-                # Text leaf node
-                if node_type == "text":
-                    text_parts.append(node.get("text", ""))
-                    return
-                # Heading — prepend Markdown '#' markers
-                if node_type == "heading":
-                    level = node.get("attrs", {}).get("level", 1)
-                    prefix = "#" * level + " "
-                    for child in node.get("content", []):
-                        if child.get("type") == "text":
-                            text_parts.append(prefix + child.get("text", ""))
-                    return
-                for child in node.get("content", []):
-                    walk(child)
-            elif isinstance(node, list):
-                for item in node:
-                    walk(item)
-
-        walk(adf)
-        return "\n".join(text_parts)
+    def _adf_text_nodes(node: Any) -> Iterator[str]:
+        """Yield the text of every ADF text node, in document order."""
+        if isinstance(node, dict):
+            if node.get("type") == "text":
+                yield node.get("text", "")
+            for child in node.get("content", []):
+                yield from JiraIngestionJob._adf_text_nodes(child)
 
     @staticmethod
     def _safe_display_name(obj: Any) -> str:
