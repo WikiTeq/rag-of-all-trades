@@ -4,6 +4,7 @@ from tasks.box_ingestion import BoxIngestionJob
 from tasks.confluence_ingestion import ConfluenceIngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.dropbox_ingestion import DropboxIngestionJob
+from tasks.fireflies_ingestion import FirefliesIngestionJob
 from tasks.github_ingestion import GitHubIngestionJob
 from tasks.imap_ingestion import IMAPIngestionJob
 from tasks.jira_ingestion import JiraIngestionJob
@@ -52,3 +53,4 @@ IngestionJobFactory.register("github", GitHubIngestionJob)
 IngestionJobFactory.register("notion", NotionIngestionJob)
 IngestionJobFactory.register("dropbox", DropboxIngestionJob)
 IngestionJobFactory.register("confluence", ConfluenceIngestionJob)
+IngestionJobFactory.register("fireflies", FirefliesIngestionJob)
