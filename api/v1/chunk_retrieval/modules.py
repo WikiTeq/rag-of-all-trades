@@ -1,5 +1,6 @@
 from llama_index.core import Settings, VectorStoreIndex
 from llama_index.core.retrievers import QueryFusionRetriever
+from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
 from llama_index.core.schema import NodeWithScore
 from llama_index.core.vector_stores.types import (
     FilterCondition,
@@ -144,7 +145,7 @@ class RAGQueryEngine:
         )
         fusion_retriever = QueryFusionRetriever(
             retrievers=[dense_retriever, sparse_retriever],
-            mode="reciprocal_rerank",
+            mode=FUSION_MODES.RECIPROCAL_RANK,
             num_queries=1,  # skip LLM-based query rewriting — this endpoint is LLM-free
             use_async=False,  # sequential, predictable; matches the non-fused path's behavior
             similarity_top_k=top_k,
