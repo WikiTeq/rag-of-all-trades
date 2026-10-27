@@ -721,14 +721,25 @@ class TestJiraIngestionJob(unittest.TestCase):
 
         self.assertIn("before image", raw_content)
 
-    def test_get_raw_content_falls_back_to_plain_text_for_unsupported_adf_node(self):
+    def test_get_raw_content_keeps_formatting_around_unsupported_adf_node(self):
         issue = _make_issue(
             key="TEST-ADF-5",
             description={
                 "type": "doc",
                 "version": 1,
                 "content": [
-                    {"type": "paragraph", "content": [{"type": "text", "text": "intro"}]},
+                    {"type": "heading", "attrs": {"level": 2}, "content": [{"type": "text", "text": "Title"}]},
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {"type": "text", "text": "intro"},
+                            {
+                                "type": "text",
+                                "text": "docs",
+                                "marks": [{"type": "link", "attrs": {"href": "https://example.com"}}],
+                            },
+                        ],
+                    },
                     {
                         "type": "decisionList",
                         "attrs": {"localId": "1"},
@@ -748,8 +759,48 @@ class TestJiraIngestionJob(unittest.TestCase):
         with self.assertLogs("tasks.jira_ingestion", level="WARNING"):
             raw_content = self._make_job().get_raw_content(item)
 
-        self.assertIn("intro", raw_content)
+        self.assertIn("## Title", raw_content)
+        self.assertIn("[docs](https://example.com)", raw_content)
         self.assertIn("ship it", raw_content)
+
+    def test_get_raw_content_keeps_formatting_inside_unsupported_layout_node(self):
+        issue = _make_issue(
+            key="TEST-ADF-6",
+            description={
+                "type": "doc",
+                "version": 1,
+                "content": [
+                    {
+                        "type": "layoutSection",
+                        "content": [
+                            {
+                                "type": "layoutColumn",
+                                "attrs": {"width": 50},
+                                "content": [
+                                    {
+                                        "type": "heading",
+                                        "attrs": {"level": 2},
+                                        "content": [{"type": "text", "text": "Left"}],
+                                    }
+                                ],
+                            },
+                            {
+                                "type": "layoutColumn",
+                                "attrs": {"width": 50},
+                                "content": [{"type": "paragraph", "content": [{"type": "text", "text": "right side"}]}],
+                            },
+                        ],
+                    }
+                ],
+            },
+        )
+        item = IngestionItem(id="jira:TEST-ADF-6", source_ref=issue)
+
+        with self.assertLogs("tasks.jira_ingestion", level="WARNING"):
+            raw_content = self._make_job().get_raw_content(item)
+
+        self.assertIn("## Left", raw_content)
+        self.assertIn("right side", raw_content)
 
     def test_process_item_skips_duplicate_checksum(self):
         issue = _make_issue(key="TEST-99", description="same content")
