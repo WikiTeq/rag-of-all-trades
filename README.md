@@ -685,12 +685,14 @@ Connectors may resolve and store an access control list (ACL) per document,
 gated behind the `ENABLE_ACL` environment variable (default `false`). When
 disabled, ACL resolution is skipped entirely and no `acl` field is stored.
 
-When enabled, each connector implements `get_acl_list()` to resolve the flat
-list of email identities allowed to access a document, or `['*']` for a
-publicly accessible document. The resolved list is sanitized (trimmed,
+A connector can implement `get_acl_list()` to resolve the flat list of email
+identities allowed to access a document, or `['*']` for a publicly accessible
+document. The method is optional and independent of the flag; the flag only
+decides whether the result is stored. The resolved list is sanitized (trimmed,
 lowercased, de-duplicated, sorted) and stored under the `acl` key in document
 metadata — excluded from both the LLM context and the embedding text, so it
-never affects retrieval or generation.
+never affects retrieval or generation. The `acl` key is also left out of the
+`extras` field in query, rephrase and MCP responses.
 
 ACL rules:
 
@@ -706,9 +708,6 @@ ACL rules:
 - When a document's ACL changes on the remote source, the next ingestion run
   re-ingests the document (even if its content is unchanged) so the stored
   `acl` stays current.
-
-This task covers ACL storage and updating only — ACL-based filtering at
-query/retrieval time is not implemented yet.
 
 ```yaml
 sources: # holds the list of sources to ingest from (Connectors)
