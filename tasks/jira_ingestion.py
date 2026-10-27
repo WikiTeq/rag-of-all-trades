@@ -294,20 +294,26 @@ class JiraIngestionJob(IngestionJob):
 
         return "\n\n".join(["## Comments", *lines])
 
-    def _adf_to_markdown(self, adf: dict, where: str) -> str:
-        """Convert an Atlassian Document Format (ADF) document to Markdown.
+    def _adf_to_markdown(self, node: dict, where: str) -> str:
+        """Convert an Atlassian Document Format (ADF) node to Markdown.
 
-        pyadf rejects some node types (for example ``decisionList`` and ``layoutSection``).
-        For those documents, fall back to the plain text of the tree so the issue is still indexed.
+        pyadf rejects some node types (for example ``decisionList`` and ``layoutColumn``). When it
+        rejects a node, convert each child on its own and keep only the plain text of the leaves that
+        pyadf still rejects, so the rest of the document keeps its formatting.
         """
+        doc = node if node.get("type") == "doc" else {"version": 1, "type": "doc", "content": [node]}
         try:
-            return ADFDocument(adf).to_markdown()
+            return ADFDocument(doc).to_markdown()
         except PyADFError as e:
             logger.warning(
-                f"[{self.source_name}] pyadf could not convert {where}, falling back to plain text: "
-                f"{str(e).splitlines()[0]}"
+                f"[{self.source_name}] pyadf could not convert {node.get('type')} in {where}, "
+                f"converting its children separately: {str(e).splitlines()[0]}"
             )
-            return "\n".join(JiraIngestionJob._adf_text_nodes(adf))
+        children = node.get("content") or []
+        if not children:
+            return "\n".join(JiraIngestionJob._adf_text_nodes(node))
+        parts = (self._adf_to_markdown(child, where) for child in children)
+        return "\n\n".join(part for part in parts if part.strip())
 
     @staticmethod
     def _adf_text_nodes(node: Any) -> Iterator[str]:
