@@ -203,3 +203,18 @@ async def test_query_endpoint_passes_empty_list_when_no_filters():
         )
 
     rag_engine.retrieve_top_k.assert_called_once_with(query="test", top_k=5, metadata=[])
+
+
+class TestBuildReferences:
+    def test_extras_exclude_acl_and_reserved_keys(self):
+        node = _DummyNodeWithScore("text")
+        node.node.metadata = {
+            "source_name": "s",
+            "title": "t",
+            "acl": ["bob@example.com"],
+            "author": "alice",
+        }
+
+        refs = RAGQueryEngine.build_references([node])
+
+        assert refs[0]["extras"] == {"author": "alice"}
