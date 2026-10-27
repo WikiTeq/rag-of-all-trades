@@ -64,6 +64,12 @@ class TestMetadataFilterItemSchema:
         with pytest.raises(ValidationError):
             _filter_adapter.validate_python({"name": name, "operator": "EQ", "value": "val"})
 
+    @pytest.mark.parametrize("operator", ["EQ", "IN"])
+    def test_acl_name_rejected(self, operator):
+        value = "bob@example.com" if operator == "EQ" else ["bob@example.com"]
+        with pytest.raises(ValidationError, match="acl"):
+            _filter_adapter.validate_python({"name": "acl", "operator": operator, "value": value})
+
     @pytest.mark.parametrize("name", ["field", "field_name", "field-name", "field.name", "Field123", "field name"])
     def test_valid_name_accepted(self, name):
         item = _filter_adapter.validate_python({"name": name, "operator": "EQ", "value": "val"})
