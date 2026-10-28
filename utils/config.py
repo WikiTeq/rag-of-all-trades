@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 
 import yaml
-from pydantic import field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from utils.api import validate_similarity_cutoff
@@ -12,6 +12,18 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = BASE_DIR / ".env"
 YAML_PATH = BASE_DIR / "config.yaml"
 DEFAULT_SIMILARITY_CUTOFF = 0.1
+
+
+class VectorStoreSettings(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    hybrid_search: bool = True
+    similarity_cutoff: float = DEFAULT_SIMILARITY_CUTOFF
+
+    @field_validator("similarity_cutoff", mode="before")
+    @classmethod
+    def validate_cutoff(cls, v):
+        return DEFAULT_SIMILARITY_CUTOFF if v is None else validate_similarity_cutoff(float(v))
 
 
 class EnvSettings(BaseSettings):
@@ -96,9 +108,8 @@ class Settings:
         }
 
     @property
-    def SIMILARITY_CUTOFF(self) -> float:
-        value = self.yaml.get("vector_store", {}).get("similarity_cutoff")
-        return validate_similarity_cutoff(DEFAULT_SIMILARITY_CUTOFF if value is None else float(value))
+    def VECTOR_STORE(self):
+        return VectorStoreSettings(**self.yaml.get("vector_store", {})).model_dump()
 
     @property
     def EMBEDDING(self):

@@ -1038,6 +1038,9 @@ Chunks with a score below the similarity cutoff (cosine similarity, `0.0` to `1.
 The default is `vector_store.similarity_cutoff` in `config.yaml` (`0.1` if not set). To override it for one request, add
 `similarity_cutoff` to the request body. This also applies to `/api/v1/rephrase` and the MCP tools.
 
+With `hybrid_search` on, the cutoff filters the vector (cosine) results before they are fused with the full-text
+results. Full-text matches are not filtered by it.
+
 **Response example**:
 
 ```json

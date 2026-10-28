@@ -1,8 +1,9 @@
 from llama_index.core import Settings, VectorStoreIndex
+from llama_index.core.base.base_retriever import BaseRetriever
 from llama_index.core.postprocessor import SimilarityPostprocessor
 from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.core.retrievers.fusion_retriever import FUSION_MODES
-from llama_index.core.schema import NodeWithScore
+from llama_index.core.schema import NodeWithScore, QueryBundle
 from llama_index.core.vector_stores.types import (
     FilterCondition,
     FilterOperator,
@@ -13,7 +14,6 @@ from llama_index.core.vector_stores.types import (
 )
 
 from api.v1.chunk_retrieval.schema import MetadataFilterItem
-from utils.config import DEFAULT_SIMILARITY_CUTOFF
 from utils.llm_embedding import embed_model, llm
 
 Settings.llm = llm
@@ -49,12 +49,24 @@ _OPERATOR_MAP: dict[str, FilterOperator] = {
 }
 
 
+class _SimilarityCutoffRetriever(BaseRetriever):
+    """Drops nodes below the cutoff from the wrapped retriever's results."""
+
+    def __init__(self, retriever: BaseRetriever, similarity_cutoff: float):
+        self._retriever = retriever
+        self._postprocessor = SimilarityPostprocessor(similarity_cutoff=similarity_cutoff)
+        super().__init__()
+
+    def _retrieve(self, query_bundle: QueryBundle) -> list[NodeWithScore]:
+        return self._postprocessor.postprocess_nodes(self._retriever.retrieve(query_bundle), query_bundle)
+
+
 class RAGQueryEngine:
     def __init__(
         self,
         vector_store: VectorStore,
-        hybrid_search: bool = False,
-        default_similarity_cutoff: float = DEFAULT_SIMILARITY_CUTOFF,
+        hybrid_search: bool,
+        default_similarity_cutoff: float,
     ):
         self.vector_store = vector_store
         self.hybrid_search = hybrid_search
@@ -116,13 +128,13 @@ class RAGQueryEngine:
         # Convert metadata dict → MetadataFilters
         metadata_filters = self._build_filter_object(metadata)
 
+        cutoff = self.default_similarity_cutoff if similarity_cutoff is None else similarity_cutoff
         if not self.hybrid_search:
             retriever = self._index_cache.as_retriever(
                 similarity_top_k=top_k,
                 filters=metadata_filters,
             )
             nodes = retriever.retrieve(query)[:top_k]
-            cutoff = self.default_similarity_cutoff if similarity_cutoff is None else similarity_cutoff
             return SimilarityPostprocessor(similarity_cutoff=cutoff).postprocess_nodes(nodes)
 
         # Hybrid search: fuse a dense-similarity retriever and a sparse
@@ -137,11 +149,19 @@ class RAGQueryEngine:
         # (https://github.com/WikiTeq/rag-of-all-trades/pull/98#discussion_r3978297351).
         # RRF instead ranks each leg independently by its own metric and
         # fuses by rank (1 / (rank + 60)), which is scale-agnostic.
+        #
+        # The similarity cutoff is applied to the dense leg before fusion,
+        # because only its scores are cosine similarities. Fused RRF scores
+        # peak around 0.033, so a cutoff applied after fusion would drop
+        # every result. Keyword (sparse) matches are kept regardless of it.
         window = _fusion_window(top_k)
-        dense_retriever = self._index_cache.as_retriever(
-            vector_store_query_mode=VectorStoreQueryMode.DEFAULT,
-            similarity_top_k=window,
-            filters=metadata_filters,
+        dense_retriever = _SimilarityCutoffRetriever(
+            self._index_cache.as_retriever(
+                vector_store_query_mode=VectorStoreQueryMode.DEFAULT,
+                similarity_top_k=window,
+                filters=metadata_filters,
+            ),
+            cutoff,
         )
         sparse_retriever = self._index_cache.as_retriever(
             vector_store_query_mode=VectorStoreQueryMode.SPARSE,
