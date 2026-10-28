@@ -1,6 +1,13 @@
 from typing import Any
 
 
+def validate_similarity_cutoff(value: float | None) -> float | None:
+    """Accept None (use the configured default) or a cutoff between 0.0 and 1.0."""
+    if value is not None and not (0.0 <= value <= 1.0):
+        raise ValueError("similarity_cutoff must be between 0.0 and 1.0")
+    return value
+
+
 def format_chunks(nodes_with_score: list[Any]) -> list[str]:
     """Format retrieved nodes as human-readable strings with score and text."""
     chunks: list[str] = []

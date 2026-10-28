@@ -1,10 +1,13 @@
 from pydantic import BaseModel, field_validator
 
+from utils.api import validate_similarity_cutoff
+
 
 # Request Model
 class QueryRequest(BaseModel):
     query: str
     top_k: int = 20
+    similarity_cutoff: float | None = None
 
     @field_validator("query")
     @classmethod
@@ -19,6 +22,8 @@ class QueryRequest(BaseModel):
         if not (1 <= value <= 100):
             raise ValueError("top_k must be between 1 and 100")
         return value
+
+    _validate_similarity_cutoff = field_validator("similarity_cutoff")(validate_similarity_cutoff)
 
 
 # Source Reference Model

@@ -31,3 +31,14 @@ def test_top_k_invalid_raises(top_k):
 def test_empty_query_raises(query):
     with pytest.raises(ValidationError):
         QueryRequest(query=query)
+
+
+@pytest.mark.parametrize("value", [0.0, 0.1, 1.0])
+def test_similarity_cutoff_valid(value):
+    assert QueryRequest(query="test", similarity_cutoff=value).similarity_cutoff == value
+
+
+@pytest.mark.parametrize("value", [-0.01, 1.01])
+def test_similarity_cutoff_invalid_raises(value):
+    with pytest.raises(ValidationError):
+        QueryRequest(query="test", similarity_cutoff=value)

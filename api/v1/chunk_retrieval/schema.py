@@ -3,6 +3,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from utils.api import validate_similarity_cutoff
+
 _SAFE_NAME_PATTERN = re.compile(r"^[0-9a-zA-Z.\-_ ]+$")
 _SAFE_VALUE_PATTERN = re.compile(r"^[0-9a-zA-Z.\-_;,:?!\[\]=@() ]+$")
 
@@ -66,6 +68,7 @@ MetadataFilterItem = Annotated[
 class QueryRequest(BaseModel):
     query: str
     top_k: int = 20
+    similarity_cutoff: float | None = None
     metadata_filters: list[MetadataFilterItem] | None = None
 
     @field_validator("query")
@@ -81,6 +84,8 @@ class QueryRequest(BaseModel):
         if not (1 <= value <= 100):
             raise ValueError("top_k must be between 1 and 100")
         return value
+
+    _validate_similarity_cutoff = field_validator("similarity_cutoff")(validate_similarity_cutoff)
 
 
 class SourceReference(BaseModel):

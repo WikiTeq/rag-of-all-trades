@@ -929,6 +929,7 @@ vector_store:
   hybrid_search: true # whether to combine dense vector similarity with sparse full-text search (pgvector text_search_tsv) at query time, or use dense-only
   chunk_size: 512 # chunk size for vector indexing
   chunk_overlap: 50 # overlap between chunks
+  similarity_cutoff: 0.1 # default minimum score (0.0-1.0) for retrieved chunks, 0.1 if omitted
   # hnsw indexes settings
   hnsw:
     hnsw_m: 16 # number of neighbors
@@ -1032,6 +1033,13 @@ curl -X 'POST' \
   "top_k": 5
 }'
 ```
+
+Chunks with a score below the similarity cutoff (cosine similarity, `0.0` to `1.0`) are removed from the results.
+The default is `vector_store.similarity_cutoff` in `config.yaml` (`0.1` if not set). To override it for one request, add
+`similarity_cutoff` to the request body. This also applies to `/api/v1/rephrase` and the MCP tools.
+
+With `hybrid_search` on, the cutoff filters the vector (cosine) results before they are fused with the full-text
+results. Full-text matches are not filtered by it.
 
 **Response example**:
 
