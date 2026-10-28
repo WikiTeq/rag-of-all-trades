@@ -52,11 +52,25 @@ def _settings_with_yaml(yaml_data):
         ({"vector_store": {"similarity_cutoff": 0}}, 0.0),
     ],
 )
-def test_similarity_cutoff_from_yaml(yaml_data, expected):
-    assert _settings_with_yaml(yaml_data).SIMILARITY_CUTOFF == expected
+def test_vector_store_similarity_cutoff_from_yaml(yaml_data, expected):
+    assert _settings_with_yaml(yaml_data).VECTOR_STORE["similarity_cutoff"] == expected
+
+
+def test_vector_store_keeps_other_yaml_keys():
+    settings = _settings_with_yaml({"vector_store": {"table_name": "t"}})
+    assert settings.VECTOR_STORE == {
+        "table_name": "t",
+        "hybrid_search": True,
+        "similarity_cutoff": DEFAULT_SIMILARITY_CUTOFF,
+    }
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_vector_store_hybrid_search_from_yaml(value):
+    assert _settings_with_yaml({"vector_store": {"hybrid_search": value}}).VECTOR_STORE["hybrid_search"] is value
 
 
 @pytest.mark.parametrize("value", [-0.1, 1.5])
-def test_similarity_cutoff_out_of_range_raises(value):
+def test_vector_store_similarity_cutoff_out_of_range_raises(value):
     with pytest.raises(ValueError):
-        _settings_with_yaml({"vector_store": {"similarity_cutoff": value}}).SIMILARITY_CUTOFF
+        _settings_with_yaml({"vector_store": {"similarity_cutoff": value}}).VECTOR_STORE

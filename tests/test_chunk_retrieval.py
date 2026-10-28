@@ -41,9 +41,10 @@ def _real_node_with_score(text: str, score: float) -> NodeWithScore:
     return NodeWithScore(node=TextNode(text=text, id_=text), score=score)
 
 
-def _make_engine(hybrid_search: bool = False):
-    vector_store = Mock()
-    return RAGQueryEngine(vector_store=vector_store, hybrid_search=hybrid_search)
+def _make_engine(hybrid_search: bool = False, default_similarity_cutoff: float = 0.1):
+    return RAGQueryEngine(
+        vector_store=Mock(), hybrid_search=hybrid_search, default_similarity_cutoff=default_similarity_cutoff
+    )
 
 
 class TestMetadataFilterItemSchema:
@@ -388,14 +389,14 @@ async def test_query_endpoint_passes_empty_list_when_no_filters():
 class TestRetrieveTopKSimilarityCutoff:
     @staticmethod
     def _engine_returning(scores, **engine_kwargs):
-        engine = RAGQueryEngine(vector_store=Mock(), **engine_kwargs)
+        engine = _make_engine(**engine_kwargs)
         engine._index_cache = Mock()
         engine._index_cache.as_retriever.return_value.retrieve.return_value = [
             _DummyNodeWithScore(f"chunk-{i}", score=s) for i, s in enumerate(scores)
         ]
         return engine
 
-    def test_default_cutoff_is_0_1(self):
+    def test_configured_cutoff_applied_when_request_has_none(self):
         engine = self._engine_returning([0.05, 0.1, 0.9])
         assert [n.score for n in engine.retrieve_top_k("q")] == [0.1, 0.9]
 
@@ -403,7 +404,7 @@ class TestRetrieveTopKSimilarityCutoff:
         engine = self._engine_returning([0.2, 0.5, 0.9])
         assert [n.score for n in engine.retrieve_top_k("q", similarity_cutoff=0.5)] == [0.5, 0.9]
 
-    def test_engine_default_used_when_request_cutoff_is_none(self):
+    def test_settings_cutoff_used_when_request_cutoff_is_none(self):
         engine = self._engine_returning([0.2, 0.5, 0.9], default_similarity_cutoff=0.6)
         assert [n.score for n in engine.retrieve_top_k("q", similarity_cutoff=None)] == [0.9]
 
@@ -414,6 +415,35 @@ class TestRetrieveTopKSimilarityCutoff:
     def test_all_nodes_below_cutoff_returns_empty_list(self):
         engine = self._engine_returning([0.01, 0.02])
         assert engine.retrieve_top_k("q") == []
+
+    @staticmethod
+    def _hybrid_engine(dense_scores, sparse_scores):
+        engine = _make_engine(hybrid_search=True)
+        legs = {
+            VectorStoreQueryMode.DEFAULT: [_real_node_with_score(f"dense-{i}", s) for i, s in enumerate(dense_scores)],
+            VectorStoreQueryMode.SPARSE: [_real_node_with_score(f"sparse-{i}", s) for i, s in enumerate(sparse_scores)],
+        }
+
+        def as_retriever(**kwargs):
+            retriever = Mock()
+            retriever.retrieve.return_value = legs[kwargs["vector_store_query_mode"]]
+            return retriever
+
+        engine._index_cache = Mock()
+        engine._index_cache.as_retriever.side_effect = as_retriever
+        return engine
+
+    def test_hybrid_cutoff_filters_dense_leg_before_fusion(self):
+        engine = self._hybrid_engine(dense_scores=[0.9, 0.05], sparse_scores=[])
+        assert [n.node.get_content() for n in engine.retrieve_top_k("q")] == ["dense-0"]
+
+    def test_hybrid_cutoff_keeps_sparse_matches_with_low_raw_scores(self):
+        engine = self._hybrid_engine(dense_scores=[0.9], sparse_scores=[0.01])
+        assert {n.node.get_content() for n in engine.retrieve_top_k("q")} == {"dense-0", "sparse-0"}
+
+    def test_hybrid_request_cutoff_overrides_default(self):
+        engine = self._hybrid_engine(dense_scores=[0.9, 0.5], sparse_scores=[])
+        assert [n.node.get_content() for n in engine.retrieve_top_k("q", similarity_cutoff=0.6)] == ["dense-0"]
 
 
 class TestSimilarityCutoffSchema:
