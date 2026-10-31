@@ -1,0 +1,226 @@
+from __future__ import annotations
+
+import logging
+import re
+from collections.abc import Iterator
+from typing import Any
+
+from tasks.base import IngestionJob
+from tasks.helper_classes.ingestion_item import IngestionItem
+from utils.http import RetrySession
+from utils.parse import parse_list, parse_timestamp
+from utils.text import slugify
+
+logger = logging.getLogger(__name__)
+
+GITBOOK_API_BASE = "https://api.gitbook.com/v1"
+
+
+class GitBookClient:
+    """REST client for the GitBook API v1."""
+
+    def __init__(self, api_token: str) -> None:
+        self._headers = {
+            "Authorization": f"Bearer {api_token}",
+            "Content-Type": "application/json",
+        }
+        self._session = RetrySession()
+
+    def _paginate(self, url: str) -> Iterator[dict]:
+        """Yield every item of a cursor-paginated list endpoint, following `next.page`."""
+        seen: set[str] = set()
+        params: dict[str, str] | None = None
+        while True:
+            resp = self._session.get(url, headers=self._headers, params=params)
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("items")
+            if not isinstance(items, list):
+                raise ValueError(f"GitBook response from {url} has no `items` list")
+            yield from items
+            next_page = data.get("next")
+            if not next_page:
+                return
+            cursor = next_page.get("page") if isinstance(next_page, dict) else None
+            if not isinstance(cursor, str) or not cursor:
+                raise ValueError(f"GitBook pagination from {url} returned an invalid cursor: {next_page!r}")
+            if cursor in seen:
+                raise ValueError(f"GitBook pagination from {url} repeated cursor {cursor!r}")
+            seen.add(cursor)
+            params = {"page": cursor}
+
+    def list_orgs(self) -> list[dict]:
+        """Return all organizations accessible to the token."""
+        return list(self._paginate(f"{GITBOOK_API_BASE}/orgs"))
+
+    def list_spaces(self) -> list[dict]:
+        """Return all spaces accessible to the token across all organizations."""
+        spaces: list[dict] = []
+        for org in self.list_orgs():
+            org_id = org.get("id")
+            if not org_id:
+                continue
+            spaces.extend(self._paginate(f"{GITBOOK_API_BASE}/orgs/{org_id}/spaces"))
+        return spaces
+
+    def list_pages(self, space_id: str) -> list[dict]:
+        """Return the page tree for a space (nested sub-pages, not paginated)."""
+        resp = self._session.get(
+            f"{GITBOOK_API_BASE}/spaces/{space_id}/content/pages",
+            headers=self._headers,
+        )
+        resp.raise_for_status()
+        pages = resp.json().get("pages")
+        if not isinstance(pages, list):
+            raise ValueError(f"GitBook response for space {space_id!r} has no `pages` list")
+        return pages
+
+    def get_page(self, space_id: str, page_id: str) -> dict:
+        """Return the page with its content rendered as Markdown in the `markdown` field."""
+        resp = self._session.get(
+            f"{GITBOOK_API_BASE}/spaces/{space_id}/content/page/{page_id}",
+            params={"format": "markdown"},
+            headers=self._headers,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def close(self) -> None:
+        self._session.close()
+
+
+def _flatten_pages(pages: list[dict], parent_id: str | None = None) -> Iterator[tuple[dict, str | None]]:
+    """Yield every page with its parent page ID, recursing into nested sub-pages."""
+    for page in pages:
+        yield page, parent_id
+        yield from _flatten_pages(page.get("pages") or [], page.get("id"))
+
+
+class GitBookIngestionJob(IngestionJob):
+    """Ingestion connector for GitBook spaces.
+
+    Fetches pages via the GitBook REST API and stores them in the vector store.
+
+    Configuration (config.yaml):
+        - config.api_token: GitBook API token (required)
+        - config.space_ids: list of space IDs to ingest (optional, comma-separated
+          string or list); if omitted, all spaces accessible to the token are ingested
+    """
+
+    # The API prepends a YAML block (for example the page description) to the Markdown.
+    _FRONT_MATTER = re.compile(r"\A---\n.*?\n---\n", re.DOTALL)
+
+    @property
+    def source_type(self) -> str:
+        return "gitbook"
+
+    def __init__(self, config: dict) -> None:
+        super().__init__(config)
+
+        cfg = config.get("config", {})
+
+        api_token = cfg.get("api_token", "").strip()
+        if not api_token:
+            raise ValueError("api_token is required in GitBook connector config")
+
+        self.space_ids: list[str] = parse_list(cfg.get("space_ids", []))
+        self._client = GitBookClient(api_token)
+
+    def list_items(self) -> Iterator[IngestionItem]:
+        try:
+            total = 0
+            for space_id in self._resolve_space_ids():
+                for page, parent_id in _flatten_pages(self._client.list_pages(space_id)):
+                    page_id = page.get("id")
+                    if not page_id:
+                        logger.warning(
+                            f"[{self.source_name}] Skipping page with missing id in space {space_id!r}: "
+                            f"title={page.get('title')!r} slug={page.get('slug')!r}"
+                        )
+                        continue
+
+                    page["_space_id"] = space_id
+                    page["_parent_id"] = parent_id
+                    updated_at = parse_timestamp(page.get("updatedAt"))
+                    yield IngestionItem(
+                        id=f"gitbook:{space_id}:{page_id}",
+                        source_ref=page,
+                        last_modified=updated_at,
+                    )
+                    total += 1
+
+            logger.info(f"[{self.source_name}] Found {total} page(s)")
+        finally:
+            self._client.close()
+
+    def get_raw_content(self, item: IngestionItem) -> str:
+        page = item.source_ref
+        space_id = page.get("_space_id", "")
+        page_id = page.get("id", "")
+        title = page.get("title") or ""
+
+        try:
+            detail = self._client.get_page(space_id, page_id)
+        except Exception as exc:
+            logger.error(f"[{self.source_name}] Failed to fetch page {page_id!r} in space {space_id!r}: {exc}")
+            return ""
+
+        markdown = detail.get("markdown")
+        content = self._FRONT_MATTER.sub("", markdown, count=1).strip() if isinstance(markdown, str) else ""
+
+        if not content:
+            logger.warning(f"[{self.source_name}] Empty content for page {page_id!r} in space {space_id!r}")
+            return ""
+
+        first_line = content.split("\n", 1)[0].lstrip("# ").strip()
+        if title and first_line.lower() != title.lower():
+            return f"# {title}\n\n{content}"
+        return content
+
+    def get_item_name(self, item: IngestionItem) -> str:
+        page = item.source_ref
+        space_id = page.get("_space_id", "")
+        page_id = page.get("id", "")
+        return slugify(f"gitbook-{space_id}-{page_id}", max_len=255)
+
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        updated_at = item.source_ref.get("updatedAt")
+        if not updated_at:
+            return None
+        page_id = item.source_ref.get("id", "")
+        space_id = item.source_ref.get("_space_id", "")
+        return f"{space_id}:{page_id}:{updated_at}"
+
+    def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
+        page = item.source_ref
+        return {
+            "space_id": page.get("_space_id", ""),
+            "page_id": str(page.get("id", "")),
+            "page_title": page.get("linkTitle") or page.get("title") or "",
+            "page_url": (page.get("urls") or {}).get("app") or "",
+            "parent_page_id": page.get("_parent_id") or "",
+            "description": page.get("description") or "",
+            "tags": self._tag_slugs(page.get("tags")),
+            "created_at": page.get("createdAt") or "",
+            "updated_at": page.get("updatedAt") or "",
+        }
+
+    @staticmethod
+    def _tag_slugs(tags: Any) -> list[str]:
+        """Return the slugs of the page tags, skipping malformed entries."""
+        slugs: list[str] = []
+        for entry in tags or []:
+            tag = entry.get("tag") if isinstance(entry, dict) else None
+            slug = tag.get("tag") if isinstance(tag, dict) else None
+            if slug:
+                slugs.append(slug)
+        return slugs
+
+    def _resolve_space_ids(self) -> list[str]:
+        """Return configured space IDs, or fetch all accessible ones if none configured."""
+        if self.space_ids:
+            return self.space_ids
+        spaces = self._client.list_spaces()
+        ids = [s["id"] for s in spaces if s.get("id")]
+        logger.info(f"[{self.source_name}] Discovered {len(ids)} accessible space(s)")
+        return ids

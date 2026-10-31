@@ -46,6 +46,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Outlook (Microsoft 365 / Entra ID mailboxes via Microsoft Graph)
 * GitLab
 * Trello
+* GitBook
 
 ## Embeddings support
 
@@ -1027,6 +1028,30 @@ TRELLO1_API_KEY=your-trello-api-key
 TRELLO1_API_TOKEN=your-trello-api-token
 #TRELLO1_BOARD_IDS=boardid1,boardid2
 TRELLO1_SCHEDULES=3600
+```
+
+### GitBook Connector
+
+Ingests pages from [GitBook](https://www.gitbook.com/) spaces via the GitBook REST API.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "gitbook"
+    name: "gitbook1"
+    config:
+      api_token: "${GITBOOK1_API_TOKEN}"
+      schedules: "${GITBOOK1_SCHEDULES}"
+      # space_ids:                   # optional; if omitted, all accessible spaces are ingested
+      #   - "space_abc123"
+```
+
+```dotenv
+# .env
+
+GITBOOK1_API_TOKEN=your-gitbook-api-token
+GITBOOK1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
