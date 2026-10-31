@@ -12,7 +12,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 
 * Ingestion from S3 buckets with Everything-to-Markdown conversion via [MarkItDown](https://github.com/microsoft/markitdown)
 * Ingestion from local directories via [LlamaIndex SimpleDirectoryReader](https://developers.llamaindex.ai/python/framework/module_guides/loading/simpledirectoryreader/)
-* Ingestion from MediaWiki with Wiki-to-Markdown conversion via [html2text](https://github.com/Alir3z4/html2text)
+* Ingestion from MediaWiki with Wiki-to-Markdown conversion via [MarkItDown](https://github.com/microsoft/markitdown)
 * SerpAPI ingestion from Google Search results with customizable queries
 * Jira ingestion from Cloud and on-premise instances via JQL queries, with optional comment loading
 * Slack ingestion from channels by ID or name/regex pattern, with thread reply support
