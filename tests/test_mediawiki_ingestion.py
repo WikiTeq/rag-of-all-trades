@@ -2,6 +2,7 @@
 
 import json
 import sys
+import time
 from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, Mock, patch
@@ -15,7 +16,7 @@ from requests.adapters import HTTPAdapter
 sys.modules.setdefault("llama_index.readers.mediawiki", MagicMock())
 
 from tasks.helper_classes.ingestion_item import IngestionItem  # noqa: E402
-from tasks.mediawiki_ingestion import HostOverrideAdapter, MediaWikiIngestionJob  # noqa: E402
+from tasks.mediawiki_ingestion import HostOverrideAdapter, MediaWikiIngestionJob, strip_section_edit_links  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -467,6 +468,63 @@ class TestGetRawContent:
         content = job.get_raw_content(item)
 
         assert content == ""
+
+    def test_strips_section_edit_links(self, base_wiki_job):
+        job, reader = base_wiki_job
+        reader._page_to_document.return_value = Document(
+            text='## History[[edit](/w/index.php?title=P&action=edit&section=1 "Edit section: History") | '
+            "[edit source](/w/index.php?title=P&action=edit&section=1)]\n\nBody",
+            metadata={},
+        )
+
+        assert job.get_raw_content(_make_item("P")) == "## History\n\nBody"
+
+
+class TestStripSectionEditLinks:
+    @pytest.mark.parametrize(
+        "text, expected",
+        [
+            ('## A[[edit](/x?section=1 "Edit section: A") | [edit source](/x?section=1)]', "## A"),
+            ("## A[[edit](/x?section=2)]", "## A"),
+            ('# A (b)[[edit](/x "Edit section: A (b)")]', "# A (b)"),
+            ("## History[edit | edit source]", "## History"),
+            ("## A[edit]", "## A"),
+            ("## A[edit source]", "## A"),
+            ("## History\n\n[edit | edit source]\n\nBody", "## History\n\nBody"),
+            ('## A\n\n[[edit](/x?section=1 "Edit section: A") | [edit source](/x?section=1)]\n', "## A\n"),
+        ],
+    )
+    def test_heading_variants(self, text, expected):
+        assert strip_section_edit_links(text) == expected
+
+    def test_long_whitespace_runs_stay_fast(self):
+        text = "## A" + " " * 20000 + "\n" + " " * 20000 + "X"
+        start = time.perf_counter()
+        assert strip_section_edit_links(text) == text
+        assert time.perf_counter() - start < 0.5
+
+    def test_multiple_headings(self):
+        text = "## A[edit]\n\ntext\n\n## B[edit | edit source]\n"
+        assert strip_section_edit_links(text) == "## A\n\ntext\n\n## B\n"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "## Heading",
+            "See reference [1] and [edit] in prose",
+            "Body line ending with [edit]",
+            "## Array [0] notation",
+            "## Use [edit](https://example.com) button in docs",
+            "[edit | edit source]",
+            "Intro paragraph\n\n[edit | edit source]\n\nBody",
+            "### A [edit | edit source]",
+            "## Supported commands [edit]",
+            "## History\n[edit]\nBody",
+            "## Heading\n\nBody\n\n[edit]\n",
+        ],
+    )
+    def test_keeps_other_content(self, text):
+        assert strip_section_edit_links(text) == text
 
 
 # ---------------------------------------------------------------------------
