@@ -87,7 +87,7 @@ class BitbucketClient:
                 data = resp.json()
             except Exception as e:
                 logger.error(f"Bitbucket API error listing {path or '/'!r} in {workspace}/{repo}@{branch}: {e}")
-                break
+                raise
 
             params = {}
 
@@ -179,7 +179,7 @@ class BitbucketIngestionJob(IngestionJob):
     include/exclude filtering, and cursor-based pagination.
 
     Configuration (config.yaml):
-        - config.username: Bitbucket username (required)
+        - config.username: Atlassian account email used for Basic auth with the API token (required)
         - config.api_token: Bitbucket API token (required)
         - config.workspace: Workspace slug (required)
         - config.repo: Repository slug (required)

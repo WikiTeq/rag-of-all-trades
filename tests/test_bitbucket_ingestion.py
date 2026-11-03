@@ -94,10 +94,17 @@ class TestBitbucketClient(unittest.TestCase):
         second_url = self.mock_get.call_args_list[1].args[0]
         self.assertEqual(second_url, "https://api.bitbucket.org/2.0/page2")
 
-    def test_list_files_stops_on_request_exception(self):
+    def test_list_files_raises_on_request_exception(self):
         self.mock_get.side_effect = Exception("timeout")
-        entries = list(self.client.list_files("ws", "repo", "main"))
-        self.assertEqual(entries, [])
+        with self.assertRaises(Exception):
+            list(self.client.list_files("ws", "repo", "main"))
+
+    def test_list_files_raises_on_http_error(self):
+        resp = _api_response([])
+        resp.raise_for_status.side_effect = Exception("401 Unauthorized")
+        self.mock_get.return_value = resp
+        with self.assertRaises(Exception):
+            list(self.client.list_files("ws", "repo", "main"))
 
     def test_list_files_first_request_uses_pagelen_param(self):
         self.mock_get.return_value = _api_response([])
