@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from collections.abc import Iterable
 from datetime import datetime
@@ -12,6 +13,8 @@ from utils.parse import parse_list
 from utils.text import sanitize_ascii_key
 
 logger = logging.getLogger(__name__)
+
+VIDEO_EXTENSIONS = frozenset({".mp4", ".avi", ".mov", ".mkv", ".webm"})
 
 
 class DirectoryConnectorConfig(BaseModel):
@@ -115,9 +118,17 @@ class DirectoryIngestionJob(IngestionJob):
                 continue
             yield path
 
+    def _video_enabled(self, file_path: Path) -> bool:
+        """Return True when required_exts explicitly lists the file's video extension."""
+        return file_path.suffix.lower() in (self.connector_config.required_exts or [])
+
     def list_items(self):
         for file_path in self._get_discovered_paths():
             if not file_path.is_file():
+                continue
+
+            # Transcription is slow, so videos are read only when required_exts lists them.
+            if file_path.suffix.lower() in VIDEO_EXTENSIONS and not self._video_enabled(file_path):
                 continue
 
             try:
@@ -136,8 +147,23 @@ class DirectoryIngestionJob(IngestionJob):
         """Load one file using the initialized directory reader context."""
         return self.reader.load_resource(str(file_path))
 
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        """Hash video bytes so unchanged videos skip the slow transcription."""
+        file_path = Path(item.source_ref)
+        if file_path.suffix.lower() not in VIDEO_EXTENSIONS:
+            return None
+        try:
+            with file_path.open("rb") as handle:
+                return hashlib.file_digest(handle, lambda: hashlib.md5(usedforsecurity=False)).hexdigest()
+        except OSError as exc:
+            logger.warning("[%s] Failed to hash video: %s", file_path, exc)
+            return None
+
     def get_raw_content(self, item: IngestionItem):
         file_path = Path(item.source_ref)
+
+        if file_path.suffix.lower() in VIDEO_EXTENSIONS:
+            return self.convert_video_to_markdown(file_path)
 
         try:
             docs = self._load_documents_for_path(file_path)
