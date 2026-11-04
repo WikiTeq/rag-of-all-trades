@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from collections.abc import Iterator
 from typing import Any
 from urllib.parse import urlparse, urlsplit
@@ -14,6 +15,28 @@ from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 from utils.parse import parse_bool
 from utils.text import slugify
+
+# MediaWiki adds section edit links ("[edit | edit source]") to every heading. html2text
+# renders them as "[edit | edit source]" (the reader ignores links), either at the end of
+# the heading line (older markup) or on its own line right after the heading (current
+# div.mw-heading markup). Only a group that belongs to a markdown heading is stripped, so
+# brackets elsewhere in an article are kept. The link-markdown form
+# "[[edit](url "title") | [edit source](url)]" is also handled.
+_EDIT_LINK_ITEM = r'(?:\[(?:edit|edit source)\]\((?:[^()\n"]|"[^"\n]*")*\)|edit source|edit)'
+_EDIT_LINK_GROUP = rf"\[{_EDIT_LINK_ITEM}(?: \| {_EDIT_LINK_ITEM})*\]"
+# html2text emits the group directly after the heading text, or after one blank line.
+# Requiring that exact shape keeps headings such as "## Supported commands [edit]" and
+# single-newline "[edit]" lines intact, and avoids overlapping whitespace matchers.
+_SECTION_EDIT_LINKS_RE = re.compile(
+    rf"^(#{{1,6}} [^\n]*?)(?:\n\n)?(?<! ){_EDIT_LINK_GROUP}$",
+    re.MULTILINE,
+)
+
+
+def strip_section_edit_links(text: str) -> str:
+    """Remove trailing MediaWiki section edit links from markdown heading lines."""
+    return _SECTION_EDIT_LINKS_RE.sub(r"\1", text)
+
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +293,7 @@ class MediaWikiIngestionJob(IngestionJob):
             logger.warning(f"Failed to fetch content for page: {page_record.title}")
             return ""
 
-        return doc.text
+        return strip_section_edit_links(doc.text)
 
     def get_item_name(self, item: IngestionItem) -> str:
         """Generate a filesystem-safe, unique filename from the MediaWiki page title.
