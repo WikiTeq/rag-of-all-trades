@@ -1,11 +1,13 @@
 import hashlib
 import unittest
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from docling.datamodel.base_models import ConversionStatus, InputFormat
 
-from tasks.base import IngestionJob
+from tasks.base import VIDEO_ASR_MODELS, IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.schemas import BaseMetadataSchema
 
@@ -453,3 +455,146 @@ class TestIngestionJobMarkdownConversion:
             first = job._get_markitdown()
             second = job._get_markitdown()
             assert first is second
+
+
+class TestIngestionJobVideoConversion:
+    @staticmethod
+    def _segment(text, start, end):
+        return Mock(text=text, source=[Mock(start_time=start, end_time=end)])
+
+    @classmethod
+    def _job_with_result(cls, status, segments=None):
+        if segments is None:
+            segments = [cls._segment("Hello", 0.0, 4.9)]
+        job = DummyIngestionJob({"name": "test-source"})
+        converter = Mock()
+        converter.convert.return_value = Mock(status=status, document=Mock(texts=segments))
+        job._video_converter = converter
+        return job, converter
+
+    def test_returns_transcript_markdown(self):
+        job, converter = self._job_with_result(ConversionStatus.SUCCESS)
+
+        assert job.convert_video_to_markdown("/tmp/a.mp4") == "[00:00-00:04] Hello"
+        converter.convert.assert_called_once_with(Path("/tmp/a.mp4"), raises_on_error=False)
+
+    def test_partial_success_is_accepted(self):
+        job, _ = self._job_with_result(ConversionStatus.PARTIAL_SUCCESS)
+
+        assert job.convert_video_to_markdown("/tmp/a.mp4") == "[00:00-00:04] Hello"
+
+    def test_segments_are_separate_paragraphs_with_hour_timestamps(self):
+        segments = [self._segment("First", 61.2, 65.0), self._segment("Second", 3725.0, 3730.9)]
+        job, _ = self._job_with_result(ConversionStatus.SUCCESS, segments)
+
+        assert job.convert_video_to_markdown("/tmp/a.mp4") == "[01:01-01:05] First\n\n[1:02:05-1:02:10] Second"
+
+    def test_segment_without_source_keeps_text_only(self):
+        segments = [Mock(text=" Plain ", source=[])]
+        job, _ = self._job_with_result(ConversionStatus.SUCCESS, segments)
+
+        assert job.convert_video_to_markdown("/tmp/a.mp4") == "Plain"
+
+    def test_failure_status_raises(self):
+        job, _ = self._job_with_result(ConversionStatus.FAILURE)
+
+        with pytest.raises(RuntimeError, match="a.mp4"):
+            job.convert_video_to_markdown("/tmp/a.mp4")
+
+    def test_converter_exception_propagates(self):
+        job, converter = self._job_with_result(ConversionStatus.SUCCESS)
+        converter.convert.side_effect = OSError("ffmpeg missing")
+
+        with pytest.raises(OSError, match="ffmpeg missing"):
+            job.convert_video_to_markdown("/tmp/a.mp4")
+
+    def test_video_without_speech_returns_empty_string(self):
+        job, _ = self._job_with_result(ConversionStatus.SUCCESS, [])
+
+        assert job.convert_video_to_markdown("/tmp/a.mp4") == ""
+
+    def test_converter_is_lazily_created_for_transcription_only(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        assert job._video_converter is None
+        with (
+            patch("tasks.base.DocumentConverter") as mock_cls,
+            patch("tasks.base.VideoFormatOption") as mock_option,
+            patch("tasks.base.VideoPipelineOptions") as mock_options,
+        ):
+            first = job._get_video_converter()
+            second = job._get_video_converter()
+
+        assert first is second is mock_cls.return_value
+        mock_options.assert_called_once_with(
+            asr_options=VIDEO_ASR_MODELS["tiny"], generate_frame_images=False, enable_diarization=False
+        )
+        mock_option.assert_called_once_with(pipeline_options=mock_options.return_value)
+        mock_cls.assert_called_once_with(
+            allowed_formats=[InputFormat.VIDEO],
+            format_options={InputFormat.VIDEO: mock_option.return_value},
+        )
+
+    def test_video_model_defaults_to_tiny(self):
+        assert DummyIngestionJob({"name": "test-source"}).video_model == "tiny"
+
+    def test_video_model_selects_asr_options(self):
+        job = DummyIngestionJob({"name": "test-source", "config": {"video_model": " Small "}})
+        assert job.video_model == "small"
+        with (
+            patch("tasks.base.DocumentConverter"),
+            patch("tasks.base.VideoFormatOption"),
+            patch("tasks.base.VideoPipelineOptions") as mock_options,
+        ):
+            job._get_video_converter()
+
+        assert mock_options.call_args.kwargs["asr_options"] is VIDEO_ASR_MODELS["small"]
+
+    def test_unknown_video_model_is_rejected(self):
+        with pytest.raises(ValueError, match="video_model must be one of"):
+            DummyIngestionJob({"name": "test-source", "config": {"video_model": "huge"}})
+
+
+class TestIngestionJobEmptyPrecheckedItem:
+    @staticmethod
+    def _job(latest=None):
+        item = IngestionItem(id="item-1", source_ref="src", last_modified=datetime(2026, 1, 2))
+        job = DummyIngestionJob({"name": "test-source"}, items=[item], content_by_id={"item-1": " "})
+        job.get_item_checksum = Mock(return_value="sum-1")
+        job.metadata_tracker = Mock()
+        job.metadata_tracker.get_latest_record.return_value = latest
+        job.vector_manager = Mock()
+        return job, item
+
+    def test_empty_content_with_known_checksum_is_recorded_as_zero_chunks(self):
+        job, item = self._job()
+
+        assert job.process_item(item) == 0
+
+        job.metadata_tracker.record_metadata.assert_called_once_with(
+            "item-1", "sum-1", 1, 0, datetime(2026, 1, 2), extra_metadata={"source_name": "test-source"}
+        )
+        job.metadata_tracker.delete_previous_embeddings.assert_not_called()
+        job.vector_manager.insert_documents.assert_not_called()
+
+    def test_recorded_empty_item_is_skipped_on_next_run(self):
+        job, item = self._job(latest=Mock(checksum="sum-1", version=1))
+
+        assert job.process_item(item) == 0
+
+        job.metadata_tracker.record_metadata.assert_not_called()
+
+    def test_content_that_became_empty_replaces_previous_version(self):
+        job, item = self._job(latest=Mock(checksum="old", version=3))
+
+        assert job.process_item(item) == 0
+
+        job.metadata_tracker.delete_previous_embeddings.assert_called_once_with("item-1")
+        assert job.metadata_tracker.record_metadata.call_args.args[:4] == ("item-1", "sum-1", 4, 0)
+
+    def test_failed_fetch_is_not_recorded(self):
+        job, item = self._job()
+        job.get_raw_content = Mock(side_effect=RuntimeError("boom"))
+
+        assert job.process_item(item) == 0
+
+        job.metadata_tracker.record_metadata.assert_not_called()

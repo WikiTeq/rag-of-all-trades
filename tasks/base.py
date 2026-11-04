@@ -7,8 +7,13 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+from docling.datamodel import asr_model_specs
+from docling.datamodel.base_models import ConversionStatus, InputFormat
+from docling.datamodel.pipeline_options import VideoPipelineOptions
+from docling.document_converter import DocumentConverter, VideoFormatOption
 from llama_index.core import Document
 from markitdown import MarkItDown, StreamInfo
 
@@ -18,6 +23,16 @@ from tasks.helper_classes.vector_store import VectorStoreManager
 from tasks.schemas import BaseMetadataSchema
 
 logger = logging.getLogger(__name__)
+
+# Whisper models Docling can use for video transcription, keyed by the ``video_model`` config value.
+VIDEO_ASR_MODELS = {
+    "tiny": asr_model_specs.WHISPER_TINY,
+    "base": asr_model_specs.WHISPER_BASE,
+    "small": asr_model_specs.WHISPER_SMALL,
+    "medium": asr_model_specs.WHISPER_MEDIUM,
+    "large": asr_model_specs.WHISPER_LARGE,
+    "turbo": asr_model_specs.WHISPER_TURBO,
+}
 
 
 class IngestionJob(ABC):
@@ -55,6 +70,10 @@ class IngestionJob(ABC):
         if self.request_delay < 0:
             raise ValueError("request_delay must be >= 0")
 
+        self.video_model = str(cfg.get("video_model", "tiny")).strip().lower()
+        if self.video_model not in VIDEO_ASR_MODELS:
+            raise ValueError(f"video_model must be one of: {', '.join(VIDEO_ASR_MODELS)}")
+
         self.source_name = config.get("name")
         self.metadata_tracker = MetadataTracker()
         self.vector_manager = VectorStoreManager()
@@ -65,12 +84,66 @@ class IngestionJob(ABC):
 
         # Lazy-initialised MarkItDown instance shared across conversion calls
         self._markitdown: MarkItDown | None = None
+        # Lazy-initialised Docling converter; loading the ASR model is expensive
+        self._video_converter: DocumentConverter | None = None
 
     def _get_markitdown(self) -> MarkItDown:
         """Return a shared MarkItDown instance, creating it on first use."""
         if self._markitdown is None:
             self._markitdown = MarkItDown()
         return self._markitdown
+
+    def _get_video_converter(self) -> DocumentConverter:
+        """Return a shared Docling video converter, creating it on first use.
+
+        Transcription only: frame images and speaker diarization are disabled.
+        """
+        if self._video_converter is None:
+            options = VideoPipelineOptions(
+                asr_options=VIDEO_ASR_MODELS[self.video_model],
+                generate_frame_images=False,
+                enable_diarization=False,
+            )
+            self._video_converter = DocumentConverter(
+                allowed_formats=[InputFormat.VIDEO],
+                format_options={InputFormat.VIDEO: VideoFormatOption(pipeline_options=options)},
+            )
+        return self._video_converter
+
+    @staticmethod
+    def _format_timestamp(seconds: float) -> str:
+        """Format seconds as ``mm:ss``, or ``h:mm:ss`` from one hour."""
+        minutes, secs = divmod(int(seconds), 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+
+    @staticmethod
+    def _format_transcript_segment(item) -> str:
+        """Return a transcript text item prefixed with its ``[start-end]`` time range."""
+        text = item.text.strip()
+        if not text or not item.source:
+            return text
+        track = item.source[0]
+        start = IngestionJob._format_timestamp(track.start_time)
+        end = IngestionJob._format_timestamp(track.end_time)
+        return f"[{start}-{end}] {text}"
+
+    def convert_video_to_markdown(self, video_path: Path | str) -> str:
+        """Transcribe the audio track of a video file to Markdown using Docling.
+
+        Each transcript segment is a paragraph with a ``[mm:ss-mm:ss]`` time prefix
+        (``[h:mm:ss-h:mm:ss]`` past one hour). A video without speech returns an empty string.
+
+        Args:
+            video_path: Path to a local video file (.mp4, .avi, .mov, .mkv, .webm).
+
+        Raises:
+            RuntimeError: When Docling cannot convert the video. The caller can retry later.
+        """
+        result = self._get_video_converter().convert(Path(video_path), raises_on_error=False)
+        if result.status not in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
+            raise RuntimeError(f"Docling video conversion failed for {video_path}: {result.status}")
+        return "\n\n".join(self._format_transcript_segment(item) for item in result.document.texts).strip()
 
     def convert_to_markdown(self, content: bytes | str, fallback: str = "", file_extension: str | None = None) -> str:
         """Convert bytes or text to Markdown using MarkItDown.
@@ -210,6 +283,23 @@ class IngestionJob(ABC):
             self._seen.popitem(last=False)
         return True
 
+    def _record_empty_item(self, item: IngestionItem, item_name: str, checksum: str, latest) -> None:
+        """Store a zero-chunk record so an unchanged empty item is not fetched again.
+
+        Only used when the checksum is known before the content is fetched. Without the
+        record, every run would repeat an expensive fetch (for example video transcription).
+        """
+        if latest:
+            self.metadata_tracker.delete_previous_embeddings(item_name)
+        self.metadata_tracker.record_metadata(
+            item_name,
+            checksum,
+            (latest.version + 1) if latest else 1,
+            0,
+            item.last_modified or datetime.now(UTC),
+            extra_metadata={"source_name": self.source_name},
+        )
+
     def process_item(self, item: IngestionItem):
         """Process a single ingestion item through the complete pipeline.
 
@@ -259,6 +349,7 @@ class IngestionJob(ABC):
                 raw_content = self.get_raw_content(item)
                 if not raw_content.strip():
                     logger.warning(f"Skipping empty content for item: {item.id}")
+                    self._record_empty_item(item, item_name, new_checksum, latest)
                     return 0
 
             if latest:
