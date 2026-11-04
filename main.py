@@ -11,6 +11,7 @@ from slowapi.util import get_remote_address
 from api.mcp_server import create_mcp_server
 from api.v1 import api_v1_router
 from api.v1.chunk_retrieval.modules import RAGQueryEngine
+from api.dashboard import dashboard_router
 from celery_app import celery_app
 from utils.config import settings
 from utils.logger import configure_logging
@@ -59,6 +60,13 @@ def validate_configuration():
     # Validate MCP API key (only if MCP is enabled)
     if settings.env.MCP_ENABLE and not settings.env.MCP_API_KEY:
         errors.append("MCP_API_KEY not configured (required when MCP_ENABLE=1)")
+
+    # Validate dashboard credentials (only if dashboard is enabled)
+    if settings.env.ENABLE_DASHBOARD:
+        if not settings.env.DASHBOARD_USER:
+            errors.append("DASHBOARD_USER must be set when ENABLE_DASHBOARD=1")
+        if not settings.env.DASHBOARD_PASS:
+            errors.append("DASHBOARD_PASS must be set when ENABLE_DASHBOARD=1")
 
     if errors:
         error_msg = "Configuration validation failed:\n" + "\n".join(f"  - {e}" for e in errors)
@@ -186,3 +194,6 @@ async def read_root():
 
 
 app.include_router(api_v1_router)
+
+if settings.env.ENABLE_DASHBOARD:
+    app.include_router(dashboard_router)
