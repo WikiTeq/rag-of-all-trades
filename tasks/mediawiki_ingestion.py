@@ -253,24 +253,32 @@ class MediaWikiIngestionJob(IngestionJob):
         return None
 
     def get_raw_content(self, item: IngestionItem) -> str:
-        """Fetch and return the raw text content of a MediaWiki page.
+        """Fetch a MediaWiki page as HTML and return it converted to Markdown.
 
         Args:
             item: IngestionItem with page_record in source_ref
 
         Returns:
-            str: The raw text content of the page, or empty string if fetch failed
+            str: The Markdown content of the page, or empty string if the fetch
+                or the conversion failed
         """
         page_record = item.source_ref
 
         logger.debug(f"Fetching content for page: {page_record.title}")
-        doc = self._reader._page_to_document(page_record)
+        html = self._reader._get_page_contents(page_record.title)
 
-        if doc is None:
+        if not html:
             logger.warning(f"Failed to fetch content for page: {page_record.title}")
             return ""
 
-        return doc.text
+        markdown = self.convert_to_markdown(html, file_extension=".html")
+
+        # convert_to_markdown returns its input when conversion fails; raw HTML must not be indexed.
+        if markdown == html:
+            logger.warning(f"Failed to convert content for page: {page_record.title}")
+            return ""
+
+        return markdown
 
     def get_item_name(self, item: IngestionItem) -> str:
         """Generate a filesystem-safe, unique filename from the MediaWiki page title.
