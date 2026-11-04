@@ -77,6 +77,7 @@ async def test_rephrase_passes_top_k_from_payload():
         payload = Mock()
         payload.query = "test"
         payload.top_k = 42
+        payload.similarity_cutoff = 0.3
 
         limiter_mock = Mock()
         limiter_mock.limit.return_value = lambda f: f
@@ -89,4 +90,4 @@ async def test_rephrase_passes_top_k_from_payload():
             rag_engine=rag_engine,
         )
 
-    rag_engine.retrieve_top_k.assert_called_once_with(query="test", top_k=42)
+    rag_engine.retrieve_top_k.assert_called_once_with(query="test", top_k=42, similarity_cutoff=0.3)
