@@ -2,7 +2,7 @@
 import base64
 import hashlib
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from typing import Any
 from urllib.parse import quote
 
@@ -11,12 +11,53 @@ from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 from utils.filters import path_accepted
 from utils.http import RetrySession
-from utils.parse import parse_list
+from utils.parse import parse_bool, parse_list, parse_timestamp
 from utils.text import slugify
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+PULL_REQUEST_STATES = ("OPEN", "MERGED", "DECLINED", "SUPERSEDED")
+DEFAULT_PULL_REQUEST_STATES = ("OPEN", "MERGED", "DECLINED")
+
+# One request per PR at most: the first page of comments, never more than this.
+MAX_COMMENTS_PER_PR = 50
+
+# Limit the response to the fields the connector uses. ``comment_count`` lets
+# the connector skip the comments request for PRs without comments.
+_PR_LIST_FIELDS = ",".join(
+    [
+        "next",
+        "values.id",
+        "values.title",
+        "values.description",
+        "values.state",
+        "values.reason",
+        "values.draft",
+        "values.author.display_name",
+        "values.reviewers.display_name",
+        "values.source.branch.name",
+        "values.destination.branch.name",
+        "values.created_on",
+        "values.updated_on",
+        "values.comment_count",
+    ]
+)
+_PR_COMMENT_FIELDS = ",".join(
+    [
+        "next",
+        "values.id",
+        "values.content.raw",
+        "values.user.display_name",
+        "values.parent.id",
+        "values.inline.path",
+        "values.inline.to",
+        "values.created_on",
+        "values.deleted",
+        "values.pending",
+    ]
+)
 
 
 def _dir_excluded(dir_path: str, exclude_directories: set[str]) -> bool:
@@ -59,6 +100,47 @@ class BitbucketClient:
     def _src_url(self, workspace: str, repo: str, branch: str, path: str = "") -> str:
         return f"{self.API_BASE}/repositories/{_encoded_src_path(workspace, repo, branch, path)}"
 
+    def _pull_requests_url(self, workspace: str, repo: str) -> str:
+        return f"{self.API_BASE}/repositories/{quote(workspace, safe='')}/{quote(repo, safe='')}/pullrequests"
+
+    def _get_json(self, url: str, params: Any, action: str) -> dict[str, Any]:
+        """GET ``url`` and return the decoded JSON body, logging and re-raising any error."""
+        try:
+            resp = self._session.get(url, params=params, headers=self._headers)
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.error(f"Bitbucket API error {action}: {e}")
+            raise
+
+    def list_pull_requests(self, workspace: str, repo: str, states: Iterable[str]) -> Iterator[dict[str, Any]]:
+        """Yield every pull request in one of ``states``, following the ``next`` cursor.
+
+        Bitbucket returns only OPEN pull requests when no ``state`` is sent, so
+        the states are always sent explicitly. Errors propagate: a failed
+        listing must fail the job instead of looking like an empty repository.
+        """
+        url = self._pull_requests_url(workspace, repo)
+        params: Any = [("state", s) for s in sorted(states)] + [("pagelen", 50), ("fields", _PR_LIST_FIELDS)]
+
+        while url:
+            data = self._get_json(url, params, f"listing pull requests in {workspace}/{repo}")
+            params = {}
+            yield from data.get("values", [])
+            url = data.get("next", "")
+
+    def list_pull_request_comments(self, workspace: str, repo: str, pr_id: int) -> list[dict[str, Any]]:
+        """Return up to ``MAX_COMMENTS_PER_PR`` comments of one pull request, oldest first."""
+        url = f"{self._pull_requests_url(workspace, repo)}/{pr_id}/comments"
+        params = {"pagelen": MAX_COMMENTS_PER_PR, "fields": _PR_COMMENT_FIELDS}
+        data = self._get_json(url, params, f"fetching comments of pull request {pr_id} in {workspace}/{repo}")
+        if data.get("next"):
+            logger.warning(
+                f"Pull request {pr_id} in {workspace}/{repo} has more than {MAX_COMMENTS_PER_PR} comments; "
+                f"only the first {MAX_COMMENTS_PER_PR} are ingested"
+            )
+        return data.get("values", [])[:MAX_COMMENTS_PER_PR]
+
     def list_files(
         self,
         workspace: str,
@@ -81,14 +163,7 @@ class BitbucketClient:
         params: dict[str, Any] = {"pagelen": 100}
 
         while url:
-            try:
-                resp = self._session.get(url, params=params, headers=self._headers)
-                resp.raise_for_status()
-                data = resp.json()
-            except Exception as e:
-                logger.error(f"Bitbucket API error listing {path or '/'!r} in {workspace}/{repo}@{branch}: {e}")
-                raise
-
+            data = self._get_json(url, params, f"listing {path or '/'!r} in {workspace}/{repo}@{branch}")
             params = {}
 
             for entry in data.get("values", []):
@@ -195,6 +270,17 @@ class BitbucketIngestionJob(IngestionJob):
           exclude_directories)
         - config.exclude_directories: Comma-separated directory prefixes to
           exclude (optional; mutually exclusive with include_directories)
+        - config.include_pull_requests: Also ingest pull requests, one item per
+          pull request (optional, default false; needs the
+          ``read:pullrequest:bitbucket`` token scope). The native Bitbucket
+          issue tracker was removed by Atlassian, so issues are not ingested.
+        - config.pull_request_states: Comma-separated pull request states to
+          ingest, from open, merged, declined, superseded (optional, default
+          "open,merged,declined")
+        - config.include_pull_request_comments: Add the comments of each pull
+          request to its text (optional, default false; requires
+          include_pull_requests). Costs one extra request per changed pull
+          request that has comments, and reads at most 50 comments of each.
     """
 
     @property
@@ -247,6 +333,22 @@ class BitbucketIngestionJob(IngestionJob):
         self.include_directories: set[str] = set(parse_list(include_dir))
         self.exclude_directories: set[str] = set(parse_list(exclude_dir))
 
+        self.include_pull_requests: bool = parse_bool(cfg.get("include_pull_requests", False))
+        self.include_pull_request_comments: bool = parse_bool(cfg.get("include_pull_request_comments", False))
+        if self.include_pull_request_comments and not self.include_pull_requests:
+            raise ValueError(
+                "include_pull_request_comments requires include_pull_requests in Bitbucket connector config"
+            )
+
+        states_value = cfg.get("pull_request_states") or ",".join(DEFAULT_PULL_REQUEST_STATES)
+        self.pull_request_states: set[str] = {s.upper() for s in parse_list(states_value)}
+        unknown_states = self.pull_request_states - set(PULL_REQUEST_STATES)
+        if unknown_states:
+            raise ValueError(
+                f"Unknown pull_request_states {sorted(unknown_states)} in Bitbucket connector config; "
+                f"allowed: {', '.join(s.lower() for s in PULL_REQUEST_STATES)}"
+            )
+
         self._client = BitbucketClient(self.username, self.api_token)
 
         if configured_branch:
@@ -265,7 +367,9 @@ class BitbucketIngestionJob(IngestionJob):
             f"include_ext={self.include_extensions or 'all'}, "
             f"exclude_ext={self.exclude_extensions or 'none'}, "
             f"include_dir={self.include_directories or 'all'}, "
-            f"exclude_dir={self.exclude_directories or 'none'})"
+            f"exclude_dir={self.exclude_directories or 'none'}, "
+            f"include_pull_requests={self.include_pull_requests}, "
+            f"include_pull_request_comments={self.include_pull_request_comments})"
         )
 
     # ------------------------------------------------------------------
@@ -324,6 +428,35 @@ class BitbucketIngestionJob(IngestionJob):
 
         logger.info(f"[{self.source_name}] Found {yielded} file(s)")
 
+        if self.include_pull_requests:
+            yield from self._list_pull_request_items()
+
+    def _list_pull_request_items(self) -> Iterator[IngestionItem]:
+        """Yield one IngestionItem per pull request in the configured states.
+
+        The pull request data from the list response is kept in ``source_ref``,
+        so checksum, text and metadata need no extra request. ``last_modified``
+        is the pull request's ``updated_on``, which the list returns for free.
+        """
+        logger.info(f"[{self.source_name}] Listing pull requests in {self.workspace}/{self.repo}")
+        yielded = 0
+        for pr in self._client.list_pull_requests(self.workspace, self.repo, self.pull_request_states):
+            pr_id = pr.get("id")
+            if pr_id is None:
+                continue
+            yield IngestionItem(
+                id=f"bitbucket:{self.workspace}/{self.repo}:pr:{pr_id}",
+                source_ref=pr,
+                last_modified=parse_timestamp(pr.get("updated_on")),
+            )
+            yielded += 1
+        logger.info(f"[{self.source_name}] Found {yielded} pull request(s)")
+
+    @staticmethod
+    def _is_pull_request(item: IngestionItem) -> bool:
+        """File items keep the path string in ``source_ref``; pull requests keep the API dict."""
+        return isinstance(item.source_ref, dict)
+
     def _iter_entries(self) -> Iterator[dict[str, Any]]:
         """Crawl the repository, scoped to ``include_directories`` when set.
 
@@ -345,31 +478,128 @@ class BitbucketIngestionJob(IngestionJob):
         )
 
     def get_item_checksum(self, item: IngestionItem) -> str | None:
-        """Return the file's ``ETag`` as a checksum, without fetching its content.
+        """Return a cheap change signal for the item, without fetching its content.
 
-        The ETag comes from one one-byte ranged request per item, so unchanged
-        files are skipped without downloading them. Returns None on any error,
-        falling back to content-based MD5.
+        Files: the ``ETag`` from one one-byte ranged request per item, so
+        unchanged files are skipped without downloading them. Returns None on
+        any error, falling back to content-based MD5.
+
+        Pull requests: a hash of ``updated_on`` from the list response, so no
+        request is needed. Bitbucket does not change ``updated_on`` when a
+        comment is added, so with comments enabled the ``comment_count`` joins
+        the hash. Turning comments on or off therefore re-ingests every pull
+        request once.
         """
+        if self._is_pull_request(item):
+            updated_on = item.source_ref.get("updated_on")
+            if not updated_on:
+                return None
+            signal = updated_on
+            if self.include_pull_request_comments:
+                signal += f":{item.source_ref.get('comment_count') or 0}"
+            return hashlib.md5(signal.encode(), usedforsecurity=False).hexdigest()
         return self._client.get_file_etag(self.workspace, self.repo, self.branch, item.source_ref)
 
     def get_raw_content(self, item: IngestionItem) -> str:
-        """Fetch and return the raw file content from Bitbucket."""
+        """Fetch the file content, or render the pull request as text."""
+        if self._is_pull_request(item):
+            pr = item.source_ref
+            comments: list[dict[str, Any]] = []
+            if self.include_pull_request_comments and pr.get("comment_count"):
+                comments = self._client.list_pull_request_comments(self.workspace, self.repo, pr["id"])
+            return self._render_pull_request(pr, comments)
         return self._client.get_file_content(self.workspace, self.repo, self.branch, item.source_ref)
 
+    @staticmethod
+    def _render_pull_request(pr: dict[str, Any], comments: list[dict[str, Any]]) -> str:
+        """Render a pull request and its comments as plain text for embedding."""
+        state = pr.get("state") or "UNKNOWN"
+        if pr.get("draft"):
+            state += " (draft)"
+        reviewers = ", ".join(r["display_name"] for r in pr.get("reviewers") or [] if r.get("display_name"))
+        source = ((pr.get("source") or {}).get("branch") or {}).get("name") or "?"
+        destination = ((pr.get("destination") or {}).get("branch") or {}).get("name") or "?"
+
+        lines = [
+            f"Pull Request #{pr.get('id')}: {pr.get('title') or ''}",
+            f"State: {state}",
+            f"Author: {(pr.get('author') or {}).get('display_name') or 'unknown'}",
+        ]
+        if reviewers:
+            lines.append(f"Reviewers: {reviewers}")
+        lines.append(f"Branch: {source} -> {destination}")
+        lines.append(f"Created: {pr.get('created_on') or 'unknown'}")
+        lines.append(f"Updated: {pr.get('updated_on') or 'unknown'}")
+        if pr.get("reason"):
+            lines.append(f"Reason: {pr['reason']}")
+
+        description = (pr.get("description") or "").strip()
+        if description:
+            lines += ["", "Description:", description]
+
+        comment_lines = []
+        for comment in comments:
+            raw = ((comment.get("content") or {}).get("raw") or "").strip()
+            if comment.get("deleted") or comment.get("pending") or not raw:
+                continue
+            inline = comment.get("inline") or {}
+            where = ""
+            if inline.get("path"):
+                where = f" on {inline['path']}" + (f":{inline['to']}" if inline.get("to") else "")
+            reply = " (reply)" if comment.get("parent") else ""
+            author = (comment.get("user") or {}).get("display_name") or "unknown"
+            comment_lines.append(f"- {author} ({comment.get('created_on') or 'unknown'}){where}{reply}: {raw}")
+        if comment_lines:
+            lines += ["", "Comments:", *comment_lines]
+
+        return "\n".join(lines)
+
     def get_item_name(self, item: IngestionItem) -> str:
-        """Return a filesystem-safe identifier for the file."""
-        raw = f"{self.workspace}_{self.repo}_{self.branch}_{item.source_ref}"
-        suffix = "_" + hashlib.sha1(raw.encode(), usedforsecurity=False).hexdigest()[:8]
+        """Return a filesystem-safe identifier for the item.
+
+        The hash of a pull request name is taken from the item id, not from
+        the readable name, so it cannot equal the name of a file whose branch
+        and path happen to spell the same words.
+        """
+        if self._is_pull_request(item):
+            raw = f"{self.workspace}_{self.repo}_pr_{item.source_ref.get('id')}"
+            hash_input = item.id
+        else:
+            raw = f"{self.workspace}_{self.repo}_{self.branch}_{item.source_ref}"
+            hash_input = raw
+        suffix = "_" + hashlib.sha1(hash_input.encode(), usedforsecurity=False).hexdigest()[:8]
         return slugify(raw, max_len=255 - len(suffix)) + suffix
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return Bitbucket-specific metadata fields."""
+        if self._is_pull_request(item):
+            pr = item.source_ref
+            reviewers = [r["display_name"] for r in pr.get("reviewers") or [] if r.get("display_name")]
+            return {
+                "item_type": "pull_request",
+                "url": f"https://bitbucket.org/{quote(self.workspace, safe='')}/{quote(self.repo, safe='')}"
+                f"/pull-requests/{pr.get('id')}",
+                "title": pr.get("title") or "",
+                "workspace": self.workspace,
+                "repo": self.repo,
+                "pr_id": pr.get("id"),
+                "state": pr.get("state") or "",
+                "draft": bool(pr.get("draft")),
+                "author": (pr.get("author") or {}).get("display_name") or "",
+                "reviewers": reviewers,
+                "source_branch": ((pr.get("source") or {}).get("branch") or {}).get("name") or "",
+                "destination_branch": ((pr.get("destination") or {}).get("branch") or {}).get("name") or "",
+                "created_on": pr.get("created_on") or "",
+                "updated_on": pr.get("updated_on") or "",
+                "comment_count": pr.get("comment_count") or 0,
+            }
+
         path: str = item.source_ref
         ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
         file_name = path.rsplit("/", 1)[-1] if "/" in path else path
         url = f"https://bitbucket.org/{_encoded_src_path(self.workspace, self.repo, self.branch, path)}"
         return {
+            "item_type": "file",
             "url": url,
             "title": file_name,
             "workspace": self.workspace,
