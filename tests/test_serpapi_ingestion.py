@@ -27,6 +27,12 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
         mock_resp.json.return_value = json_data or {}
         return mock_resp
 
+    def test_session_sends_configured_user_agent(self):
+        with patch("tasks.base.settings") as mock_settings:
+            mock_settings.yaml = {"user_agent": "global-ua/2.0"}
+            job = SerpAPIIngestionJob(self.config)
+        self.assertEqual(job._session._session.headers["User-Agent"], "global-ua/2.0")
+
     # --- __init__ / query parsing ---
 
     def test_queries_parsed_from_comma_string(self):

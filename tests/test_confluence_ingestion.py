@@ -1,6 +1,6 @@
 import unittest
 from datetime import UTC, datetime
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from tasks.confluence_ingestion import ConfluenceIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -83,6 +83,13 @@ class TestConfluenceIngestionJob(unittest.TestCase):
     def _make_job(self, **kwargs):
         return ConfluenceIngestionJob(_make_config(**kwargs))
 
+    def test_reader_session_sends_global_user_agent(self):
+        with patch("tasks.base.settings") as mock_settings:
+            mock_settings.yaml = {"user_agent": "global-ua/2.0"}
+            self._make_job()
+        session = self.mock_reader_class.call_args.kwargs["client_args"]["session"]
+        self.assertEqual(session.headers["User-Agent"], "global-ua/2.0")
+
     def test_missing_base_url_raises(self):
         with self.assertRaises(ValueError):
             ConfluenceIngestionJob({"name": "x", "config": {"api_token": "t", "space_key": "ENG"}})
@@ -134,6 +141,7 @@ class TestConfluenceIngestionJob(unittest.TestCase):
             cloud=True,
             user_name="user@example.com",
             password="mytoken",
+            client_args=ANY,
         )
 
     def test_reader_constructed_with_password_uses_basic_auth(self):
@@ -143,6 +151,7 @@ class TestConfluenceIngestionJob(unittest.TestCase):
             cloud=True,
             user_name="admin",
             password="secret",
+            client_args=ANY,
         )
 
     def test_reader_constructed_with_api_token_only_uses_bearer(self):
@@ -151,6 +160,7 @@ class TestConfluenceIngestionJob(unittest.TestCase):
             base_url="https://example.atlassian.net/wiki",
             cloud=False,
             api_token="myPAT",
+            client_args=ANY,
         )
 
     def test_trailing_slash_stripped_from_base_url(self):
@@ -304,6 +314,7 @@ class TestConfluenceIngestionJob(unittest.TestCase):
             cloud=True,
             oauth2=oauth2,
             cookies=None,
+            client_args=ANY,
         )
 
     def test_reader_constructed_with_cookies(self):
@@ -318,6 +329,7 @@ class TestConfluenceIngestionJob(unittest.TestCase):
             base_url="https://x.atlassian.net/wiki",
             cloud=True,
             cookies=cookies,
+            client_args=ANY,
         )
 
     def test_list_items_injects_space_key_from_api(self):
