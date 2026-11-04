@@ -18,10 +18,11 @@ sources:
   #  config:
   #    path: "${DIRECTORY1_PATH}"
   #    recursive: true
-  #    required_exts: "txt,md,pdf"
+  #    required_exts: "txt,md,pdf,mp4"
   #    exclude_hidden: true
   #    exclude_empty: false
   #    num_files_limit: 1000
+  #    #video_model: tiny  # optional: tiny (default), base, small, medium, large, turbo
   #    schedules: "${DIRECTORY1_SCHEDULES}"
   #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 
