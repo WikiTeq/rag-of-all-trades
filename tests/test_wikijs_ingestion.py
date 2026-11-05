@@ -1,8 +1,11 @@
+import json
 import unittest
 from unittest.mock import Mock, patch
 
+import requests
+
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.wikijs_ingestion import WikiJsIngestionJob
+from tasks.wikijs_ingestion import WikiJsClient, WikiJsIngestionJob
 from utils.graphql import GraphQLError
 
 
@@ -44,6 +47,176 @@ def _make_page_detail(page_id=1, path="/test/page", title="Test Page", content="
         "content": content,
         "contentType": content_type,
     }
+
+
+def _response(status=200, body=None, headers=None):
+    resp = requests.Response()
+    resp.status_code = status
+    resp._content = json.dumps(body if body is not None else {}).encode()
+    resp.raw = Mock()
+    resp.headers.update(headers or {})
+    return resp
+
+
+class TestWikiJsClient(unittest.TestCase):
+    def setUp(self):
+        sleep_patcher = patch("utils.http.time.sleep")
+        self.mock_sleep = sleep_patcher.start()
+        self.addCleanup(sleep_patcher.stop)
+        self.client = WikiJsClient("https://wiki.example.com/", "test-token")
+        request_patcher = patch.object(self.client._session._session, "request")
+        self.mock_request = request_patcher.start()
+        self.addCleanup(request_patcher.stop)
+
+    def _list_ok(self, pages=None):
+        return _response(200, {"data": {"pages": {"list": pages if pages is not None else [_make_page()]}}})
+
+    def _single_ok(self, page=None):
+        return _response(200, {"data": {"pages": {"single": page if page is not None else _make_page_detail()}}})
+
+    def test_base_url_trailing_slash_is_stripped(self):
+        self.assertEqual(self.client.base_url, "https://wiki.example.com")
+
+    def test_list_pages_sends_endpoint_auth_header_and_empty_variables(self):
+        self.mock_request.return_value = self._list_ok()
+
+        pages = self.client.list_pages()
+
+        self.assertEqual(len(pages), 1)
+        args, kwargs = self.mock_request.call_args
+        self.assertEqual(args, ("POST", "https://wiki.example.com/graphql"))
+        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer test-token")
+        self.assertEqual(kwargs["json"]["variables"], {})
+
+    def test_list_pages_sends_tags_and_locale_filters(self):
+        self.mock_request.return_value = self._list_ok()
+
+        self.client.list_pages(tags=["a", "b"], locale="fr")
+
+        self.assertEqual(self.mock_request.call_args.kwargs["json"]["variables"], {"tags": ["a", "b"], "locale": "fr"})
+
+    def test_list_pages_omits_empty_filters(self):
+        self.mock_request.return_value = self._list_ok()
+
+        self.client.list_pages(tags=[], locale="")
+
+        self.assertEqual(self.mock_request.call_args.kwargs["json"]["variables"], {})
+
+    def test_list_pages_returns_empty_list_when_shape_is_unexpected(self):
+        self.mock_request.return_value = _response(200, {"data": {"pages": {"list": "oops"}}})
+
+        self.assertEqual(self.client.list_pages(), [])
+
+    def test_list_pages_returns_empty_list_when_data_is_missing(self):
+        self.mock_request.return_value = _response(200, {"data": {}})
+
+        self.assertEqual(self.client.list_pages(), [])
+
+    def test_list_pages_raises_graphql_error(self):
+        self.mock_request.return_value = _response(200, {"errors": [{"message": "Forbidden"}]})
+
+        with self.assertRaisesRegex(GraphQLError, "Forbidden"):
+            self.client.list_pages()
+
+    def test_list_pages_raises_graphql_error_on_non_json_body(self):
+        resp = _response(200)
+        resp._content = b"<html>proxy error</html>"
+        self.mock_request.return_value = resp
+
+        with self.assertRaisesRegex(GraphQLError, "Non-JSON"):
+            self.client.list_pages()
+
+    def test_list_pages_retries_on_server_error_then_succeeds(self):
+        self.mock_request.side_effect = [_response(503), _response(502), self._list_ok()]
+
+        pages = self.client.list_pages()
+
+        self.assertEqual(len(pages), 1)
+        self.assertEqual(self.mock_request.call_count, 3)
+        self.assertEqual([c.args[0] for c in self.mock_sleep.call_args_list], [1, 2])
+
+    def test_list_pages_retries_on_rate_limit_and_honours_retry_after(self):
+        self.mock_request.side_effect = [_response(429, headers={"Retry-After": "7"}), self._list_ok()]
+
+        self.client.list_pages()
+
+        self.assertEqual(self.mock_request.call_count, 2)
+        self.mock_sleep.assert_called_once_with(7)
+
+    def test_list_pages_retries_on_network_error(self):
+        self.mock_request.side_effect = [requests.ConnectionError("boom"), self._list_ok()]
+
+        pages = self.client.list_pages()
+
+        self.assertEqual(len(pages), 1)
+        self.assertEqual(self.mock_request.call_count, 2)
+
+    def test_list_pages_raises_network_error_after_retries_exhausted(self):
+        self.mock_request.side_effect = requests.ConnectionError("boom")
+
+        with self.assertRaises(requests.ConnectionError):
+            self.client.list_pages()
+
+        self.assertEqual(self.mock_request.call_count, self.client._session.max_retries + 1)
+
+    def test_list_pages_raises_http_error_after_server_errors_exhausted(self):
+        self.mock_request.return_value = _response(503)
+
+        with self.assertRaises(requests.HTTPError):
+            self.client.list_pages()
+
+        self.assertEqual(self.mock_request.call_count, self.client._session.max_retries + 1)
+
+    def test_list_pages_does_not_retry_client_errors(self):
+        self.mock_request.return_value = _response(401)
+
+        with self.assertRaises(requests.HTTPError):
+            self.client.list_pages()
+
+        self.assertEqual(self.mock_request.call_count, 1)
+        self.mock_sleep.assert_not_called()
+
+    def test_get_page_sends_page_id(self):
+        self.mock_request.return_value = self._single_ok(_make_page_detail(page_id=5))
+
+        page = self.client.get_page(5)
+
+        self.assertEqual(page["id"], 5)
+        self.assertEqual(self.mock_request.call_args.kwargs["json"]["variables"], {"id": 5})
+
+    def test_get_page_returns_empty_dict_when_shape_is_unexpected(self):
+        self.mock_request.return_value = _response(200, {"data": {"pages": {"single": None}}})
+
+        self.assertEqual(self.client.get_page(5), {})
+
+    def test_get_page_returns_empty_dict_when_data_is_missing(self):
+        self.mock_request.return_value = _response(200, {"data": {}})
+
+        self.assertEqual(self.client.get_page(5), {})
+
+    def test_get_page_raises_graphql_error_when_token_is_forbidden(self):
+        self.mock_request.return_value = _response(
+            200, {"errors": [{"message": "You are not authorized to view this page."}]}
+        )
+
+        with self.assertRaisesRegex(GraphQLError, "not authorized"):
+            self.client.get_page(5)
+
+    def test_get_page_retries_on_server_error_then_succeeds(self):
+        self.mock_request.side_effect = [_response(502), self._single_ok()]
+
+        page = self.client.get_page(1)
+
+        self.assertEqual(page["content"], "Some content")
+        self.assertEqual(self.mock_request.call_count, 2)
+
+    def test_get_page_does_not_retry_client_errors(self):
+        self.mock_request.return_value = _response(403)
+
+        with self.assertRaises(requests.HTTPError):
+            self.client.get_page(1)
+
+        self.assertEqual(self.mock_request.call_count, 1)
 
 
 class TestWikiJsIngestionJob(unittest.TestCase):

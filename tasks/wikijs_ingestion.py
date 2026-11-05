@@ -5,6 +5,7 @@ from typing import Any
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 from utils.graphql import GraphQLError, graphql_request
+from utils.http import RetrySession
 from utils.parse import parse_bool, parse_list, parse_timestamp
 from utils.text import html_to_markdown, slugify
 
@@ -51,6 +52,7 @@ query PageSingle($id: Int!) {
             "Authorization": f"Bearer {api_token}",
             "Content-Type": "application/json",
         }
+        self._session = RetrySession()
 
     def list_pages(self, tags: list[str] | None = None, locale: str | None = None) -> list[dict]:
         variables: dict[str, Any] = {}
@@ -58,7 +60,13 @@ query PageSingle($id: Int!) {
             variables["tags"] = tags
         if locale:
             variables["locale"] = locale
-        data = graphql_request(f"{self.base_url}/graphql", self._PAGES_LIST_QUERY, variables, self._headers)
+        data = graphql_request(
+            f"{self.base_url}/graphql",
+            self._PAGES_LIST_QUERY,
+            variables,
+            self._headers,
+            session=self._session,
+        )
         pages = data.get("pages", {}).get("list", [])
         if not isinstance(pages, list):
             logger.error(f"Unexpected pages.list response shape: {type(pages)}")
@@ -66,7 +74,13 @@ query PageSingle($id: Int!) {
         return pages
 
     def get_page(self, page_id: int) -> dict:
-        data = graphql_request(f"{self.base_url}/graphql", self._PAGE_SINGLE_QUERY, {"id": page_id}, self._headers)
+        data = graphql_request(
+            f"{self.base_url}/graphql",
+            self._PAGE_SINGLE_QUERY,
+            {"id": page_id},
+            self._headers,
+            session=self._session,
+        )
         page = data.get("pages", {}).get("single", {})
         if not isinstance(page, dict):
             logger.error(f"Unexpected pages.single response shape for id={page_id}: {type(page)}")
