@@ -95,13 +95,17 @@ class WikiJsIngestionJob(IngestionJob):
 
     Configuration (config.yaml):
         - config.base_url: Wiki.js instance base URL (required)
-        - config.api_token: API token with read:pages and read:source scopes (required)
+        - config.api_token: API token (required). Needs the read:pages, read:source and
+          manage:pages (or delete:pages) scopes. Wiki.js `pages.single` rejects tokens that
+          only have read:pages and read:source.
         - config.paths: path prefixes to ingest; if omitted, all pages are ingested
           (optional, comma-separated string or list)
         - config.tags: server-side tag filter (optional, comma-separated string or list)
         - config.locale: server-side locale filter, e.g. "en" (optional)
         - config.include_unpublished: whether to ingest unpublished pages (optional, default false)
     """
+
+    _SCOPES_HINT = "The API token needs the read:pages, read:source and manage:pages (or delete:pages) scopes."
 
     @property
     def source_type(self) -> str:
@@ -173,7 +177,11 @@ class WikiJsIngestionJob(IngestionJob):
 
     def get_raw_content(self, item: IngestionItem) -> str:
         page_id = item.source_ref.get("id")
-        detail = self._client.get_page(page_id)
+        try:
+            detail = self._client.get_page(page_id)
+        except GraphQLError as e:
+            logger.error(f"[{self.source_name}] Cannot read page {page_id} ({e}). {self._SCOPES_HINT}")
+            raise
 
         title = detail.get("title", "") or item.source_ref.get("title", "") or ""
         path = detail.get("path", "") or item.source_ref.get("path", "") or ""
@@ -185,10 +193,7 @@ class WikiJsIngestionJob(IngestionJob):
 
         raw = detail.get("content", "") or ""
         if not raw.strip():
-            logger.warning(
-                f"[{self.source_name}] Empty content for page {page_id} ({path!r}). "
-                "Ensure the API token has the read:source permission scope."
-            )
+            logger.warning(f"[{self.source_name}] Empty content for page {page_id} ({path!r}). {self._SCOPES_HINT}")
             return ""
 
         content_type = (detail.get("contentType", "") or "markdown").lower()

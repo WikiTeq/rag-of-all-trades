@@ -381,6 +381,34 @@ class TestWikiJsIngestionJob(unittest.TestCase):
         self.assertIn("# My Page", content)
         self.assertIn("Hello world", content)
 
+    def test_get_raw_content_logs_required_scopes_and_reraises_graphql_error(self):
+        item = IngestionItem(id="wikijs:1", source_ref=_make_page(1, "/test", "My Page"))
+        self.mock_client.get_page.side_effect = GraphQLError("You are not authorized to view this page.")
+
+        job = self._make_job()
+        with self.assertLogs("tasks.wikijs_ingestion", level="ERROR") as logs:
+            with self.assertRaises(GraphQLError):
+                job.get_raw_content(item)
+
+        message = logs.output[0]
+        self.assertIn("Cannot read page 1", message)
+        self.assertIn("not authorized", message)
+        self.assertIn("read:pages", message)
+        self.assertIn("read:source", message)
+        self.assertIn("manage:pages", message)
+
+    def test_get_raw_content_empty_content_warning_lists_required_scopes(self):
+        item = IngestionItem(id="wikijs:1", source_ref=_make_page(1, "/test", "My Page"))
+        self.mock_client.get_page.return_value = _make_page_detail(1, content="   ")
+
+        job = self._make_job()
+        with self.assertLogs("tasks.wikijs_ingestion", level="WARNING") as logs:
+            content = job.get_raw_content(item)
+
+        self.assertEqual(content, "")
+        self.assertIn("read:source", logs.output[0])
+        self.assertIn("manage:pages", logs.output[0])
+
     def test_get_raw_content_html_converted_to_markdown(self):
         page = _make_page(1, "/test", "HTML Page")
         item = IngestionItem(id="wikijs:1", source_ref=page)
