@@ -205,12 +205,18 @@ sources:
     config:
       path: "/data/docs" # required path to directory
       recursive: true # optional, default true
-      required_exts: "txt,md,pdf" # optional, comma-separated extensions
+      required_exts: "txt,md,pdf,mp4" # optional, comma-separated extensions; list video extensions to ingest videos
       exclude_hidden: true # optional, default true
       exclude_empty: false # optional, default false
       num_files_limit: 1000 # optional, positive integer
+      video_model: "tiny" # optional, Whisper model for video transcription: tiny (default), base, small, medium, large, turbo
       schedules: "3600"
 ```
+
+Video files (`.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`) are ingested only when `required_exts` lists their
+extension. The connector transcribes the audio track with Docling (CPU, no frame or speaker analysis) and
+ingests the transcript as Markdown, with a `[mm:ss-mm:ss]` time prefix on each segment.
+Unchanged videos are skipped using a checksum of the file, and a video without speech is recorded once and not transcribed again. A video that fails to convert is retried on the next run. The Docker image includes the default `tiny` model; any other `video_model` is downloaded on first use and is larger and slower on CPU.
 
 ### MediaWiki Connector
 
