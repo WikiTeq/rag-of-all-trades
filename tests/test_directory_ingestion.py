@@ -228,6 +228,14 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
             self.assertIsNone(job.get_item_checksum(IngestionItem(id="x", source_ref=missing)))
 
+    def test_record_empty_content_only_for_video(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+
+            for name, expected in (("talk.MP4", True), ("clip.mkv", True), ("doc.pdf", False), ("note.txt", False)):
+                item = IngestionItem(id=name, source_ref=Path(temp_dir) / name)
+                self.assertEqual(job.record_empty_content(item), expected, name)
+
     def test_get_raw_content_joins_multiple_documents(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             file_path = Path(temp_dir) / "doc.txt"
