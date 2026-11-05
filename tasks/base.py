@@ -283,23 +283,6 @@ class IngestionJob(ABC):
             self._seen.popitem(last=False)
         return True
 
-    def _record_empty_item(self, item: IngestionItem, item_name: str, checksum: str, latest) -> None:
-        """Store a zero-chunk record so an unchanged empty item is not fetched again.
-
-        Only used when the checksum is known before the content is fetched. Without the
-        record, every run would repeat an expensive fetch (for example video transcription).
-        """
-        if latest:
-            self.metadata_tracker.delete_previous_embeddings(item_name)
-        self.metadata_tracker.record_metadata(
-            item_name,
-            checksum,
-            (latest.version + 1) if latest else 1,
-            0,
-            item.last_modified or datetime.now(UTC),
-            extra_metadata={"source_name": self.source_name},
-        )
-
     def process_item(self, item: IngestionItem):
         """Process a single ingestion item through the complete pipeline.
 
@@ -349,7 +332,6 @@ class IngestionJob(ABC):
                 raw_content = self.get_raw_content(item)
                 if not raw_content.strip():
                     logger.warning(f"Skipping empty content for item: {item.id}")
-                    self._record_empty_item(item, item_name, new_checksum, latest)
                     return 0
 
             if latest:
