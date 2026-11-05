@@ -242,6 +242,14 @@ class IngestionJob(ABC):
         """
         return None
 
+    def record_empty_content(self, item: IngestionItem) -> bool:
+        """Return True to store a zero-chunk record when the item's content is empty.
+
+        Only used when ``get_item_checksum`` returns a value. The default is False, so a
+        fetch that fails and returns an empty string is tried again on the next run.
+        """
+        return False
+
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Hook for subclasses to provide additional metadata.
 
@@ -282,6 +290,23 @@ class IngestionJob(ABC):
         if len(self._seen) > self._seen_capacity:
             self._seen.popitem(last=False)
         return True
+
+    def _record_empty_item(self, item: IngestionItem, item_name: str, checksum: str, latest) -> None:
+        """Store a zero-chunk record so an unchanged empty item is not fetched again.
+
+        Only used when the checksum is known before the content is fetched. Without the
+        record, every run would repeat an expensive fetch (for example video transcription).
+        """
+        if latest:
+            self.metadata_tracker.delete_previous_embeddings(item_name)
+        self.metadata_tracker.record_metadata(
+            item_name,
+            checksum,
+            (latest.version + 1) if latest else 1,
+            0,
+            item.last_modified or datetime.now(UTC),
+            extra_metadata={"source_name": self.source_name},
+        )
 
     def process_item(self, item: IngestionItem):
         """Process a single ingestion item through the complete pipeline.
@@ -332,6 +357,8 @@ class IngestionJob(ABC):
                 raw_content = self.get_raw_content(item)
                 if not raw_content.strip():
                     logger.warning(f"Skipping empty content for item: {item.id}")
+                    if self.record_empty_content(item):
+                        self._record_empty_item(item, item_name, new_checksum, latest)
                     return 0
 
             if latest:

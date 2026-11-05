@@ -159,6 +159,14 @@ class DirectoryIngestionJob(IngestionJob):
             logger.warning("[%s] Failed to hash video: %s", file_path, exc)
             return None
 
+    def record_empty_content(self, item: IngestionItem) -> bool:
+        """Record a video without speech, so the next run skips the slow transcription.
+
+        A failed conversion raises and is not recorded. Other files that return an empty
+        string after a read error are tried again.
+        """
+        return Path(item.source_ref).suffix.lower() in VIDEO_EXTENSIONS
+
     def get_raw_content(self, item: IngestionItem):
         file_path = Path(item.source_ref)
 
