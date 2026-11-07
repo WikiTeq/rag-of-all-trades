@@ -22,6 +22,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Confluence ingestion from Cloud and Server/Data Center instances via LlamaIndex reader
 * BookStack ingestion of shelves, books, chapters, and pages via the REST API
 * GitLab ingestion — repository files and issues from self-hosted or cloud GitLab
+* Database ingestion from MySQL and PostgreSQL via arbitrary SQL SELECT queries
 * Flexible configuration supporting an arbitrary number of connectors
 * Built with extensibility in mind, allowing for custom connectors with ease
 
@@ -47,6 +48,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * GitLab
 * Trello
 * GitBook
+* Database (MySQL + PostgreSQL)
 
 ## Embeddings support
 
@@ -1052,6 +1054,60 @@ sources:
 
 GITBOOK1_API_TOKEN=your-gitbook-api-token
 GITBOOK1_SCHEDULES=3600
+```
+
+### Database Connector
+
+The Database connector ingests rows from MySQL or PostgreSQL databases by executing a pre-configured SQL
+SELECT query. Each row becomes a document in the vector store.
+
+**Required columns** — the query **must** return these four columns:
+
+| Column | Description |
+|---|---|
+| `id` | Unique row identifier (used as document ID) |
+| `title` | Human-readable name of the item |
+| `updated_at` | Last modification timestamp (ISO-8601 string or datetime) |
+| `content` | Main text body to embed |
+
+Additional columns can be stored in document metadata via `metadata_columns`.
+
+Supports both **PostgreSQL** (via `psycopg` / `psycopg2`) and **MySQL** (via `pymysql`) using standard
+SQLAlchemy connection strings.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "database"
+    name: "postgres1"
+    config:
+      type: "postgres"                              # "postgres" or "mysql"
+      connection_string: "${DB_POSTGRES1_CONNECTION_STRING}"
+      # Required columns: id, title, updated_at, content
+      query: "SELECT id, title, updated_at, content, author, year FROM books LIMIT 100"
+      metadata_columns: "author,year"               # optional: extra columns in metadata
+      schedules: "${DB_POSTGRES1_SCHEDULES}"
+
+  - type: "database"
+    name: "mysql1"
+    config:
+      type: "mysql"
+      connection_string: "${DB_MYSQL1_CONNECTION_STRING}"
+      query: "SELECT id, title, updated_at, content FROM articles"
+      schedules: "${DB_MYSQL1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+# PostgreSQL
+DB_POSTGRES1_CONNECTION_STRING=postgresql+psycopg2://user:pass@localhost/mydb
+DB_POSTGRES1_SCHEDULES=3600
+
+# MySQL
+DB_MYSQL1_CONNECTION_STRING=mysql+pymysql://user:pass@localhost/mydb
+DB_MYSQL1_SCHEDULES=3600
 ```
 
 ## Reference of the `config.yaml`
