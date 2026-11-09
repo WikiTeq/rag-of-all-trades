@@ -1,13 +1,14 @@
 """Tests for MediaWikiIngestionJob (Pytest version)."""
 
+import ast
 import json
 import sys
 from datetime import datetime
+from importlib.metadata import distribution
 from types import SimpleNamespace
 from unittest.mock import ANY, MagicMock, Mock, patch
 
 import pytest
-from llama_index.core.schema import Document
 from requests.adapters import HTTPAdapter
 
 # llama-index-readers-mediawiki is not yet published; stub it so the module
@@ -445,26 +446,43 @@ class TestListItems:
 
 
 class TestGetRawContent:
-    def test_success(self, base_wiki_job):
+    def test_success_converts_html_with_markitdown(self, base_wiki_job):
         job, reader = base_wiki_job
-        doc = Document(
-            text="Clean content",
-            metadata={"url": "https://example.com/wiki/P", "title": "P"},
-        )
-        reader._page_to_document.return_value = doc
+        reader._get_page_contents.return_value = "<h1>Title</h1><p>Hello <b>world</b></p>"
 
         item = _make_item("P", pageid=42, namespace=0)
         content = job.get_raw_content(item)
 
-        assert content == "Clean content"
-        reader._page_to_document.assert_called_once_with(item.source_ref)
+        assert "# Title" in content
+        assert "**world**" in content
+        assert "<h1>" not in content
+        reader._get_page_contents.assert_called_once_with("P")
+
+    def test_installed_reader_defines_get_page_contents(self):
+        # The module is stubbed in this file, so read the installed source instead of importing it.
+        reader_source = distribution("llama-index-readers-mediawiki").locate_file(
+            "llama_index/readers/mediawiki/base.py"
+        )
+        tree = ast.parse(reader_source.read_text())
+
+        assert any(isinstance(node, ast.FunctionDef) and node.name == "_get_page_contents" for node in ast.walk(tree))
 
     def test_missing_page(self, base_wiki_job):
         job, reader = base_wiki_job
-        reader._page_to_document.return_value = None
+        reader._get_page_contents.return_value = None
 
         item = _make_item("M")
         content = job.get_raw_content(item)
+
+        assert content == ""
+
+    def test_conversion_fallback_returns_empty(self, base_wiki_job):
+        job, reader = base_wiki_job
+        html = "<p>Broken</p>"
+        reader._get_page_contents.return_value = html
+
+        with patch.object(job, "convert_to_markdown", return_value=html):
+            content = job.get_raw_content(_make_item("P"))
 
         assert content == ""
 
@@ -840,11 +858,7 @@ class TestProcessItem:
     def test_success(self, base_wiki_job):
         job, reader = base_wiki_job
 
-        doc = Document(
-            text="Content",
-            metadata={"url": "https://example.com/wiki/P", "title": "P"},
-        )
-        reader._page_to_document.return_value = doc
+        reader._get_page_contents.return_value = "<p>Content</p>"
 
         with patch.object(job.metadata_tracker, "get_latest_record", return_value=None):
             with patch.object(job.metadata_tracker, "record_metadata"):
@@ -867,11 +881,7 @@ class TestProcessItem:
     def test_duplicate_content(self, base_wiki_job):
         job, reader = base_wiki_job
 
-        doc = Document(
-            text="Duplicate",
-            metadata={"url": "https://example.com/wiki/P", "title": "P"},
-        )
-        reader._page_to_document.return_value = doc
+        reader._get_page_contents.return_value = "<p>Duplicate</p>"
 
         with patch.object(job.metadata_tracker, "get_latest_record", return_value=None):
             with patch.object(job.metadata_tracker, "record_metadata"):
