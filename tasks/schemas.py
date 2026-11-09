@@ -10,3 +10,10 @@ class BaseMetadataSchema(BaseModel):
     source_name: str = Field(description="Human-readable name of the source instance")
     file_name: str = Field(description="File name used by the vector store")
     last_modified: str = Field(description="ISO string of the item's last modified timestamp")
+
+
+class MediaWikiMetadataSchema(BaseModel):
+    title: str = Field(description="Page title")
+    page_id: int = Field(description="Numeric MediaWiki page ID")
+    namespace: int = Field(description="Namespace ID of the page")
+    url: str | None = Field(default=None, description="Full URL of the wiki page; omitted when unavailable")
