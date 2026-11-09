@@ -10,6 +10,8 @@ _SAFE_VALUE_PATTERN = re.compile(r"^[0-9a-zA-Z.\-_;,:?!\[\]=@() ]+$")
 def _validate_name(v: str) -> str:
     if not _SAFE_NAME_PATTERN.match(v):
         raise ValueError("name contains invalid characters; allowed: 0-9 a-z A-Z . - _ space")
+    if v == "acl":
+        raise ValueError("filtering on acl is not allowed")
     return v
 
 
