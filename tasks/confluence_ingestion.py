@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 # Third-party imports
+import requests
 from llama_index.readers.confluence import ConfluenceReader
 
 # Local imports
@@ -211,18 +212,24 @@ class ConfluenceIngestionJob(IngestionJob):
         the username (basic auth). When ``username`` is provided alongside
         ``api_token``, we pass the token as ``password`` to trigger basic auth.
         """
+        # The Atlassian client accepts a requests session, which carries the User-Agent.
+        session = requests.Session()
+        session.headers["User-Agent"] = self.user_agent
+        client_args = {"session": session}
         if self.oauth2:
             return ConfluenceReader(
                 base_url=self.base_url,
                 cloud=self.cloud,
                 oauth2=self.oauth2,
                 cookies=self.cookies,
+                client_args=client_args,
             )
         if self.cookies:
             return ConfluenceReader(
                 base_url=self.base_url,
                 cloud=self.cloud,
                 cookies=self.cookies,
+                client_args=client_args,
             )
         if self.username:
             # Basic auth: Cloud (email + api_token as password) or Server (user + password)
@@ -232,12 +239,14 @@ class ConfluenceIngestionJob(IngestionJob):
                 cloud=self.cloud,
                 user_name=self.username,
                 password=password,
+                client_args=client_args,
             )
         # Bearer token: Server/DC PAT without username
         return ConfluenceReader(
             base_url=self.base_url,
             cloud=self.cloud,
             api_token=self.api_token,
+            client_args=client_args,
         )
 
     def _build_load_data_kwargs(self) -> dict:

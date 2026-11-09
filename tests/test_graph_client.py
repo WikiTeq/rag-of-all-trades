@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from utils.graph_client import GraphClient, GraphItemNotFoundError
 
@@ -8,6 +8,15 @@ def _make_client(**kwargs) -> GraphClient:
     defaults = {"client_id": "cid", "client_secret": "csecret", "tenant_id": "tid"}
     defaults.update(kwargs)
     return GraphClient(**defaults)
+
+
+class TestGraphClientUserAgent(unittest.TestCase):
+    def test_api_download_and_msal_sessions_send_user_agent(self):
+        with patch("utils.graph_client.msal.ConfidentialClientApplication") as mock_msal_cls:
+            client = _make_client(user_agent="ua/1.0")
+        self.assertEqual(client._api_session._session.headers["User-Agent"], "ua/1.0")
+        self.assertEqual(client._download_session._session.headers["User-Agent"], "ua/1.0")
+        self.assertEqual(mock_msal_cls.call_args.kwargs["http_client"].headers["User-Agent"], "ua/1.0")
 
 
 class TestGraphClientAuth(unittest.TestCase):
@@ -27,6 +36,7 @@ class TestGraphClientAuth(unittest.TestCase):
             client_id="cid",
             client_credential="csecret",
             authority="https://login.microsoftonline.com/my-tenant",
+            http_client=ANY,
         )
 
     def test_get_access_token_returns_token(self):

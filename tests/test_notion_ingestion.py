@@ -63,6 +63,16 @@ def _make_job(mock_client, **kwargs):
         return NotionIngestionJob(_make_config(**kwargs))
 
 
+class TestNotionUserAgent(unittest.TestCase):
+    def test_client_sends_global_user_agent(self):
+        mock_client = MagicMock()
+        mock_client.client.headers = {}
+        with patch("tasks.base.settings") as mock_settings:
+            mock_settings.yaml = {"user_agent": "global-ua/2.0"}
+            _make_job(mock_client)
+        self.assertEqual(mock_client.client.headers["User-Agent"], "global-ua/2.0")
+
+
 class TestNotionIngestionInit(unittest.TestCase):
     def test_source_type(self):
         mock_client = MagicMock()

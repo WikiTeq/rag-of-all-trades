@@ -74,6 +74,8 @@ class SlackIngestionJob(IngestionJob):
             raise ValueError("latest_date must be greater than or equal to earliest_date in Slack connector config")
 
         self._client = WebClient(token=self.token)
+        # WebClient overwrites a User-Agent passed via headers=, so set it after construction.
+        self._client.headers["User-Agent"] = self.user_agent
         self._user_cache: dict[str, str] = {}
         self._channel_name_cache: dict[str, str] = {}
 
