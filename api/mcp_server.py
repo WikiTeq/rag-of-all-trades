@@ -22,6 +22,7 @@ async def retrieve_chunks_response(
     query: str,
     top_k: int = 20,
     metadata_filters: list[MetadataFilterItem] | None = None,
+    similarity_cutoff: float | None = None,
 ) -> dict[str, Any]:
     logger.info("MCP retrieve_chunks: top_k=%d has_filters=%s", top_k, bool(metadata_filters))
     nodes_with_score = await asyncio.to_thread(
@@ -29,6 +30,7 @@ async def retrieve_chunks_response(
         query=query,
         top_k=top_k,
         metadata=metadata_filters or [],
+        similarity_cutoff=similarity_cutoff,
     )
     logger.info("MCP retrieve_chunks: num_results=%d", len(nodes_with_score))
     return {
@@ -41,6 +43,7 @@ async def rephrase_chunks_response(
     rag_engine: RAGQueryEngine,
     query: str,
     top_k: int = 20,
+    similarity_cutoff: float | None = None,
 ) -> dict[str, Any]:
     if llm is None:
         raise RuntimeError("LLM is not configured. Please configure the LLM provider, API key, and model name.")
@@ -50,6 +53,7 @@ async def rephrase_chunks_response(
         rag_engine.retrieve_top_k,
         query=query,
         top_k=top_k,
+        similarity_cutoff=similarity_cutoff,
     )
     if not nodes_with_score:
         logger.info("MCP rephrase_chunks: no results found")
@@ -103,6 +107,7 @@ def create_mcp_server(app: FastAPI, api_key: str) -> FastMCP:
             query=payload.query,
             top_k=payload.top_k,
             metadata_filters=payload.metadata_filters,
+            similarity_cutoff=payload.similarity_cutoff,
         )
 
     @mcp.tool(
@@ -114,6 +119,7 @@ def create_mcp_server(app: FastAPI, api_key: str) -> FastMCP:
             rag_engine=get_rag_engine(),
             query=payload.query,
             top_k=payload.top_k,
+            similarity_cutoff=payload.similarity_cutoff,
         )
 
     return mcp
