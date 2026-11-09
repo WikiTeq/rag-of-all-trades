@@ -1,9 +1,9 @@
 import logging
-from functools import wraps
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from api.dependencies import require_api_key
+from api.v1.utils import limit
 from utils.api import format_chunks
 from utils.config import settings
 
@@ -21,28 +21,9 @@ def get_rag_engine(request: Request) -> RAGQueryEngine:
     return request.app.state.rag_engine
 
 
-# Conditional Decorator helper for api rate limiting
-def limit(func):
-    if not settings.env.ENABLE_RATE_LIMIT:
-        return func
-
-    limited_func = None
-
-    @wraps(func)
-    async def wrapper(*args, **kwargs):
-        nonlocal limited_func
-        request: Request = kwargs.get("request") or args[0]
-        if limited_func is None:
-            limited_func = request.app.state.limiter.limit(settings.env.CHUNK_RATE_LIMIT)(func)
-
-        return await limited_func(*args, **kwargs)
-
-    return wrapper
-
-
 # Query endpoint
 @router.post("", response_model=QueryResponse)
-@limit
+@limit(settings.env.CHUNK_RATE_LIMIT)
 async def query_endpoint(
     request: Request,
     payload: QueryRequest,
