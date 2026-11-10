@@ -233,7 +233,9 @@ class SharePointIngestionJob(IngestionJob):
         """Return document text; for file mode, downloads one file at a time."""
         if self.sharepoint_type == SharePointType.DRIVE:
             docs = self._reader.load_resource(item.source_ref["file_path"])
-            return (docs[0].text or "") if docs else ""
+            # The reader returns one document per sheet for Excel workbooks.
+            pieces = ((doc.text or "").strip() for doc in docs)
+            return "\n\n".join(piece for piece in pieces if piece)
         return item.source_ref.text or ""
 
     def get_item_checksum(self, item: IngestionItem) -> str | None:
