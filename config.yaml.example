@@ -22,7 +22,7 @@ sources:
   #    exclude_hidden: true
   #    exclude_empty: false
   #    num_files_limit: 1000
-  #    #video_model: tiny  # optional: tiny (default), base, small, medium, large, turbo
+  #    #video_asr_model: WHISPER_TINY  # optional: Docling Whisper model for video files (default WHISPER_TINY)
   #    schedules: "${DIRECTORY1_SCHEDULES}"
   #    #request_delay: 0  # optional, delay in seconds between items (default: 0)
 

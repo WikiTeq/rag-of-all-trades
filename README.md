@@ -207,18 +207,40 @@ sources:
     config:
       path: "/data/docs" # required path to directory
       recursive: true # optional, default true
-      required_exts: "txt,md,pdf,mp4" # optional, comma-separated extensions; list video extensions to ingest videos
+      required_exts: "txt,md,pdf,mp4" # optional, comma-separated extensions; omit to read every supported file
       exclude_hidden: true # optional, default true
       exclude_empty: false # optional, default false
       num_files_limit: 1000 # optional, positive integer
-      video_model: "tiny" # optional, Whisper model for video transcription: tiny (default), base, small, medium, large, turbo
+      video_asr_model: "WHISPER_TINY" # optional, Docling Whisper model for video files (see Video transcription)
       schedules: "3600"
 ```
 
-Video files (`.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`) are ingested only when `required_exts` lists their
-extension. The connector transcribes the audio track with Docling (CPU, no frame or speaker analysis) and
-ingests the transcript as Markdown, with a `[mm:ss-mm:ss]` time prefix on each segment.
-Unchanged videos are skipped using a checksum of the file, and a video without speech is recorded once and not transcribed again. A video that fails to convert is retried on the next run. The Docker image includes the default `tiny` model; any other `video_model` is downloaded on first use and is larger and slower on CPU.
+`required_exts` is matched by LlamaIndex `SimpleDirectoryReader`, and the match is case-sensitive:
+`.mp4` does not find `talk.MP4`. When `required_exts` is omitted, the connector reads every file in the
+directory, including video files (see [Video transcription](#video-transcription)).
+
+The connector hashes the bytes of each file. A file whose bytes did not change since the last run is skipped
+before it is parsed. The first run after an upgrade from a version that hashed the extracted text ingests
+every file once more, and each document gets a new version.
+
+### Video transcription
+
+Connectors that read video files (`.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`) transcribe the audio track with
+Docling and ingest the transcript as Markdown, with a `[mm:ss-mm:ss]` time prefix on each segment (`[h:mm:ss-h:mm:ss]`
+after one hour). Frames and speakers are not analyzed. Transcription runs on the CPU, so it is slow for long
+videos. At the moment only the Directory connector reads video files.
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `video_asr_model` | string | `WHISPER_TINY` | Name of a Docling Whisper model for the native `openai-whisper` runtime, for example `WHISPER_TINY`, `WHISPER_BASE`, `WHISPER_SMALL`, `WHISPER_MEDIUM`, `WHISPER_LARGE` or `WHISPER_TURBO`. The name is not case-sensitive. An unknown name stops the connector at start with an error that lists the valid names. |
+
+- The Docker image contains the weights of `WHISPER_TINY`. Any other model downloads on first use and is larger and
+  slower on the CPU.
+- Unchanged video files are skipped by the checksum of the file. Docling or Whisper changes do not trigger a new
+  transcription of a video that did not change.
+- A video without speech is a successful result. It is recorded once with zero chunks and is not transcribed again.
+- A video that fails to convert is logged with the Docling errors and tried again on the next run. A video that
+  was ingested before keeps its previous version.
 
 ### MediaWiki Connector
 
