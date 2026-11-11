@@ -171,22 +171,6 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             self.assertEqual(result, "Converted text")
             self.mock_directory_reader.load_resource.assert_called_once_with(str(file_path))
 
-    def test_list_items_skips_video_unless_required_exts_lists_it(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            video = Path(temp_dir) / "talk.MP4"
-            video.write_bytes(b"video")
-            note = Path(temp_dir) / "note.txt"
-            note.write_text("note", encoding="utf-8")
-            self.mock_directory_reader.list_resources.return_value = [str(video), str(note)]
-
-            default_job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
-            video_job = DirectoryIngestionJob(
-                {"name": "local", "config": {"path": temp_dir, "required_exts": "mp4,txt"}}
-            )
-
-            self.assertEqual([item.source_ref for item in default_job.list_items()], [note.resolve()])
-            self.assertEqual([item.source_ref for item in video_job.list_items()], [note.resolve(), video.resolve()])
-
     def test_get_raw_content_transcribes_video(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             video = Path(temp_dir) / "talk.mkv"
@@ -238,15 +222,20 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             video.write_bytes(b"other bytes")
             self.assertNotEqual(job.get_item_checksum(item), expected)
 
-    def test_get_item_checksum_is_none_for_non_video(self):
+    def test_get_item_checksum_hashes_document_bytes(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             doc = Path(temp_dir) / "doc.txt"
-            doc.write_text("text", encoding="utf-8")
+            doc.write_bytes(b"text")
             job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+            item = IngestionItem(id=f"file://{doc}", source_ref=doc)
 
-            self.assertIsNone(job.get_item_checksum(IngestionItem(id="x", source_ref=doc)))
+            expected = hashlib.md5(b"text", usedforsecurity=False).hexdigest()
+            self.assertEqual(job.get_item_checksum(item), expected)
 
-    def test_get_item_checksum_is_none_when_video_unreadable(self):
+            doc.write_bytes(b"changed")
+            self.assertNotEqual(job.get_item_checksum(item), expected)
+
+    def test_get_item_checksum_is_none_when_file_unreadable(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
             missing = Path(temp_dir) / "gone.mp4"
@@ -393,6 +382,36 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             item = IngestionItem(id=f"file://{outside_path}", source_ref=outside_path)
             # Falls back to bare filename when relative_to raises ValueError
             self.assertEqual(job.get_item_name(item), "file.txt")
+
+
+class TestDirectoryDiscoveryWithRealReader(unittest.TestCase):
+    """Extension filtering belongs to SimpleDirectoryReader, so these tests do not mock it."""
+
+    def _list_names(self, directory: str, **config) -> list[str]:
+        job = DirectoryIngestionJob({"name": "local", "config": {"path": directory, **config}})
+        return sorted(Path(item.source_ref).name for item in job.list_items())
+
+    def test_video_is_listed_when_required_exts_is_omitted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / "talk.mp4").write_bytes(b"video")
+            (Path(temp_dir) / "note.txt").write_text("note", encoding="utf-8")
+
+            self.assertEqual(self._list_names(temp_dir), ["note.txt", "talk.mp4"])
+
+    def test_required_exts_without_video_excludes_it(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / "talk.mp4").write_bytes(b"video")
+            (Path(temp_dir) / "note.txt").write_text("note", encoding="utf-8")
+
+            self.assertEqual(self._list_names(temp_dir, required_exts="txt,md"), ["note.txt"])
+
+    def test_required_exts_with_video_lists_both(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / "talk.mp4").write_bytes(b"video")
+            (Path(temp_dir) / "note.txt").write_text("note", encoding="utf-8")
+            (Path(temp_dir) / "image.png").write_bytes(b"png")
+
+            self.assertEqual(self._list_names(temp_dir, required_exts="mp4,txt"), ["note.txt", "talk.mp4"])
 
 
 if __name__ == "__main__":
