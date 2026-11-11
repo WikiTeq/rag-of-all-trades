@@ -495,6 +495,16 @@ class TestIngestionJobVideoConversion:
         assert "2 error(s)" in caplog.text
         assert "audio track cut off; bad frame" in caplog.text
 
+    def test_partial_success_without_errors_does_not_warn(self, caplog):
+        # Docling reports a video without speech as a partial success with no error items.
+        job, _ = self._job_with_result(ConversionStatus.PARTIAL_SUCCESS, segments=[])
+
+        with caplog.at_level("WARNING", logger="tasks.base"):
+            transcript = job.convert_video_to_markdown("/tmp/a.mp4")
+
+        assert transcript == ""
+        assert caplog.text == ""
+
     def test_success_does_not_log_errors(self, caplog):
         job, _ = self._job_with_result(ConversionStatus.SUCCESS)
 

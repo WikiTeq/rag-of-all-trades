@@ -159,12 +159,12 @@ class IngestionJob(ABC):
         if result.status not in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
             details = f": {'; '.join(messages)}" if messages else ""
             raise RuntimeError(f"Docling video conversion failed for {video_path} ({result.status}){details}")
-        if result.status == ConversionStatus.PARTIAL_SUCCESS:
+        if result.status == ConversionStatus.PARTIAL_SUCCESS and messages:
             logger.warning(
                 "[%s] Docling video conversion finished with %d error(s): %s",
                 video_path,
                 len(messages),
-                "; ".join(messages) or "no details",
+                "; ".join(messages),
             )
         return "\n\n".join(self._format_transcript_segment(item) for item in result.document.texts).strip()
 
