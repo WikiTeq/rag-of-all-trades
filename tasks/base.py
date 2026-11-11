@@ -156,16 +156,12 @@ class IngestionJob(ABC):
         """
         result = self._get_video_converter().convert(Path(video_path), raises_on_error=False)
         messages = [error.error_message for error in result.errors]
-        if result.status not in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
+        failed = result.status not in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS) or (
+            result.status == ConversionStatus.PARTIAL_SUCCESS and messages
+        )
+        if failed:
             details = f": {'; '.join(messages)}" if messages else ""
             raise RuntimeError(f"Docling video conversion failed for {video_path} ({result.status}){details}")
-        if result.status == ConversionStatus.PARTIAL_SUCCESS and messages:
-            logger.warning(
-                "[%s] Docling video conversion finished with %d error(s): %s",
-                video_path,
-                len(messages),
-                "; ".join(messages),
-            )
         return "\n\n".join(self._format_transcript_segment(item) for item in result.document.texts).strip()
 
     def convert_to_markdown(self, content: bytes | str, fallback: str = "", file_extension: str | None = None) -> str:
