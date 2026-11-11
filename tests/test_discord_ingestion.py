@@ -266,24 +266,26 @@ class TestDiscordIngestionJob(unittest.TestCase):
         with self.assertRaises(DiscordAPIError):
             self._items(self._make_job(guild_ids=[OTHER_GUILD, GUILD]))
 
-    def test_explicit_channel_with_empty_history_but_activity_fails(self):
+    def test_explicit_channel_with_empty_history_but_activity_warns_without_failing(self):
         self.discord.set(f"/channels/{GENERAL}", _channel(GENERAL, "general", last_message_id=_msg_id(9)))
         self.discord.set(f"/channels/{GENERAL}/messages", [])
         self.discord.set(f"/guilds/{GUILD}/threads/active", {"threads": []})
         self._no_archives(GENERAL)
         job = self._make_job(guild_ids=[], channel_ids=[GENERAL])
-        with self.assertRaisesRegex(DiscordAPIError, "Read Message History"):
-            self._items(job)
+        with self.assertLogs("tasks.discord_ingestion", level="WARNING") as logs:
+            self.assertEqual(self._items(job), [])
+        self.assertTrue(any("Read Message History" in line for line in logs.output))
 
-    def test_explicit_thread_with_empty_history_but_activity_fails(self):
+    def test_explicit_thread_with_empty_history_but_activity_warns_without_failing(self):
         self.discord.set(
             f"/channels/{THREAD_ACTIVE}", {**_thread(THREAD_ACTIVE, "Plan", GENERAL), "last_message_id": _msg_id(9)}
         )
         self.discord.set(f"/channels/{GENERAL}", _channel(GENERAL, "general"))
         self.discord.set(f"/channels/{THREAD_ACTIVE}/messages", [])
         job = self._make_job(guild_ids=[], channel_ids=[THREAD_ACTIVE])
-        with self.assertRaisesRegex(DiscordAPIError, "Read Message History"):
-            self._items(job)
+        with self.assertLogs("tasks.discord_ingestion", level="WARNING") as logs:
+            self.assertEqual(self._items(job), [])
+        self.assertTrue(any("Read Message History" in line for line in logs.output))
 
     def test_discovered_channel_with_empty_history_but_activity_warns_and_continues(self):
         self.discord.set(
@@ -511,10 +513,10 @@ class TestDiscordIngestionJob(unittest.TestCase):
         with self.assertRaises(DiscordAPIError):
             self._items(job)
 
-    def test_explicit_forum_fails_when_active_posts_return_empty_history(self):
+    def test_explicit_forum_with_empty_post_history_warns_without_failing(self):
         job = self._explicit_forum({"threads": [], "has_more": False}, [])
-        with self.assertRaisesRegex(DiscordAPIError, "Read Message History"):
-            self._items(job)
+        with self.assertLogs("tasks.discord_ingestion", level="WARNING"):
+            self.assertEqual(self._items(job), [])
 
     def test_explicit_forum_with_readable_posts_succeeds(self):
         job = self._explicit_forum({"threads": [], "has_more": False}, [_message(30, "post body")])
@@ -583,6 +585,33 @@ class TestDiscordIngestionJob(unittest.TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].source_ref["reply_to_message_id"], _msg_id(0))
         self.assertEqual(job.get_raw_content(items[0]), "bob in #general (reply to Alice A.):\nI agree")
+
+    def test_application_command_responses_are_kept(self):
+        self._guild_with_general(
+            messages=[_message(1, "Slash reply", msg_type=20), _message(2, "Menu reply", msg_type=23)]
+        )
+        job = self._make_job()
+        items = self._items(job)
+        self.assertEqual(len(items), 2)
+        self.assertEqual(job.get_raw_content(items[0]), "Alice A. in #general:\nSlash reply")
+
+    def test_forwarded_message_renders_snapshot_content_under_forwarding_id(self):
+        snapshot = {
+            "message": {
+                "content": "Original text",
+                "attachments": [{"filename": "spec.pdf"}],
+                "embeds": [{"title": "Doc", "description": "Summary"}],
+            }
+        }
+        self._guild_with_general(messages=[_message(1, "", message_snapshots=[snapshot])])
+        job = self._make_job()
+        items = self._items(job)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].source_ref["message_id"], _msg_id(1))
+        self.assertEqual(
+            job.get_raw_content(items[0]),
+            "Alice A. in #general:\nForwarded message:\nOriginal text\nAttachments: spec.pdf\nEmbed: Doc - Summary",
+        )
 
     def test_messages_without_content_attachments_or_embeds_are_skipped(self):
         self._guild_with_general(messages=[_message(1, ""), _message(2, "   ")])
