@@ -18,6 +18,7 @@ from llama_index.core import Document
 from markitdown import MarkItDown, StreamInfo
 
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.helper_classes.ingestion_result import IngestionItemResult, IngestionItemStatus
 from tasks.helper_classes.metadata_tracker import MetadataTracker
 from tasks.helper_classes.vector_store import VectorStoreManager
 from tasks.schemas import BaseMetadataSchema
@@ -201,14 +202,19 @@ class IngestionJob(ABC):
         pass
 
     @abstractmethod
-    def get_raw_content(self, item: IngestionItem) -> str:
+    def get_raw_content(self, item: IngestionItem) -> str | IngestionItemResult:
         """Fetch and return the raw text content for a given item.
 
         Args:
             item: The ingestion item to fetch content for
 
         Returns:
-            str: The raw text content of the item
+            str: The raw text content of the item. An empty string is skipped and the
+                item is fetched again on the next run, so it also covers a failed fetch.
+            IngestionItemResult: An explicit outcome. ``SUCCESS`` carries the text in
+                ``result``; an empty text is stored as a zero-chunk record so an unchanged
+                item is not fetched again. ``FAIL`` carries ``errors``; nothing is stored
+                and the item is tried again on the next run.
         """
         pass
 
@@ -241,14 +247,6 @@ class IngestionJob(ABC):
             str | None: A revision string or identifier, or None to use content-based MD5
         """
         return None
-
-    def record_empty_content(self, item: IngestionItem) -> bool:
-        """Return True to store a zero-chunk record when the item's content is empty.
-
-        Only used when ``get_item_checksum`` returns a value. The default is False, so a
-        fetch that fails and returns an empty string is tried again on the next run.
-        """
-        return False
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Hook for subclasses to provide additional metadata.
@@ -291,11 +289,26 @@ class IngestionJob(ABC):
             self._seen.popitem(last=False)
         return True
 
+    def _normalize_content(self, item: IngestionItem, fetched: str | IngestionItemResult) -> tuple[str | None, bool]:
+        """Turn the return value of ``get_raw_content`` into ``(text, explicit)``.
+
+        ``text`` is None when the connector reported ``FAIL``; the errors are logged here.
+        ``explicit`` is True for an ``IngestionItemResult``, so a successful empty text
+        can be told from the legacy empty string that connectors also use for failures.
+        """
+        if not isinstance(fetched, IngestionItemResult):
+            return fetched, False
+        if fetched.status is IngestionItemStatus.FAIL:
+            logger.error("Failed to fetch content for item %s: %s", item.id, "; ".join(fetched.errors) or "no details")
+            return None, True
+        return fetched.result or "", True
+
     def _record_empty_item(self, item: IngestionItem, item_name: str, checksum: str, latest) -> None:
         """Store a zero-chunk record so an unchanged empty item is not fetched again.
 
-        Only used when the checksum is known before the content is fetched. Without the
-        record, every run would repeat an expensive fetch (for example video transcription).
+        Only used for a successful fetch with empty content (``IngestionItemResult``).
+        Without the record, every run would repeat an expensive fetch such as video
+        transcription. Previous embeddings are deleted: the content is now empty.
         """
         if latest:
             self.metadata_tracker.delete_previous_embeddings(item_name)
@@ -327,14 +340,17 @@ class IngestionJob(ABC):
         try:
             pre_checksum = self.get_item_checksum(item)
             raw_content = None
+            explicit = False
 
             if pre_checksum:
                 # Fast path: resolve checksum without fetching content
                 new_checksum = pre_checksum
             else:
                 # Standard path: fetch content and compute MD5
-                raw_content = self.get_raw_content(item)
-                if not raw_content.strip():
+                raw_content, explicit = self._normalize_content(item, self.get_raw_content(item))
+                if raw_content is None:
+                    return 0
+                if not raw_content.strip() and not explicit:
                     logger.warning(f"Skipping empty content for item: {item.id}")
                     return 0
                 new_checksum = hashlib.md5(raw_content.encode("utf-8"), usedforsecurity=False).hexdigest()
@@ -354,12 +370,20 @@ class IngestionJob(ABC):
             # Fetch content for the fast path only after dedup checks pass —
             # avoids the expensive API call when the item is unchanged or already seen.
             if raw_content is None:
-                raw_content = self.get_raw_content(item)
-                if not raw_content.strip():
-                    logger.warning(f"Skipping empty content for item: {item.id}")
-                    if self.record_empty_content(item):
-                        self._record_empty_item(item, item_name, new_checksum, latest)
+                raw_content, explicit = self._normalize_content(item, self.get_raw_content(item))
+                if raw_content is None:
+                    # A failed fetch must stay retryable, also within this job.
+                    self._seen.pop(seen_key, None)
                     return 0
+                if not raw_content.strip() and not explicit:
+                    logger.warning(f"Skipping empty content for item: {item.id}")
+                    return 0
+
+            if not raw_content.strip():
+                # Only an explicit successful result reaches this point with empty content.
+                logger.info(f"Recording empty content for item: {item.id}")
+                self._record_empty_item(item, item_name, new_checksum, latest)
+                return 0
 
             if latest:
                 logger.info(f"Updating item {item_name} from version {latest.version}")

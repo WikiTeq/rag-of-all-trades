@@ -9,6 +9,7 @@ from docling.datamodel.base_models import ConversionStatus, InputFormat
 
 from tasks.base import VIDEO_ASR_MODELS, IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.helper_classes.ingestion_result import IngestionItemResult, IngestionItemStatus
 from tasks.schemas import BaseMetadataSchema
 
 
@@ -554,25 +555,57 @@ class TestIngestionJobVideoConversion:
             DummyIngestionJob({"name": "test-source", "config": {"video_model": "huge"}})
 
 
-class TestIngestionJobEmptyPrecheckedItem:
+class TestIngestionJobItemResult:
     @staticmethod
-    def _job(latest=None, record_empty=True):
+    def _job(fetched, pre_checksum="sum-1", latest=None):
         item = IngestionItem(id="item-1", source_ref="src", last_modified=datetime(2026, 1, 2))
-        job = DummyIngestionJob({"name": "test-source"}, items=[item], content_by_id={"item-1": " "})
-        job.get_item_checksum = Mock(return_value="sum-1")
-        job.record_empty_content = Mock(return_value=record_empty)
+        job = DummyIngestionJob({"name": "test-source"}, items=[item])
+        job.get_item_checksum = Mock(return_value=pre_checksum)
+        job.get_raw_content = (
+            Mock(side_effect=fetched) if isinstance(fetched, Exception) else Mock(return_value=fetched)
+        )
         job.metadata_tracker = Mock()
         job.metadata_tracker.get_latest_record.return_value = latest
         job.vector_manager = Mock()
         return job, item
 
-    def test_record_empty_content_defaults_to_false(self):
-        job = DummyIngestionJob({"name": "test-source"})
+    @staticmethod
+    def _success(text):
+        return IngestionItemResult(IngestionItemStatus.SUCCESS, text)
 
-        assert job.record_empty_content(IngestionItem(id="item-1", source_ref="src")) is False
+    @staticmethod
+    def _fail(*errors):
+        return IngestionItemResult(IngestionItemStatus.FAIL, errors=errors)
 
-    def test_empty_content_with_known_checksum_is_recorded_as_zero_chunks(self):
-        job, item = self._job()
+    @pytest.mark.parametrize("pre_checksum", ["sum-1", None])
+    def test_legacy_empty_string_is_skipped_and_not_recorded(self, pre_checksum):
+        job, item = self._job(" ", pre_checksum)
+
+        assert job.process_item(item) == 0
+
+        job.metadata_tracker.record_metadata.assert_not_called()
+        job.vector_manager.insert_documents.assert_not_called()
+
+    @pytest.mark.parametrize("pre_checksum", ["sum-1", None])
+    def test_legacy_exception_is_not_recorded(self, pre_checksum):
+        job, item = self._job(RuntimeError("boom"), pre_checksum)
+
+        assert job.process_item(item) == 0
+
+        job.metadata_tracker.record_metadata.assert_not_called()
+
+    @pytest.mark.parametrize("pre_checksum", ["sum-1", None])
+    def test_success_with_text_is_ingested(self, pre_checksum):
+        job, item = self._job(self._success("transcript"), pre_checksum)
+
+        assert job.process_item(item) == 1
+
+        document = job.vector_manager.insert_documents.call_args.args[0][0]
+        assert document.text == "transcript"
+        assert job.metadata_tracker.record_metadata.call_args.args[3] == 1
+
+    def test_success_with_empty_text_is_recorded_as_zero_chunks(self):
+        job, item = self._job(self._success(""))
 
         assert job.process_item(item) == 0
 
@@ -582,32 +615,46 @@ class TestIngestionJobEmptyPrecheckedItem:
         job.metadata_tracker.delete_previous_embeddings.assert_not_called()
         job.vector_manager.insert_documents.assert_not_called()
 
-    def test_empty_content_is_not_recorded_when_connector_does_not_allow_it(self):
-        job, item = self._job(record_empty=False)
+    def test_success_with_whitespace_text_without_checksum_is_recorded_with_content_checksum(self):
+        job, item = self._job(self._success("  \n"), pre_checksum=None)
 
         assert job.process_item(item) == 0
 
-        job.metadata_tracker.record_metadata.assert_not_called()
+        checksum = hashlib.md5(b"  \n", usedforsecurity=False).hexdigest()
+        assert job.metadata_tracker.record_metadata.call_args.args[:4] == ("item-1", checksum, 1, 0)
 
-    def test_recorded_empty_item_is_skipped_on_next_run(self):
-        job, item = self._job(latest=Mock(checksum="sum-1", version=1))
+    def test_recorded_empty_item_is_not_fetched_again(self):
+        job, item = self._job(self._success(""), latest=Mock(checksum="sum-1", version=1))
 
         assert job.process_item(item) == 0
 
+        job.get_raw_content.assert_not_called()
         job.metadata_tracker.record_metadata.assert_not_called()
 
     def test_content_that_became_empty_replaces_previous_version(self):
-        job, item = self._job(latest=Mock(checksum="old", version=3))
+        job, item = self._job(self._success(""), latest=Mock(checksum="old", version=3))
 
         assert job.process_item(item) == 0
 
         job.metadata_tracker.delete_previous_embeddings.assert_called_once_with("item-1")
         assert job.metadata_tracker.record_metadata.call_args.args[:4] == ("item-1", "sum-1", 4, 0)
 
-    def test_failed_fetch_is_not_recorded(self):
-        job, item = self._job()
-        job.get_raw_content = Mock(side_effect=RuntimeError("boom"))
+    @pytest.mark.parametrize("pre_checksum", ["sum-1", None])
+    def test_failure_keeps_previous_record_and_logs_errors(self, pre_checksum, caplog):
+        job, item = self._job(self._fail("ffmpeg missing", "bad stream"), pre_checksum, latest=Mock(checksum="old"))
+
+        with caplog.at_level("ERROR"):
+            assert job.process_item(item) == 0
+
+        assert "ffmpeg missing; bad stream" in caplog.text
+        job.metadata_tracker.delete_previous_embeddings.assert_not_called()
+        job.metadata_tracker.record_metadata.assert_not_called()
+        job.vector_manager.insert_documents.assert_not_called()
+
+    def test_failure_is_retried_in_the_same_job(self):
+        job, item = self._job(self._fail("boom"))
 
         assert job.process_item(item) == 0
 
-        job.metadata_tracker.record_metadata.assert_not_called()
+        job.get_raw_content.return_value = self._success("transcript")
+        assert job.process_item(item) == 1

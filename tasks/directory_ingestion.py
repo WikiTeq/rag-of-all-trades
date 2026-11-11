@@ -9,6 +9,7 @@ from pydantic import BaseModel, field_validator
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.helper_classes.ingestion_result import IngestionItemResult, IngestionItemStatus
 from utils.parse import parse_list
 from utils.text import sanitize_ascii_key
 
@@ -159,19 +160,17 @@ class DirectoryIngestionJob(IngestionJob):
             logger.warning("[%s] Failed to hash video: %s", file_path, exc)
             return None
 
-    def record_empty_content(self, item: IngestionItem) -> bool:
-        """Record a video without speech, so the next run skips the slow transcription.
-
-        A failed conversion raises and is not recorded. Other files that return an empty
-        string after a read error are tried again.
-        """
-        return Path(item.source_ref).suffix.lower() in VIDEO_EXTENSIONS
-
-    def get_raw_content(self, item: IngestionItem):
+    def get_raw_content(self, item: IngestionItem) -> str | IngestionItemResult:
         file_path = Path(item.source_ref)
 
         if file_path.suffix.lower() in VIDEO_EXTENSIONS:
-            return self.convert_video_to_markdown(file_path)
+            # A video without speech is a successful empty result, so it is recorded once.
+            # A failed conversion is reported as FAIL, so the video is tried again next run.
+            try:
+                return IngestionItemResult(IngestionItemStatus.SUCCESS, self.convert_video_to_markdown(file_path))
+            except Exception as exc:
+                logger.warning("[%s] Video transcription failed: %s", file_path, exc, exc_info=True)
+                return IngestionItemResult(IngestionItemStatus.FAIL, errors=(str(exc),))
 
         try:
             docs = self._load_documents_for_path(file_path)
