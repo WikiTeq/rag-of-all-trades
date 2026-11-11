@@ -242,6 +242,35 @@ class TestDirectoryIngestionJob(unittest.TestCase):
 
             self.assertIsNone(job.get_item_checksum(IngestionItem(id="x", source_ref=missing)))
 
+    def test_process_item_records_silent_video_once_and_skips_unchanged_run(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video = Path(temp_dir) / "silent.mp4"
+            video.write_bytes(b"video bytes")
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+            item = IngestionItem(id=f"file://{video}", source_ref=video)
+            job.vector_manager = Mock()
+            job.metadata_tracker = Mock()
+            job.metadata_tracker.get_latest_record.return_value = None
+
+            with patch.object(job, "convert_video_to_markdown", return_value="") as convert:
+                self.assertEqual(job.process_item(item), 0)
+
+            expected = hashlib.md5(b"video bytes", usedforsecurity=False).hexdigest()
+            job.vector_manager.insert_documents.assert_not_called()
+            args = job.metadata_tracker.record_metadata.call_args.args
+            self.assertEqual(args[:4], ("silent.mp4", expected, 1, 0))
+            convert.assert_called_once_with(video)
+
+            job.metadata_tracker.record_metadata.reset_mock()
+            job.metadata_tracker.get_latest_record.return_value = Mock(checksum=expected, version=1)
+            job._seen.clear()
+
+            with patch.object(job, "convert_video_to_markdown", return_value="") as convert:
+                self.assertEqual(job.process_item(item), 0)
+
+            convert.assert_not_called()
+            job.metadata_tracker.record_metadata.assert_not_called()
+
     def test_get_raw_content_joins_multiple_documents(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             file_path = Path(temp_dir) / "doc.txt"
