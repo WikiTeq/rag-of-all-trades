@@ -15,8 +15,6 @@ from utils.text import sanitize_ascii_key
 
 logger = logging.getLogger(__name__)
 
-VIDEO_EXTENSIONS = frozenset({".mp4", ".avi", ".mov", ".mkv", ".webm"})
-
 
 class DirectoryConnectorConfig(BaseModel):
     """Pydantic model validating the 'config' block of a directory connector."""
@@ -153,7 +151,7 @@ class DirectoryIngestionJob(IngestionJob):
     def get_raw_content(self, item: IngestionItem) -> str | IngestionItemResult:
         file_path = Path(item.source_ref)
 
-        if file_path.suffix.lower() in VIDEO_EXTENSIONS:
+        if file_path.suffix.lower() in self.VIDEO_EXTENSIONS:
             # A video without speech is a successful empty result, so it is recorded once.
             # A failed conversion is reported as FAIL, so the video is tried again next run.
             try:

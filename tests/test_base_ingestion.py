@@ -5,9 +5,10 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from docling.datamodel import asr_model_specs
 from docling.datamodel.base_models import ConversionStatus, InputFormat
 
-from tasks.base import VIDEO_ASR_MODELS, IngestionJob
+from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.helper_classes.ingestion_result import IngestionItemResult, IngestionItemStatus
 from tasks.schemas import BaseMetadataSchema
@@ -464,12 +465,16 @@ class TestIngestionJobVideoConversion:
         return Mock(text=text, source=[Mock(start_time=start, end_time=end)])
 
     @classmethod
-    def _job_with_result(cls, status, segments=None):
+    def _job_with_result(cls, status, segments=None, errors=()):
         if segments is None:
             segments = [cls._segment("Hello", 0.0, 4.9)]
         job = DummyIngestionJob({"name": "test-source"})
         converter = Mock()
-        converter.convert.return_value = Mock(status=status, document=Mock(texts=segments))
+        converter.convert.return_value = Mock(
+            status=status,
+            document=Mock(texts=segments),
+            errors=[Mock(error_message=message) for message in errors],
+        )
         job._video_converter = converter
         return job, converter
 
@@ -479,10 +484,24 @@ class TestIngestionJobVideoConversion:
         assert job.convert_video_to_markdown("/tmp/a.mp4") == "[00:00-00:04] Hello"
         converter.convert.assert_called_once_with(Path("/tmp/a.mp4"), raises_on_error=False)
 
-    def test_partial_success_is_accepted(self):
-        job, _ = self._job_with_result(ConversionStatus.PARTIAL_SUCCESS)
+    def test_partial_success_keeps_transcript_and_logs_errors(self, caplog):
+        job, _ = self._job_with_result(ConversionStatus.PARTIAL_SUCCESS, errors=("audio track cut off", "bad frame"))
 
-        assert job.convert_video_to_markdown("/tmp/a.mp4") == "[00:00-00:04] Hello"
+        with caplog.at_level("WARNING", logger="tasks.base"):
+            transcript = job.convert_video_to_markdown("/tmp/a.mp4")
+
+        assert transcript == "[00:00-00:04] Hello"
+        assert "/tmp/a.mp4" in caplog.text
+        assert "2 error(s)" in caplog.text
+        assert "audio track cut off; bad frame" in caplog.text
+
+    def test_success_does_not_log_errors(self, caplog):
+        job, _ = self._job_with_result(ConversionStatus.SUCCESS)
+
+        with caplog.at_level("WARNING", logger="tasks.base"):
+            job.convert_video_to_markdown("/tmp/a.mp4")
+
+        assert "error(s)" not in caplog.text
 
     def test_segments_are_separate_paragraphs_with_hour_timestamps(self):
         segments = [self._segment("First", 61.2, 65.0), self._segment("Second", 3725.0, 3730.9)]
@@ -500,6 +519,12 @@ class TestIngestionJobVideoConversion:
         job, _ = self._job_with_result(ConversionStatus.FAILURE)
 
         with pytest.raises(RuntimeError, match="a.mp4"):
+            job.convert_video_to_markdown("/tmp/a.mp4")
+
+    def test_failure_status_includes_conversion_errors(self):
+        job, _ = self._job_with_result(ConversionStatus.FAILURE, errors=("no audio stream", "decoder crashed"))
+
+        with pytest.raises(RuntimeError, match="no audio stream; decoder crashed"):
             job.convert_video_to_markdown("/tmp/a.mp4")
 
     def test_converter_exception_propagates(self):
@@ -527,7 +552,7 @@ class TestIngestionJobVideoConversion:
 
         assert first is second is mock_cls.return_value
         mock_options.assert_called_once_with(
-            asr_options=VIDEO_ASR_MODELS["tiny"], generate_frame_images=False, enable_diarization=False
+            asr_options=asr_model_specs.WHISPER_TINY, generate_frame_images=False, enable_diarization=False
         )
         mock_option.assert_called_once_with(pipeline_options=mock_options.return_value)
         mock_cls.assert_called_once_with(
@@ -535,12 +560,15 @@ class TestIngestionJobVideoConversion:
             format_options={InputFormat.VIDEO: mock_option.return_value},
         )
 
-    def test_video_model_defaults_to_tiny(self):
-        assert DummyIngestionJob({"name": "test-source"}).video_model == "tiny"
+    def test_video_asr_model_defaults_to_whisper_tiny(self):
+        job = DummyIngestionJob({"name": "test-source"})
 
-    def test_video_model_selects_asr_options(self):
-        job = DummyIngestionJob({"name": "test-source", "config": {"video_model": " Small "}})
-        assert job.video_model == "small"
+        assert job.video_asr_model == "WHISPER_TINY"
+        assert job._video_asr_options is asr_model_specs.WHISPER_TINY
+
+    def test_video_asr_model_selects_docling_spec(self):
+        job = DummyIngestionJob({"name": "test-source", "config": {"video_asr_model": " whisper_small "}})
+        assert job.video_asr_model == "WHISPER_SMALL"
         with (
             patch("tasks.base.DocumentConverter"),
             patch("tasks.base.VideoFormatOption"),
@@ -548,11 +576,30 @@ class TestIngestionJobVideoConversion:
         ):
             job._get_video_converter()
 
-        assert mock_options.call_args.kwargs["asr_options"] is VIDEO_ASR_MODELS["small"]
+        assert mock_options.call_args.kwargs["asr_options"] is asr_model_specs.WHISPER_SMALL
 
-    def test_unknown_video_model_is_rejected(self):
-        with pytest.raises(ValueError, match="video_model must be one of"):
-            DummyIngestionJob({"name": "test-source", "config": {"video_model": "huge"}})
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "tiny",
+            "huge",
+            "logging",
+            "WHISPER_TINY_MLX",
+            "WHISPER_TINY_S2T",
+            "WHISPER_TINY_TRANSFORMERS",
+            "GRANITE_4_0_1B_SPEECH",
+        ],
+    )
+    def test_invalid_video_asr_model_is_rejected(self, name):
+        with pytest.raises(ValueError, match="video_asr_model must be one of: .*WHISPER_TINY"):
+            DummyIngestionJob({"name": "test-source", "config": {"video_asr_model": name}})
+
+    def test_video_extensions_are_defined_on_the_base_class(self):
+        assert IngestionJob.VIDEO_EXTENSIONS == frozenset({".mp4", ".avi", ".mov", ".mkv", ".webm"})
+
+    def test_transcript_timestamps_use_minutes_and_hours(self):
+        assert IngestionJob._format_transcript_timestamp(65.9) == "01:05"
+        assert IngestionJob._format_transcript_timestamp(3725.0) == "1:02:05"
 
 
 class TestIngestionJobItemResult:

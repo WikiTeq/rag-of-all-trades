@@ -13,6 +13,7 @@ from typing import Any
 from docling.datamodel import asr_model_specs
 from docling.datamodel.base_models import ConversionStatus, InputFormat
 from docling.datamodel.pipeline_options import VideoPipelineOptions
+from docling.datamodel.pipeline_options_asr_model import InlineAsrNativeWhisperOptions
 from docling.document_converter import DocumentConverter, VideoFormatOption
 from llama_index.core import Document
 from markitdown import MarkItDown, StreamInfo
@@ -25,15 +26,7 @@ from tasks.schemas import BaseMetadataSchema
 
 logger = logging.getLogger(__name__)
 
-# Whisper models Docling can use for video transcription, keyed by the ``video_model`` config value.
-VIDEO_ASR_MODELS = {
-    "tiny": asr_model_specs.WHISPER_TINY,
-    "base": asr_model_specs.WHISPER_BASE,
-    "small": asr_model_specs.WHISPER_SMALL,
-    "medium": asr_model_specs.WHISPER_MEDIUM,
-    "large": asr_model_specs.WHISPER_LARGE,
-    "turbo": asr_model_specs.WHISPER_TURBO,
-}
+DEFAULT_VIDEO_ASR_MODEL = "WHISPER_TINY"
 
 
 class IngestionJob(ABC):
@@ -43,6 +36,9 @@ class IngestionJob(ABC):
     (files, APIs, databases, etc.) into a vector store for RAG applications. It handles
     duplicate detection, versioning, metadata tracking, and provides hooks for customization.
     """
+
+    # File extensions (lowercase) that connectors send to the Docling video transcription.
+    VIDEO_EXTENSIONS = frozenset({".mp4", ".avi", ".mov", ".mkv", ".webm"})
 
     @property
     def content_format(self) -> str:
@@ -71,9 +67,8 @@ class IngestionJob(ABC):
         if self.request_delay < 0:
             raise ValueError("request_delay must be >= 0")
 
-        self.video_model = str(cfg.get("video_model", "tiny")).strip().lower()
-        if self.video_model not in VIDEO_ASR_MODELS:
-            raise ValueError(f"video_model must be one of: {', '.join(VIDEO_ASR_MODELS)}")
+        self.video_asr_model = str(cfg.get("video_asr_model") or DEFAULT_VIDEO_ASR_MODEL).strip().upper()
+        self._video_asr_options = self._resolve_video_asr_options(self.video_asr_model)
 
         self.source_name = config.get("name")
         self.metadata_tracker = MetadataTracker()
@@ -94,6 +89,24 @@ class IngestionJob(ABC):
             self._markitdown = MarkItDown()
         return self._markitdown
 
+    @staticmethod
+    def _resolve_video_asr_options(name: str) -> InlineAsrNativeWhisperOptions:
+        """Return the Docling native Whisper spec named ``name`` (for example ``WHISPER_TINY``).
+
+        Only ``WHISPER_*`` specs that run on the CPU through openai-whisper are valid. The
+        MLX, Transformers and S2T specs need other runtimes, so they are rejected.
+        """
+        spec = getattr(asr_model_specs, name, None) if name.startswith("WHISPER_") else None
+        if not isinstance(spec, InlineAsrNativeWhisperOptions):
+            valid = sorted(
+                attr
+                for attr in dir(asr_model_specs)
+                if attr.startswith("WHISPER_")
+                and isinstance(getattr(asr_model_specs, attr), InlineAsrNativeWhisperOptions)
+            )
+            raise ValueError(f"video_asr_model must be one of: {', '.join(valid)}")
+        return spec
+
     def _get_video_converter(self) -> DocumentConverter:
         """Return a shared Docling video converter, creating it on first use.
 
@@ -101,7 +114,7 @@ class IngestionJob(ABC):
         """
         if self._video_converter is None:
             options = VideoPipelineOptions(
-                asr_options=VIDEO_ASR_MODELS[self.video_model],
+                asr_options=self._video_asr_options,
                 generate_frame_images=False,
                 enable_diarization=False,
             )
@@ -112,7 +125,7 @@ class IngestionJob(ABC):
         return self._video_converter
 
     @staticmethod
-    def _format_timestamp(seconds: float) -> str:
+    def _format_transcript_timestamp(seconds: float) -> str:
         """Format seconds as ``mm:ss``, or ``h:mm:ss`` from one hour."""
         minutes, secs = divmod(int(seconds), 60)
         hours, minutes = divmod(minutes, 60)
@@ -125,8 +138,8 @@ class IngestionJob(ABC):
         if not text or not item.source:
             return text
         track = item.source[0]
-        start = IngestionJob._format_timestamp(track.start_time)
-        end = IngestionJob._format_timestamp(track.end_time)
+        start = IngestionJob._format_transcript_timestamp(track.start_time)
+        end = IngestionJob._format_transcript_timestamp(track.end_time)
         return f"[{start}-{end}] {text}"
 
     def convert_video_to_markdown(self, video_path: Path | str) -> str:
@@ -142,8 +155,17 @@ class IngestionJob(ABC):
             RuntimeError: When Docling cannot convert the video. The caller can retry later.
         """
         result = self._get_video_converter().convert(Path(video_path), raises_on_error=False)
+        messages = [error.error_message for error in result.errors]
         if result.status not in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS):
-            raise RuntimeError(f"Docling video conversion failed for {video_path}: {result.status}")
+            details = f": {'; '.join(messages)}" if messages else ""
+            raise RuntimeError(f"Docling video conversion failed for {video_path} ({result.status}){details}")
+        if result.status == ConversionStatus.PARTIAL_SUCCESS:
+            logger.warning(
+                "[%s] Docling video conversion finished with %d error(s): %s",
+                video_path,
+                len(messages),
+                "; ".join(messages) or "no details",
+            )
         return "\n\n".join(self._format_transcript_segment(item) for item in result.document.texts).strip()
 
     def convert_to_markdown(self, content: bytes | str, fallback: str = "", file_extension: str | None = None) -> str:
