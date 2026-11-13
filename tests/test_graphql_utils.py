@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import requests
 
 from utils.graphql import GraphQLError, graphql_request
+from utils.http import RetrySession
 
 
 def _mock_response(status_code: int, json_data: dict) -> MagicMock:
@@ -83,6 +84,65 @@ class TestGraphqlRequest(unittest.TestCase):
 
         with self.assertRaises(GraphQLError):
             graphql_request("http://api/graphql", "{ x }")
+
+    @patch("utils.graphql.requests.post")
+    def test_session_routes_through_session_post_with_retry(self, mock_post):
+        session = MagicMock(spec=RetrySession)
+        session.post.return_value = _mock_response(200, {"data": {"users": [{"id": 1}]}})
+        headers = {"Authorization": "Bearer token"}
+        variables = {"id": 42}
+
+        result = graphql_request(
+            "http://api/graphql",
+            "query($id: ID!) { x(id: $id) }",
+            variables,
+            headers,
+            session=session,
+        )
+
+        self.assertEqual(result, {"users": [{"id": 1}]})
+        session.post.assert_called_once()
+        call_kwargs = session.post.call_args[1]
+        self.assertEqual(call_kwargs["headers"], headers)
+        self.assertEqual(call_kwargs["json"]["variables"], variables)
+        self.assertTrue(call_kwargs["retry"])
+        mock_post.assert_not_called()
+
+    @patch("utils.graphql.requests.post")
+    def test_session_raises_for_status(self, mock_post):
+        session = MagicMock(spec=RetrySession)
+        session.post.return_value = _mock_response(500, {})
+
+        with self.assertRaises(requests.HTTPError):
+            graphql_request("http://api/graphql", "{ x }", session=session)
+
+        mock_post.assert_not_called()
+
+    @patch("utils.graphql.requests.post")
+    def test_session_non_json_response_raises_graphql_error(self, mock_post):
+        session = MagicMock(spec=RetrySession)
+        resp = MagicMock(spec=requests.Response)
+        resp.status_code = 200
+        resp.raise_for_status.return_value = None
+        resp.json.side_effect = ValueError("no json")
+        resp.text = "Internal Server Error"
+        session.post.return_value = resp
+
+        with self.assertRaises(GraphQLError):
+            graphql_request("http://api/graphql", "{ x }", session=session)
+
+        mock_post.assert_not_called()
+
+    @patch("utils.graphql.requests.post")
+    def test_session_graphql_errors_raises(self, mock_post):
+        session = MagicMock(spec=RetrySession)
+        session.post.return_value = _mock_response(200, {"errors": [{"message": "Not found"}]})
+
+        with self.assertRaises(GraphQLError) as ctx:
+            graphql_request("http://api/graphql", "{ x }", session=session)
+
+        self.assertIn("Not found", str(ctx.exception))
+        mock_post.assert_not_called()
 
 
 if __name__ == "__main__":
