@@ -629,6 +629,22 @@ class TestIngestionJobItemResult:
     def _fail(*errors):
         return IngestionItemResult(IngestionItemStatus.FAIL, errors=errors)
 
+    def test_normalize_returns_result_as_is(self):
+        for result in (self._success("text"), self._success(""), self._fail("boom")):
+            assert IngestionJob._normalize_content(result) is result
+
+    def test_normalize_wraps_legacy_text_as_success(self):
+        result = IngestionJob._normalize_content("text")
+
+        assert result == self._success("text")
+
+    @pytest.mark.parametrize("legacy", ["", "  \n"])
+    def test_normalize_wraps_legacy_empty_string_as_fail(self, legacy):
+        result = IngestionJob._normalize_content(legacy)
+
+        assert result.status is IngestionItemStatus.FAIL
+        assert result.errors
+
     @pytest.mark.parametrize("pre_checksum", ["sum-1", None])
     def test_legacy_empty_string_is_skipped_and_not_recorded(self, pre_checksum):
         job, item = self._job(" ", pre_checksum)
