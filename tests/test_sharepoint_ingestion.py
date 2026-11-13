@@ -1,10 +1,13 @@
+import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
+from llama_index.core import SimpleDirectoryReader
 from llama_index.core.schema import Document
 from llama_index.readers.microsoft_sharepoint import SharePointType
+from openpyxl import Workbook
 
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.sharepoint_ingestion import SharePointIngestionJob
@@ -402,6 +405,52 @@ class TestSharePointIngestionGetRawContent(unittest.TestCase):
             result = job.get_raw_content(item)
 
         self.assertEqual(result, "")
+
+    def _drive_content(self, docs):
+        item = IngestionItem(id="sharepoint:sp1:MySite/Docs/book.xlsx", source_ref=_make_info("MySite/Docs/book.xlsx"))
+        with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
+            MockReader.return_value.load_resource.return_value = docs
+            job = _make_job()
+            job._reader = MockReader.return_value
+            return job.get_raw_content(item)
+
+    def test_drive_joins_all_documents_in_order(self):
+        docs = [Document(text="Sheet one", metadata={}), Document(text="Sheet two", metadata={})]
+        self.assertEqual(self._drive_content(docs), "Sheet one\n\nSheet two")
+
+    def test_drive_skips_empty_documents(self):
+        docs = [
+            Document(text="Sheet one", metadata={}),
+            Document(text="  \n", metadata={}),
+            Document(text=None, metadata={}),
+            Document(text="Sheet three", metadata={}),
+        ]
+        self.assertEqual(self._drive_content(docs), "Sheet one\n\nSheet three")
+
+    def test_drive_returns_empty_when_all_documents_empty(self):
+        docs = [Document(text="", metadata={}), Document(text=" ", metadata={})]
+        self.assertEqual(self._drive_content(docs), "")
+
+    def test_drive_strips_whitespace_around_single_document(self):
+        self.assertEqual(self._drive_content([Document(text="\n File content \n", metadata={})]), "File content")
+
+    def test_drive_keeps_every_sheet_of_real_xlsx(self):
+        workbook = Workbook()
+        workbook.active.title = "First"
+        workbook["First"].append(["header"])
+        workbook["First"].append(["alpha_marker"])
+        second = workbook.create_sheet("Second")
+        second.append(["header"])
+        second.append(["beta_marker"])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "book.xlsx"
+            workbook.save(path)
+            docs = SimpleDirectoryReader(input_files=[str(path)]).load_data()
+
+        result = self._drive_content(docs)
+
+        self.assertIn("alpha_marker", result)
+        self.assertIn("beta_marker", result)
 
     def test_page_returns_document_text(self):
         doc = Document(text="Page content", metadata={})
