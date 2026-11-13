@@ -5,8 +5,6 @@ import yaml
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from utils.parse import parse_bool
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = BASE_DIR / ".env"
 YAML_PATH = BASE_DIR / "config.yaml"
@@ -112,39 +110,11 @@ class Settings:
             name = source.get("name", "unknown_source")
             config = source.get("config", {})
 
-            # Handle buckets as list
-            buckets = config.get("buckets", [])
-            if isinstance(buckets, str):
-                buckets = [b.strip() for b in buckets.split(",") if b.strip()]
-
-            schedules = config.get("schedules", [])
-            if isinstance(schedules, str):
-                schedules = [s.strip() for s in schedules.split(",") if s.strip()]
-
-            enabled = parse_bool(source.get("enabled"), default=True)
-
-            if buckets:
-                for i, bucket in enumerate(buckets):
-                    try:
-                        schedule_seconds = int(schedules[i]) if i < len(schedules) else 3600
-                    except ValueError:
-                        schedule_seconds = 3600
-
-                    # Merge common chunk settings from embedding
-                    sources.append(
-                        {
-                            "type": src_type,
-                            "name": f"{name}_{bucket}",
-                            "config": {**config, "buckets": [bucket], "bucket_override": bucket},
-                            "schedule": schedule_seconds,
-                            "enabled": enabled,
-                        }
-                    )
-            else:
-                schedule_seconds = int(schedules[0]) if schedules else 3600
-                sources.append(
-                    {"type": src_type, "name": name, "config": config, "schedule": schedule_seconds, "enabled": enabled}
-                )
+            try:
+                schedule_seconds = int(config.get("schedules") or 3600)
+            except (TypeError, ValueError):
+                schedule_seconds = 3600
+            sources.append({"type": src_type, "name": name, "config": config, "schedule": schedule_seconds})
         return sources
 
     @property

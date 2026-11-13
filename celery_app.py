@@ -69,9 +69,7 @@ def create_task_for_source(source_config):
     def run_source(self, pipeline_config=source_config):
         from tasks.factory import IngestionJobFactory
 
-        override = pipeline_config["config"].get("bucket_override")
-        log_name = f"{pipeline_config['name']}_{override}" if override else pipeline_config["name"]
-        logger.info(f"Starting ingestion for {log_name}")
+        logger.info(f"Starting ingestion for {pipeline_config['name']}")
 
         job = IngestionJobFactory.create(pipeline_config["type"], pipeline_config)
         return job.run()
