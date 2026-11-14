@@ -321,13 +321,10 @@ class IngestionJob(ABC):
             return IngestionItemResult(status=IngestionItemStatus.SUCCESS, result=fetched)
         return IngestionItemResult(status=IngestionItemStatus.FAIL, errors=("empty content",))
 
-    def _fetch_content(self, item: IngestionItem) -> str | None:
-        """Fetch the content of ``item``. Return None, after logging the errors, on ``FAIL``."""
-        result = self._normalize_content(self.get_raw_content(item))
-        if result.status is IngestionItemStatus.FAIL:
-            logger.error("Failed to fetch content for item %s: %s", item.id, "; ".join(result.errors) or "no details")
-            return None
-        return result.result
+    @staticmethod
+    def _log_fetch_failure(item: IngestionItem, result: IngestionItemResult) -> None:
+        """Log the errors of a ``FAIL`` result."""
+        logger.error("Failed to fetch content for item %s: %s", item.id, "; ".join(result.errors) or "no details")
 
     def _record_empty_item(self, item: IngestionItem, item_name: str, checksum: str, latest) -> None:
         """Store a zero-chunk record so an unchanged empty item is not fetched again.
@@ -372,9 +369,11 @@ class IngestionJob(ABC):
                 new_checksum = pre_checksum
             else:
                 # Standard path: fetch content and compute MD5
-                raw_content = self._fetch_content(item)
-                if raw_content is None:
+                fetched = self._normalize_content(self.get_raw_content(item))
+                if fetched.status is IngestionItemStatus.FAIL:
+                    self._log_fetch_failure(item, fetched)
                     return 0
+                raw_content = fetched.result
                 new_checksum = hashlib.md5(raw_content.encode("utf-8"), usedforsecurity=False).hexdigest()
 
             item_name = self.get_item_name(item)
@@ -392,11 +391,13 @@ class IngestionJob(ABC):
             # Fetch content for the fast path only after dedup checks pass —
             # avoids the expensive API call when the item is unchanged or already seen.
             if raw_content is None:
-                raw_content = self._fetch_content(item)
-                if raw_content is None:
+                fetched = self._normalize_content(self.get_raw_content(item))
+                if fetched.status is IngestionItemStatus.FAIL:
                     # A failed fetch must stay retryable, also within this job.
+                    self._log_fetch_failure(item, fetched)
                     self._seen.pop(seen_key, None)
                     return 0
+                raw_content = fetched.result
 
             if not raw_content.strip():
                 # Only an explicit SUCCESS result reaches this point with empty content.
