@@ -94,9 +94,9 @@ class AsanaIngestionJob(IngestionJob):
     def list_items(self) -> Iterator[IngestionItem]:
         """Yield one IngestionItem per Asana task. API errors propagate.
 
-        Comments are fetched here, not in get_raw_content(): the base class
-        swallows exceptions raised while processing an item, which would turn a
-        failed comments request into a silently skipped task.
+        Comments are not fetched here. get_item_checksum() lets the base class skip
+        unchanged tasks, so only changed tasks reach get_raw_content(), which loads
+        their comments.
         """
         seen: set[str] = set()
         total = 0
@@ -111,14 +111,20 @@ class AsanaIngestionJob(IngestionJob):
                 total += 1
                 yield IngestionItem(
                     id=f"asana:{self.source_name}:task:{gid}",
-                    source_ref=(task, self._build_comments_section(gid)),
+                    source_ref=task,
                     last_modified=parse_timestamp(task.get("modified_at")),
                 )
         logger.info(f"[{self.source_name}] Found {total} task(s)")
 
     def get_raw_content(self, item: IngestionItem) -> str:
-        """Build content from the task title, notes and comments."""
-        task, comments = item.source_ref
+        """Build content from the task title, notes and comments.
+
+        Loads the comments of the task, so it makes one API request unless
+        ``load_comments`` is false. A failed request is logged by the base class
+        and the task is retried on the next run, because nothing is stored for it.
+        """
+        task = item.source_ref
+        comments = self._build_comments_section(str(task.get("gid")))
         parts: list[str] = [f"# {task.get('name') or ''}".strip()]
 
         notes = (task.get("notes") or "").strip()
@@ -139,24 +145,28 @@ class AsanaIngestionJob(IngestionJob):
         depend on how the source name sanitizes. Renaming a source changes every
         key, so its tasks are ingested again.
         """
-        task, _comments = item.source_ref
+        task = item.source_ref
         digest = hashlib.sha256(f"{self.source_name}\0{item.id}".encode()).hexdigest()[:32]
         return f"asana_{digest}_{slugify(str(task.get('gid')))}"
 
     def get_item_checksum(self, item: IngestionItem) -> str | None:
-        """Hash the content together with the metadata.
+        """Hash ``modified_at``, the metadata and the comment options, without any API request.
 
-        The base class computes metadata only after the unchanged check, so a
-        change of assignee, followers, custom fields or completion state would
-        otherwise never reach the stored metadata.
+        Asana updates ``modified_at`` when a task is edited or commented, so an
+        unchanged task never needs a comments request. The base class computes
+        metadata only after the unchanged check, so the metadata is part of the
+        hash: a change that does not touch ``modified_at`` (for example a project
+        move) still reaches the stored metadata. The comment options are included
+        so that changing them ingests the tasks again.
         """
-        content = self.get_raw_content(item)
-        metadata = json.dumps(self.get_extra_metadata(item, content, {}), sort_keys=True)
-        return hashlib.md5(f"{content}\n{metadata}".encode(), usedforsecurity=False).hexdigest()
+        task = item.source_ref
+        metadata = json.dumps(self.get_extra_metadata(item, "", {}), sort_keys=True)
+        key = f"{task.get('modified_at')}\n{self.load_comments}\n{self.max_comments}\n{metadata}"
+        return hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()
 
     def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
         """Return Asana-specific metadata fields. Empty values are omitted."""
-        task, _comments = item.source_ref
+        task = item.source_ref
         assignee = (task.get("assignee") or {}).get("name")
         followers = [f.get("name") for f in (task.get("followers") or []) if f.get("name")]
         tags = [t.get("name") for t in (task.get("tags") or []) if t.get("name")]
