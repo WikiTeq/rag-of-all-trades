@@ -7,17 +7,26 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+from docling.datamodel import asr_model_specs
+from docling.datamodel.base_models import ConversionStatus, InputFormat
+from docling.datamodel.pipeline_options import VideoPipelineOptions
+from docling.datamodel.pipeline_options_asr_model import InlineAsrNativeWhisperOptions
+from docling.document_converter import DocumentConverter, VideoFormatOption
 from llama_index.core import Document
 from markitdown import MarkItDown, StreamInfo
 
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.helper_classes.ingestion_result import IngestionItemResult, IngestionItemStatus
 from tasks.helper_classes.metadata_tracker import MetadataTracker
 from tasks.helper_classes.vector_store import VectorStoreManager
 from tasks.schemas import BaseMetadataSchema
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_VIDEO_ASR_MODEL = "WHISPER_TINY"
 
 
 class IngestionJob(ABC):
@@ -27,6 +36,9 @@ class IngestionJob(ABC):
     (files, APIs, databases, etc.) into a vector store for RAG applications. It handles
     duplicate detection, versioning, metadata tracking, and provides hooks for customization.
     """
+
+    # File extensions (lowercase) that connectors send to the Docling video transcription.
+    VIDEO_EXTENSIONS = frozenset({".mp4", ".avi", ".mov", ".mkv", ".webm"})
 
     @property
     def content_format(self) -> str:
@@ -55,6 +67,9 @@ class IngestionJob(ABC):
         if self.request_delay < 0:
             raise ValueError("request_delay must be >= 0")
 
+        self.video_asr_model = str(cfg.get("video_asr_model") or DEFAULT_VIDEO_ASR_MODEL).strip().upper()
+        self._video_asr_options = self._resolve_video_asr_options(self.video_asr_model)
+
         self.source_name = config.get("name")
         self.metadata_tracker = MetadataTracker()
         self.vector_manager = VectorStoreManager()
@@ -65,12 +80,89 @@ class IngestionJob(ABC):
 
         # Lazy-initialised MarkItDown instance shared across conversion calls
         self._markitdown: MarkItDown | None = None
+        # Lazy-initialised Docling converter; loading the ASR model is expensive
+        self._video_converter: DocumentConverter | None = None
 
     def _get_markitdown(self) -> MarkItDown:
         """Return a shared MarkItDown instance, creating it on first use."""
         if self._markitdown is None:
             self._markitdown = MarkItDown()
         return self._markitdown
+
+    @staticmethod
+    def _resolve_video_asr_options(name: str) -> InlineAsrNativeWhisperOptions:
+        """Return the Docling native Whisper spec named ``name`` (for example ``WHISPER_TINY``).
+
+        Only ``WHISPER_*`` specs that run on the CPU through openai-whisper are valid. The
+        MLX, Transformers and S2T specs need other runtimes, so they are rejected.
+        """
+        spec = getattr(asr_model_specs, name, None) if name.startswith("WHISPER_") else None
+        if not isinstance(spec, InlineAsrNativeWhisperOptions):
+            valid = sorted(
+                attr
+                for attr in dir(asr_model_specs)
+                if attr.startswith("WHISPER_")
+                and isinstance(getattr(asr_model_specs, attr), InlineAsrNativeWhisperOptions)
+            )
+            raise ValueError(f"video_asr_model must be one of: {', '.join(valid)}")
+        return spec
+
+    def _get_video_converter(self) -> DocumentConverter:
+        """Return a shared Docling video converter, creating it on first use.
+
+        Transcription only: frame images and speaker diarization are disabled.
+        """
+        if self._video_converter is None:
+            options = VideoPipelineOptions(
+                asr_options=self._video_asr_options,
+                generate_frame_images=False,
+                enable_diarization=False,
+            )
+            self._video_converter = DocumentConverter(
+                allowed_formats=[InputFormat.VIDEO],
+                format_options={InputFormat.VIDEO: VideoFormatOption(pipeline_options=options)},
+            )
+        return self._video_converter
+
+    @staticmethod
+    def _format_transcript_timestamp(seconds: float) -> str:
+        """Format seconds as ``mm:ss``, or ``h:mm:ss`` from one hour."""
+        minutes, secs = divmod(int(seconds), 60)
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+
+    @staticmethod
+    def _format_transcript_segment(item) -> str:
+        """Return a transcript text item prefixed with its ``[start-end]`` time range."""
+        text = item.text.strip()
+        if not text or not item.source:
+            return text
+        track = item.source[0]
+        start = IngestionJob._format_transcript_timestamp(track.start_time)
+        end = IngestionJob._format_transcript_timestamp(track.end_time)
+        return f"[{start}-{end}] {text}"
+
+    def convert_video_to_markdown(self, video_path: Path | str) -> str:
+        """Transcribe the audio track of a video file to Markdown using Docling.
+
+        Each transcript segment is a paragraph with a ``[mm:ss-mm:ss]`` time prefix
+        (``[h:mm:ss-h:mm:ss]`` past one hour). A video without speech returns an empty string.
+
+        Args:
+            video_path: Path to a local video file (.mp4, .avi, .mov, .mkv, .webm).
+
+        Raises:
+            RuntimeError: When Docling cannot convert the video. The caller can retry later.
+        """
+        result = self._get_video_converter().convert(Path(video_path), raises_on_error=False)
+        messages = [error.error_message for error in result.errors]
+        failed = result.status not in (ConversionStatus.SUCCESS, ConversionStatus.PARTIAL_SUCCESS) or (
+            result.status == ConversionStatus.PARTIAL_SUCCESS and messages
+        )
+        if failed:
+            details = f": {'; '.join(messages)}" if messages else ""
+            raise RuntimeError(f"Docling video conversion failed for {video_path} ({result.status}){details}")
+        return "\n\n".join(self._format_transcript_segment(item) for item in result.document.texts).strip()
 
     def convert_to_markdown(self, content: bytes | str, fallback: str = "", file_extension: str | None = None) -> str:
         """Convert bytes or text to Markdown using MarkItDown.
@@ -128,14 +220,19 @@ class IngestionJob(ABC):
         pass
 
     @abstractmethod
-    def get_raw_content(self, item: IngestionItem) -> str:
+    def get_raw_content(self, item: IngestionItem) -> str | IngestionItemResult:
         """Fetch and return the raw text content for a given item.
 
         Args:
             item: The ingestion item to fetch content for
 
         Returns:
-            str: The raw text content of the item
+            str: The raw text content of the item. An empty string is treated as ``FAIL``:
+                nothing is stored and the item is fetched again on the next run.
+            IngestionItemResult: An explicit outcome. ``SUCCESS`` carries the text in
+                ``result``; an empty text is stored as a zero-chunk record so an unchanged
+                item is not fetched again. ``FAIL`` carries ``errors``; nothing is stored
+                and the item is tried again on the next run.
         """
         pass
 
@@ -210,6 +307,43 @@ class IngestionJob(ABC):
             self._seen.popitem(last=False)
         return True
 
+    @staticmethod
+    def _normalize_content(fetched: str | IngestionItemResult) -> IngestionItemResult:
+        """Make sure the return value of ``get_raw_content`` is an ``IngestionItemResult``.
+
+        An ``IngestionItemResult`` is returned as is. A legacy string with text becomes
+        ``SUCCESS``. A legacy empty (or whitespace-only) string becomes ``FAIL``, because
+        connectors use it to report a failed fetch.
+        """
+        if isinstance(fetched, IngestionItemResult):
+            return fetched
+        if fetched.strip():
+            return IngestionItemResult(status=IngestionItemStatus.SUCCESS, result=fetched)
+        return IngestionItemResult(status=IngestionItemStatus.FAIL, errors=("empty content",))
+
+    @staticmethod
+    def _log_fetch_failure(item: IngestionItem, result: IngestionItemResult) -> None:
+        """Log the errors of a ``FAIL`` result."""
+        logger.error("Failed to fetch content for item %s: %s", item.id, "; ".join(result.errors) or "no details")
+
+    def _record_empty_item(self, item: IngestionItem, item_name: str, checksum: str, latest) -> None:
+        """Store a zero-chunk record so an unchanged empty item is not fetched again.
+
+        Only used for a successful fetch with empty content (``IngestionItemResult``).
+        Without the record, every run would repeat an expensive fetch such as video
+        transcription. Previous embeddings are deleted: the content is now empty.
+        """
+        if latest:
+            self.metadata_tracker.delete_previous_embeddings(item_name)
+        self.metadata_tracker.record_metadata(
+            item_name,
+            checksum,
+            (latest.version + 1) if latest else 1,
+            0,
+            item.last_modified or datetime.now(UTC),
+            extra_metadata={"source_name": self.source_name},
+        )
+
     def process_item(self, item: IngestionItem):
         """Process a single ingestion item through the complete pipeline.
 
@@ -235,10 +369,11 @@ class IngestionJob(ABC):
                 new_checksum = pre_checksum
             else:
                 # Standard path: fetch content and compute MD5
-                raw_content = self.get_raw_content(item)
-                if not raw_content.strip():
-                    logger.warning(f"Skipping empty content for item: {item.id}")
+                fetched = self._normalize_content(self.get_raw_content(item))
+                if fetched.status is IngestionItemStatus.FAIL:
+                    self._log_fetch_failure(item, fetched)
                     return 0
+                raw_content = fetched.result
                 new_checksum = hashlib.md5(raw_content.encode("utf-8"), usedforsecurity=False).hexdigest()
 
             item_name = self.get_item_name(item)
@@ -256,10 +391,19 @@ class IngestionJob(ABC):
             # Fetch content for the fast path only after dedup checks pass —
             # avoids the expensive API call when the item is unchanged or already seen.
             if raw_content is None:
-                raw_content = self.get_raw_content(item)
-                if not raw_content.strip():
-                    logger.warning(f"Skipping empty content for item: {item.id}")
+                fetched = self._normalize_content(self.get_raw_content(item))
+                if fetched.status is IngestionItemStatus.FAIL:
+                    # A failed fetch must stay retryable, also within this job.
+                    self._log_fetch_failure(item, fetched)
+                    self._seen.pop(seen_key, None)
                     return 0
+                raw_content = fetched.result
+
+            if not raw_content.strip():
+                # Only an explicit SUCCESS result reaches this point with empty content.
+                logger.info(f"Recording empty content for item: {item.id}")
+                self._record_empty_item(item, item_name, new_checksum, latest)
+                return 0
 
             if latest:
                 logger.info(f"Updating item {item_name} from version {latest.version}")

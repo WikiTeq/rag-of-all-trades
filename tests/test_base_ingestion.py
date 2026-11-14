@@ -1,12 +1,16 @@
 import hashlib
 import unittest
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from docling.datamodel import asr_model_specs
+from docling.datamodel.base_models import ConversionStatus, InputFormat
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.helper_classes.ingestion_result import IngestionItemResult, IngestionItemStatus
 from tasks.schemas import BaseMetadataSchema
 
 
@@ -453,3 +457,272 @@ class TestIngestionJobMarkdownConversion:
             first = job._get_markitdown()
             second = job._get_markitdown()
             assert first is second
+
+
+class TestIngestionJobVideoConversion:
+    @staticmethod
+    def _segment(text, start, end):
+        return Mock(text=text, source=[Mock(start_time=start, end_time=end)])
+
+    @classmethod
+    def _job_with_result(cls, status, segments=None, errors=()):
+        if segments is None:
+            segments = [cls._segment("Hello", 0.0, 4.9)]
+        job = DummyIngestionJob({"name": "test-source"})
+        converter = Mock()
+        converter.convert.return_value = Mock(
+            status=status,
+            document=Mock(texts=segments),
+            errors=[Mock(error_message=message) for message in errors],
+        )
+        job._video_converter = converter
+        return job, converter
+
+    def test_returns_transcript_markdown(self):
+        job, converter = self._job_with_result(ConversionStatus.SUCCESS)
+
+        assert job.convert_video_to_markdown("/tmp/a.mp4") == "[00:00-00:04] Hello"
+        converter.convert.assert_called_once_with(Path("/tmp/a.mp4"), raises_on_error=False)
+
+    def test_partial_success_with_errors_raises_retryable_error(self):
+        job, _ = self._job_with_result(ConversionStatus.PARTIAL_SUCCESS, errors=("audio track cut off", "bad frame"))
+
+        with pytest.raises(RuntimeError, match="audio track cut off; bad frame"):
+            job.convert_video_to_markdown("/tmp/a.mp4")
+
+    def test_partial_success_without_errors_does_not_warn(self, caplog):
+        # Docling reports a video without speech as a partial success with no error items.
+        job, _ = self._job_with_result(ConversionStatus.PARTIAL_SUCCESS, segments=[])
+
+        with caplog.at_level("WARNING", logger="tasks.base"):
+            transcript = job.convert_video_to_markdown("/tmp/a.mp4")
+
+        assert transcript == ""
+        assert caplog.text == ""
+
+    def test_success_does_not_log_errors(self, caplog):
+        job, _ = self._job_with_result(ConversionStatus.SUCCESS)
+
+        with caplog.at_level("WARNING", logger="tasks.base"):
+            job.convert_video_to_markdown("/tmp/a.mp4")
+
+        assert "error(s)" not in caplog.text
+
+    def test_segments_are_separate_paragraphs_with_hour_timestamps(self):
+        segments = [self._segment("First", 61.2, 65.0), self._segment("Second", 3725.0, 3730.9)]
+        job, _ = self._job_with_result(ConversionStatus.SUCCESS, segments)
+
+        assert job.convert_video_to_markdown("/tmp/a.mp4") == "[01:01-01:05] First\n\n[1:02:05-1:02:10] Second"
+
+    def test_segment_without_source_keeps_text_only(self):
+        segments = [Mock(text=" Plain ", source=[])]
+        job, _ = self._job_with_result(ConversionStatus.SUCCESS, segments)
+
+        assert job.convert_video_to_markdown("/tmp/a.mp4") == "Plain"
+
+    def test_failure_status_raises(self):
+        job, _ = self._job_with_result(ConversionStatus.FAILURE)
+
+        with pytest.raises(RuntimeError, match="a.mp4"):
+            job.convert_video_to_markdown("/tmp/a.mp4")
+
+    def test_failure_status_includes_conversion_errors(self):
+        job, _ = self._job_with_result(ConversionStatus.FAILURE, errors=("no audio stream", "decoder crashed"))
+
+        with pytest.raises(RuntimeError, match="no audio stream; decoder crashed"):
+            job.convert_video_to_markdown("/tmp/a.mp4")
+
+    def test_converter_exception_propagates(self):
+        job, converter = self._job_with_result(ConversionStatus.SUCCESS)
+        converter.convert.side_effect = OSError("ffmpeg missing")
+
+        with pytest.raises(OSError, match="ffmpeg missing"):
+            job.convert_video_to_markdown("/tmp/a.mp4")
+
+    def test_video_without_speech_returns_empty_string(self):
+        job, _ = self._job_with_result(ConversionStatus.SUCCESS, [])
+
+        assert job.convert_video_to_markdown("/tmp/a.mp4") == ""
+
+    def test_converter_is_lazily_created_for_transcription_only(self):
+        job = DummyIngestionJob({"name": "test-source"})
+        assert job._video_converter is None
+        with (
+            patch("tasks.base.DocumentConverter") as mock_cls,
+            patch("tasks.base.VideoFormatOption") as mock_option,
+            patch("tasks.base.VideoPipelineOptions") as mock_options,
+        ):
+            first = job._get_video_converter()
+            second = job._get_video_converter()
+
+        assert first is second is mock_cls.return_value
+        mock_options.assert_called_once_with(
+            asr_options=asr_model_specs.WHISPER_TINY, generate_frame_images=False, enable_diarization=False
+        )
+        mock_option.assert_called_once_with(pipeline_options=mock_options.return_value)
+        mock_cls.assert_called_once_with(
+            allowed_formats=[InputFormat.VIDEO],
+            format_options={InputFormat.VIDEO: mock_option.return_value},
+        )
+
+    def test_video_asr_model_defaults_to_whisper_tiny(self):
+        job = DummyIngestionJob({"name": "test-source"})
+
+        assert job.video_asr_model == "WHISPER_TINY"
+        assert job._video_asr_options is asr_model_specs.WHISPER_TINY
+
+    def test_video_asr_model_selects_docling_spec(self):
+        job = DummyIngestionJob({"name": "test-source", "config": {"video_asr_model": " whisper_small "}})
+        assert job.video_asr_model == "WHISPER_SMALL"
+        with (
+            patch("tasks.base.DocumentConverter"),
+            patch("tasks.base.VideoFormatOption"),
+            patch("tasks.base.VideoPipelineOptions") as mock_options,
+        ):
+            job._get_video_converter()
+
+        assert mock_options.call_args.kwargs["asr_options"] is asr_model_specs.WHISPER_SMALL
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "tiny",
+            "huge",
+            "logging",
+            "WHISPER_TINY_MLX",
+            "WHISPER_TINY_S2T",
+            "WHISPER_TINY_TRANSFORMERS",
+            "GRANITE_4_0_1B_SPEECH",
+        ],
+    )
+    def test_invalid_video_asr_model_is_rejected(self, name):
+        with pytest.raises(ValueError, match="video_asr_model must be one of: .*WHISPER_TINY"):
+            DummyIngestionJob({"name": "test-source", "config": {"video_asr_model": name}})
+
+    def test_video_extensions_are_defined_on_the_base_class(self):
+        assert IngestionJob.VIDEO_EXTENSIONS == frozenset({".mp4", ".avi", ".mov", ".mkv", ".webm"})
+
+    def test_transcript_timestamps_use_minutes_and_hours(self):
+        assert IngestionJob._format_transcript_timestamp(65.9) == "01:05"
+        assert IngestionJob._format_transcript_timestamp(3725.0) == "1:02:05"
+
+
+class TestIngestionJobItemResult:
+    @staticmethod
+    def _job(fetched, pre_checksum="sum-1", latest=None):
+        item = IngestionItem(id="item-1", source_ref="src", last_modified=datetime(2026, 1, 2))
+        job = DummyIngestionJob({"name": "test-source"}, items=[item])
+        job.get_item_checksum = Mock(return_value=pre_checksum)
+        job.get_raw_content = (
+            Mock(side_effect=fetched) if isinstance(fetched, Exception) else Mock(return_value=fetched)
+        )
+        job.metadata_tracker = Mock()
+        job.metadata_tracker.get_latest_record.return_value = latest
+        job.vector_manager = Mock()
+        return job, item
+
+    @staticmethod
+    def _success(text):
+        return IngestionItemResult(IngestionItemStatus.SUCCESS, text)
+
+    @staticmethod
+    def _fail(*errors):
+        return IngestionItemResult(IngestionItemStatus.FAIL, errors=errors)
+
+    def test_normalize_returns_result_as_is(self):
+        for result in (self._success("text"), self._success(""), self._fail("boom")):
+            assert IngestionJob._normalize_content(result) is result
+
+    def test_normalize_wraps_legacy_text_as_success(self):
+        result = IngestionJob._normalize_content("text")
+
+        assert result == self._success("text")
+
+    @pytest.mark.parametrize("legacy", ["", "  \n"])
+    def test_normalize_wraps_legacy_empty_string_as_fail(self, legacy):
+        result = IngestionJob._normalize_content(legacy)
+
+        assert result.status is IngestionItemStatus.FAIL
+        assert result.errors
+
+    @pytest.mark.parametrize("pre_checksum", ["sum-1", None])
+    def test_legacy_empty_string_is_skipped_and_not_recorded(self, pre_checksum):
+        job, item = self._job(" ", pre_checksum)
+
+        assert job.process_item(item) == 0
+
+        job.metadata_tracker.record_metadata.assert_not_called()
+        job.vector_manager.insert_documents.assert_not_called()
+
+    @pytest.mark.parametrize("pre_checksum", ["sum-1", None])
+    def test_legacy_exception_is_not_recorded(self, pre_checksum):
+        job, item = self._job(RuntimeError("boom"), pre_checksum)
+
+        assert job.process_item(item) == 0
+
+        job.metadata_tracker.record_metadata.assert_not_called()
+
+    @pytest.mark.parametrize("pre_checksum", ["sum-1", None])
+    def test_success_with_text_is_ingested(self, pre_checksum):
+        job, item = self._job(self._success("transcript"), pre_checksum)
+
+        assert job.process_item(item) == 1
+
+        document = job.vector_manager.insert_documents.call_args.args[0][0]
+        assert document.text == "transcript"
+        assert job.metadata_tracker.record_metadata.call_args.args[3] == 1
+
+    def test_success_with_empty_text_is_recorded_as_zero_chunks(self):
+        job, item = self._job(self._success(""))
+
+        assert job.process_item(item) == 0
+
+        job.metadata_tracker.record_metadata.assert_called_once_with(
+            "item-1", "sum-1", 1, 0, datetime(2026, 1, 2), extra_metadata={"source_name": "test-source"}
+        )
+        job.metadata_tracker.delete_previous_embeddings.assert_not_called()
+        job.vector_manager.insert_documents.assert_not_called()
+
+    def test_success_with_whitespace_text_without_checksum_is_recorded_with_content_checksum(self):
+        job, item = self._job(self._success("  \n"), pre_checksum=None)
+
+        assert job.process_item(item) == 0
+
+        checksum = hashlib.md5(b"  \n", usedforsecurity=False).hexdigest()
+        assert job.metadata_tracker.record_metadata.call_args.args[:4] == ("item-1", checksum, 1, 0)
+
+    def test_recorded_empty_item_is_not_fetched_again(self):
+        job, item = self._job(self._success(""), latest=Mock(checksum="sum-1", version=1))
+
+        assert job.process_item(item) == 0
+
+        job.get_raw_content.assert_not_called()
+        job.metadata_tracker.record_metadata.assert_not_called()
+
+    def test_content_that_became_empty_replaces_previous_version(self):
+        job, item = self._job(self._success(""), latest=Mock(checksum="old", version=3))
+
+        assert job.process_item(item) == 0
+
+        job.metadata_tracker.delete_previous_embeddings.assert_called_once_with("item-1")
+        assert job.metadata_tracker.record_metadata.call_args.args[:4] == ("item-1", "sum-1", 4, 0)
+
+    @pytest.mark.parametrize("pre_checksum", ["sum-1", None])
+    def test_failure_keeps_previous_record_and_logs_errors(self, pre_checksum, caplog):
+        job, item = self._job(self._fail("ffmpeg missing", "bad stream"), pre_checksum, latest=Mock(checksum="old"))
+
+        with caplog.at_level("ERROR"):
+            assert job.process_item(item) == 0
+
+        assert "ffmpeg missing; bad stream" in caplog.text
+        job.metadata_tracker.delete_previous_embeddings.assert_not_called()
+        job.metadata_tracker.record_metadata.assert_not_called()
+        job.vector_manager.insert_documents.assert_not_called()
+
+    def test_failure_is_retried_in_the_same_job(self):
+        job, item = self._job(self._fail("boom"))
+
+        assert job.process_item(item) == 0
+
+        job.get_raw_content.return_value = self._success("transcript")
+        assert job.process_item(item) == 1

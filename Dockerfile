@@ -36,6 +36,10 @@ COPY requirements.txt .
 # Install EVERYTHING into normal site-packages
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Pre-download the default Whisper model (tiny) used by Docling video transcription
+# into Whisper's default cache directory (/root/.cache/whisper).
+RUN python -c "import whisper; whisper.load_model('tiny')"
+
 
 # =========================
 #  FINAL IMAGE
@@ -54,6 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy all Python libraries from builder to final image
 COPY --from=builder /usr/local/lib/python3.11 /usr/local/lib/python3.11
 COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --from=builder /root/.cache/whisper /root/.cache/whisper
 
 # Copy project
 COPY . .
