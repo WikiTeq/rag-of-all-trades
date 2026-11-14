@@ -51,15 +51,14 @@ def _make_job(config=None, **overrides):
     return job
 
 
-def _item(task, comments=""):
-    return IngestionItem(id=f"asana:asana1:task:{task['gid']}", source_ref=(task, comments))
+def _item(task):
+    return IngestionItem(id=f"asana:asana1:task:{task['gid']}", source_ref=task)
 
 
-def _collect_one(job, task, stories=()):
+def _collect_one(job, task):
     """Run list_items() for a single task in workspace mode and return the item."""
     job._projects_api.get_projects.return_value = iter([{"gid": "p1"}])
     job._tasks_api.get_tasks_for_project.return_value = iter([task])
-    job._stories_api.get_stories_for_task.return_value = iter(stories)
     (item,) = list(job.list_items())
     return item
 
@@ -175,7 +174,7 @@ class TestAsanaListItems(unittest.TestCase):
         ]
         ids = [i.id for i in job.list_items()]
         self.assertEqual(ids, ["asana:asana1:task:1", "asana:asana1:task:2", "asana:asana1:task:3"])
-        self.assertEqual(job._stories_api.get_stories_for_task.call_count, 3)
+        job._stories_api.get_stories_for_task.assert_not_called()
 
     def test_empty_workspace_yields_nothing(self):
         job = _make_job()
@@ -210,15 +209,6 @@ class TestAsanaListItems(unittest.TestCase):
         with self.assertRaises(ApiException):
             list(job.list_items())
 
-    def test_comment_error_propagates_out_of_run_instead_of_skipping_tasks(self):
-        job = _make_job()
-        job._projects_api.get_projects.return_value = iter([{"gid": "p1"}])
-        job._tasks_api.get_tasks_for_project.return_value = iter([_make_task("1"), _make_task("2")])
-        job._stories_api.get_stories_for_task.side_effect = ApiException(status=429, reason="rate limited")
-        with patch.object(job, "process_item") as process_item, self.assertRaises(ApiException):
-            job.run()
-        process_item.assert_not_called()
-
 
 class TestAsanaGetRawContent(unittest.TestCase):
     def test_title_notes_and_comments(self):
@@ -228,7 +218,8 @@ class TestAsanaGetRawContent(unittest.TestCase):
             {"text": "  ", "created_by": {"name": "Skip"}},
             {"text": "Fixed", "created_at": "2026-05-03T09:00:00Z", "created_by": None},
         ]
-        item = _collect_one(job, _make_task(), stories)
+        job._stories_api.get_stories_for_task.return_value = iter(stories)
+        item = _collect_one(job, _make_task())
         self.assertEqual(
             job.get_raw_content(item),
             "# Fix login\n\nUsers cannot log in.\n\n## Comments\n\n"
@@ -252,18 +243,13 @@ class TestAsanaGetRawContent(unittest.TestCase):
 
     def test_comments_are_limited_to_max_comments(self):
         job = _make_job(max_comments=3)
-        _collect_one(job, _make_task())
+        job.get_raw_content(_item(_make_task()))
         self.assertEqual(job._stories_api.get_stories_for_task.call_args.kwargs, {"item_limit": 3})
 
     def test_load_comments_false_skips_comment_requests(self):
         job = _make_job(load_comments="false")
         item = _collect_one(job, _make_task())
-        job._stories_api.get_stories_for_task.assert_not_called()
         self.assertEqual(job.get_raw_content(item), "# Fix login\n\nUsers cannot log in.")
-
-    def test_get_raw_content_makes_no_api_call(self):
-        job = _make_job()
-        job.get_raw_content(_item(_make_task(), "## Comments\n\n**A** (x):\nhi"))
         job._stories_api.get_stories_for_task.assert_not_called()
 
 
@@ -271,7 +257,7 @@ class TestAsanaGetItemName(unittest.TestCase):
     @staticmethod
     def _name(source, gid="42"):
         job = _make_job(_make_config(name=source))
-        item = IngestionItem(id=f"asana:{source}:task:{gid}", source_ref=(_make_task(gid), ""))
+        item = IngestionItem(id=f"asana:{source}:task:{gid}", source_ref=_make_task(gid))
         return job.get_item_name(item)
 
     def test_name_is_source_hash_then_gid(self):
@@ -357,20 +343,24 @@ class TestAsanaGetExtraMetadata(unittest.TestCase):
 
 
 class TestAsanaChangeDetection(unittest.TestCase):
-    def _checksum(self, task=None, comments=""):
-        return _make_job().get_item_checksum(_item(task or _make_task(), comments))
+    def _checksum(self, task=None, **job_overrides):
+        return _make_job(**job_overrides).get_item_checksum(_item(task or _make_task()))
 
     def test_stable_for_identical_input(self):
         self.assertEqual(self._checksum(), self._checksum())
 
-    def test_changed_comment_changes_checksum(self):
-        self.assertNotEqual(
-            self._checksum(comments="## Comments\n\n**A** (x):\none"),
-            self._checksum(comments="## Comments\n\n**A** (x):\ntwo"),
-        )
+    def test_new_modified_at_changes_checksum(self):
+        self.assertNotEqual(self._checksum(), self._checksum(_make_task(modified_at="2027-01-01T00:00:00Z")))
 
-    def test_changed_notes_changes_checksum(self):
-        self.assertNotEqual(self._checksum(), self._checksum(_make_task(notes="other")))
+    def test_checksum_makes_no_api_call(self):
+        job = _make_job()
+        job.get_item_checksum(_item(_make_task()))
+        job._stories_api.get_stories_for_task.assert_not_called()
+
+    def test_comment_options_change_checksum(self):
+        base = self._checksum()
+        self.assertNotEqual(base, self._checksum(load_comments=False))
+        self.assertNotEqual(base, self._checksum(max_comments=5))
 
     def test_metadata_only_changes_change_checksum(self):
         base = self._checksum()
@@ -384,18 +374,18 @@ class TestAsanaChangeDetection(unittest.TestCase):
             with self.subTest(field=field):
                 self.assertNotEqual(base, self._checksum(_make_task(**{field: value})))
 
-    def test_modified_at_alone_does_not_change_checksum(self):
-        self.assertEqual(self._checksum(), self._checksum(_make_task(modified_at="2027-01-01T00:00:00Z")))
-
 
 class TestAsanaProcessItem(unittest.TestCase):
-    def test_ingests_document_with_metadata_and_reingests_on_metadata_change(self):
+    def test_ingests_document_with_metadata_and_skips_unchanged_without_comment_request_and_reingests_on_change(self):
         job = _make_job()
         job.metadata_tracker = MagicMock()
         job.vector_manager = MagicMock()
         job.metadata_tracker.get_latest_record.return_value = None
         task = _make_task()
-        item = _item(task, "## Comments\n\n**Bob** (x):\nhi")
+        item = _item(task)
+        job._stories_api.get_stories_for_task.return_value = iter(
+            [{"text": "hi", "created_at": "x", "created_by": {"name": "Bob"}}]
+        )
 
         self.assertEqual(job.process_item(item), 1)
 
@@ -409,11 +399,27 @@ class TestAsanaProcessItem(unittest.TestCase):
         latest = MagicMock(checksum=job.get_item_checksum(item), version=1)
         job.metadata_tracker.get_latest_record.return_value = latest
         job._seen.clear()
+        job._stories_api.get_stories_for_task.reset_mock()
         self.assertEqual(job.process_item(item), 0)
+        job._stories_api.get_stories_for_task.assert_not_called()
 
-        changed = _item(_make_task(assignee={"gid": "9", "name": "Eve"}), "## Comments\n\n**Bob** (x):\nhi")
+        job._stories_api.get_stories_for_task.return_value = iter([])
+        changed = _item(_make_task(modified_at="2026-06-01T10:00:00.000Z"))
         self.assertEqual(job.process_item(changed), 1)
         job.metadata_tracker.delete_previous_embeddings.assert_called_once_with(job.get_item_name(item))
+
+    def test_failed_comments_request_stores_nothing_and_keeps_old_embeddings(self):
+        job = _make_job()
+        job.metadata_tracker = MagicMock()
+        job.vector_manager = MagicMock()
+        job.metadata_tracker.get_latest_record.return_value = MagicMock(checksum="old", version=1)
+        job._stories_api.get_stories_for_task.side_effect = ApiException(status=429, reason="rate limited")
+
+        self.assertEqual(job.process_item(_item(_make_task())), 0)
+
+        job.vector_manager.insert_documents.assert_not_called()
+        job.metadata_tracker.delete_previous_embeddings.assert_not_called()
+        job.metadata_tracker.record_metadata.assert_not_called()
 
 
 class TestAsanaFactory(unittest.TestCase):
