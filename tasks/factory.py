@@ -1,3 +1,4 @@
+from tasks.asana_ingestion import AsanaIngestionJob
 from tasks.base import IngestionJob
 from tasks.bookstack_ingestion import BookStackIngestionJob
 from tasks.box_ingestion import BoxIngestionJob
@@ -62,3 +63,4 @@ IngestionJobFactory.register("gitlab", GitLabIngestionJob)
 IngestionJobFactory.register("trello", TrelloIngestionJob)
 IngestionJobFactory.register("gitbook", GitBookIngestionJob)
 IngestionJobFactory.register("database", DatabaseIngestionJob)
+IngestionJobFactory.register("asana", AsanaIngestionJob)
