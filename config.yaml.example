@@ -419,6 +419,16 @@ sources:
   #    metadata_columns: "category,unit_price"                                 # optional: extra columns stored as metadata
   #    schedules: "${DB_MYSQL1_SCHEDULES}"
 
+  #- type: "asana"
+  #  name: "asana-workspace-1"
+  #  config:
+  #    asana_token: "${ASANA1_TOKEN}"
+  #    workspace_id: "${ASANA1_WORKSPACE_ID}"
+  #    #project_id: "${ASANA1_PROJECT_ID}"   # optional; omit to ingest the whole workspace
+  #    #load_comments: true                   # optional, default true
+  #    #max_comments: 10                      # optional, default 10; newest comments first
+  #    schedules: "${ASANA1_SCHEDULES}"
+
 embedding:
   provider: openrouter
   model_config: sentence-transformers/all-mpnet-base-v2

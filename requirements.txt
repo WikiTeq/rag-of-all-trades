@@ -67,6 +67,9 @@ llama-index-readers-box==0.5.0
 # Trello connector
 py-trello==0.20.1
 
+# Asana connector
+asana==5.5.1
+
 # Office file parsing for LlamaIndex SimpleDirectoryReader (Directory and SharePoint connectors).
 # Without these, .docx and .xlsx files fail to parse and are skipped.
 # docx2txt is pinned to 0.8 because llama-index-readers-confluence requires >=0.8,<0.9.

@@ -49,6 +49,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Trello
 * GitBook
 * Database (MySQL + PostgreSQL)
+* Asana
 
 ## Embeddings support
 
@@ -1108,6 +1109,45 @@ DB_POSTGRES1_SCHEDULES=3600
 # MySQL
 DB_MYSQL1_CONNECTION_STRING=mysql+pymysql://user:pass@localhost/mydb
 DB_MYSQL1_SCHEDULES=3600
+```
+
+### Asana Connector
+
+The Asana connector ingests tasks from an Asana workspace or from a single project. Each task becomes one document
+with the title, notes and comments.
+
+- **Workspace mode** (`project_id` omitted): tasks of all non-archived projects the token can access. A task in several
+  projects is ingested once. Tasks that belong to no project are skipped.
+- **Project mode** (`project_id` set): tasks of that project only. The project must belong to `workspace_id`.
+- Comments are loaded newest first, up to `max_comments` per task. Set `load_comments: false` to skip them.
+- Asana does not change a task's `modified_at` when a comment is added, so every run downloads all tasks and comments.
+  A task is re-ingested when its content or metadata hash changes.
+
+Metadata per task (empty values are omitted): `task_id`, `task_title`, `url`, `completed`, `created_at`, `due_on`,
+`tags`, `workspace_id`, `assignee`, `followers`, `projects`, `custom_fields`.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "asana"
+    name: "asana-workspace-1"
+    config:
+      asana_token: "${ASANA1_TOKEN}"
+      workspace_id: "${ASANA1_WORKSPACE_ID}"
+      #project_id: "${ASANA1_PROJECT_ID}"  # optional; omit to ingest the whole workspace
+      #load_comments: true                  # optional, default true
+      #max_comments: 10                     # optional, default 10; newest comments first
+      schedules: "${ASANA1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+ASANA1_TOKEN=your-asana-personal-access-token
+ASANA1_WORKSPACE_ID=1234567890
+#ASANA1_PROJECT_ID=9876543210
+ASANA1_SCHEDULES=60
 ```
 
 ## Reference of the `config.yaml`
