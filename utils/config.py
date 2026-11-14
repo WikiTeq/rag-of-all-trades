@@ -5,6 +5,8 @@ import yaml
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from utils.parse import parse_bool
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = BASE_DIR / ".env"
 YAML_PATH = BASE_DIR / "config.yaml"
@@ -114,7 +116,10 @@ class Settings:
                 schedule_seconds = int(config.get("schedules") or 3600)
             except (TypeError, ValueError):
                 schedule_seconds = 3600
-            sources.append({"type": src_type, "name": name, "config": config, "schedule": schedule_seconds})
+            enabled = parse_bool(source.get("enabled"), default=True)
+            sources.append(
+                {"type": src_type, "name": name, "config": config, "schedule": schedule_seconds, "enabled": enabled}
+            )
         return sources
 
     @property
