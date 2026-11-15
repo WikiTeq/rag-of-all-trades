@@ -7,7 +7,7 @@ from tasks.helper_classes.ingestion_item import IngestionItem
 from utils.graphql import GraphQLError, graphql_request
 from utils.http import RetrySession
 from utils.parse import parse_bool, parse_list, parse_timestamp
-from utils.text import html_to_markdown, slugify
+from utils.text import slugify
 
 logger = logging.getLogger(__name__)
 
@@ -198,7 +198,7 @@ class WikiJsIngestionJob(IngestionJob):
 
         content_type = (detail.get("contentType", "") or "markdown").lower()
         if content_type == "html":
-            content = html_to_markdown(raw)
+            content = self.convert_to_markdown(raw, file_extension=".html")
         else:
             content = raw.strip()
 
