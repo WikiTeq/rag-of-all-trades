@@ -122,44 +122,35 @@ class TestSlabListItemsAllPosts(unittest.TestCase):
 
 
 class TestSlabListItemsByTopics(unittest.TestCase):
-    def test_list_by_topic(self):
+    def test_list_by_topic_yields_stub_without_fetching_post(self):
         job = _make_job(topic_ids=["topic1"])
-        stub = {"id": "p1", "title": "Post 1", "updatedAt": None}
-        full = {"id": "p1", "title": "Post 1", "content": "Full content", "updatedAt": "2024-06-01T12:00:00+00:00"}
-        responses = [_topic_page([stub]), {"post": full}]
-        with patch.object(job._client, "execute", side_effect=responses):
+        stub = {"id": "p1", "title": "Post 1", "updatedAt": "2024-06-01T12:00:00+00:00"}
+        with patch.object(job._client, "execute", return_value=_topic_page([stub])) as mock_exec:
             items = list(job.list_items())
 
+        self.assertEqual(mock_exec.call_count, 1)
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0].id, "p1")
+        self.assertIsInstance(items[0].last_modified, datetime)
+        self.assertNotIn("content", items[0].source_ref)
         topic_meta = items[0].source_ref["_topic_meta"]
         self.assertEqual(topic_meta["id"], "topic1")
         self.assertEqual(topic_meta["name"], "Engineering")
 
     def test_list_by_topic_multiple_posts(self):
         # Slab's topic.posts field returns the full list unpaginated (no
-        # edges/pageInfo, no first/after args) — confirmed via live schema
-        # introspection. Each post stub is still fetched individually since
-        # topic.posts only returns id/title/updatedAt, not content.
+        # edges/pageInfo, no first/after args) and only id/title/updatedAt.
         job = _make_job(topic_ids=["topic1"])
         stub1 = {"id": "p1", "title": "Post 1", "updatedAt": None}
         stub2 = {"id": "p2", "title": "Post 2", "updatedAt": None}
-        full1 = {"id": "p1", "title": "Post 1", "content": "", "updatedAt": None}
-        full2 = {"id": "p2", "title": "Post 2", "content": "", "updatedAt": None}
-        responses = [
-            _topic_page([stub1, stub2]),
-            {"post": full1},
-            {"post": full2},
-        ]
-        with patch.object(job._client, "execute", side_effect=responses):
+        with patch.object(job._client, "execute", return_value=_topic_page([stub1, stub2])):
             items = list(job.list_items())
         self.assertEqual([i.id for i in items], ["p1", "p2"])
 
-    def test_skips_missing_post(self):
+    def test_skips_stub_without_id(self):
         job = _make_job(topic_ids=["topic1"])
-        stub = {"id": "p1", "title": "Post 1", "updatedAt": None}
-        responses = [_topic_page([stub]), {"post": {}}]
-        with patch.object(job._client, "execute", side_effect=responses):
+        stub = {"id": "", "title": "No ID", "updatedAt": None}
+        with patch.object(job._client, "execute", return_value=_topic_page([stub])):
             items = list(job.list_items())
         self.assertEqual(items, [])
 
@@ -167,19 +158,72 @@ class TestSlabListItemsByTopics(unittest.TestCase):
         job = _make_job(topic_ids=["topic1", "topic2"])
         stub1 = {"id": "p1", "title": "Post 1", "updatedAt": None}
         stub2 = {"id": "p2", "title": "Post 2", "updatedAt": None}
-        full1 = {"id": "p1", "title": "Post 1", "content": "", "updatedAt": None}
-        full2 = {"id": "p2", "title": "Post 2", "content": "", "updatedAt": None}
         responses = [
             _topic_page([stub1], topic_id="topic1", topic_name="Engineering"),
-            {"post": full1},
             _topic_page([stub2], topic_id="topic2", topic_name="Onboarding"),
-            {"post": full2},
         ]
         with patch.object(job._client, "execute", side_effect=responses):
             items = list(job.list_items())
         self.assertEqual([i.id for i in items], ["p1", "p2"])
         self.assertEqual(items[0].source_ref["_topic_meta"]["name"], "Engineering")
         self.assertEqual(items[1].source_ref["_topic_meta"]["name"], "Onboarding")
+
+
+class TestSlabGetItemChecksum(unittest.TestCase):
+    def test_checksum_from_last_modified(self):
+        job = _make_job()
+        item = IngestionItem(id="p1", source_ref={"id": "p1"}, last_modified=datetime(2024, 6, 1, 12, 0, 0))
+        self.assertEqual(job.get_item_checksum(item), "p1:2024-06-01T12:00:00")
+
+    def test_checksum_none_without_last_modified(self):
+        job = _make_job()
+        item = IngestionItem(id="p1", source_ref={"id": "p1"})
+        self.assertIsNone(job.get_item_checksum(item))
+
+
+class TestSlabLazyPostFetch(unittest.TestCase):
+    def _stub_item(self):
+        stub = {"id": "p1", "title": "Old title", "updatedAt": None, "_topic_meta": {"id": "t1", "name": "Eng"}}
+        return IngestionItem(id="p1", source_ref=stub)
+
+    def test_stub_fetches_full_post_once(self):
+        job = _make_job(topic_ids=["t1"])
+        item = self._stub_item()
+        full = {"id": "p1", "title": "New title", "content": "Hello", "updatedAt": None}
+        with patch.object(job._client, "execute", return_value={"post": full}) as mock_exec:
+            result = job.get_raw_content(item)
+
+        self.assertEqual(mock_exec.call_count, 1)
+        self.assertEqual(mock_exec.call_args.args[1], {"postId": "p1"})
+        self.assertIn("# New title", result)
+        self.assertIn("Hello", result)
+
+    def test_stub_fetch_keeps_topic_meta(self):
+        job = _make_job(topic_ids=["t1"])
+        item = self._stub_item()
+        full = {"id": "p1", "title": "T", "content": "x", "updatedAt": None}
+        with patch.object(job._client, "execute", return_value={"post": full}):
+            job.get_raw_content(item)
+        self.assertEqual(item.source_ref["_topic_meta"]["id"], "t1")
+
+    def test_missing_post_returns_empty(self):
+        job = _make_job(topic_ids=["t1"])
+        with patch.object(job._client, "execute", return_value={"post": None}):
+            self.assertEqual(job.get_raw_content(self._stub_item()), "")
+
+    def test_fetch_error_propagates(self):
+        job = _make_job(topic_ids=["t1"])
+        with patch.object(job._client, "execute", side_effect=RuntimeError("boom")):
+            with self.assertRaises(RuntimeError):
+                job.get_raw_content(self._stub_item())
+
+    def test_search_post_with_empty_content_makes_no_request(self):
+        job = _make_job()
+        item = IngestionItem(id="p1", source_ref={"id": "p1", "title": "T", "content": ""})
+        with patch.object(job._client, "execute") as mock_exec:
+            result = job.get_raw_content(item)
+        mock_exec.assert_not_called()
+        self.assertEqual(result, "# T")
 
 
 class TestSlabGetRawContent(unittest.TestCase):
