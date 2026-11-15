@@ -133,6 +133,9 @@ class SlabIngestionJob(IngestionJob):
         - config.search_batch_size: posts per page when listing all posts via search
           (optional, default 100); not used when topic_ids is configured, since
           Slab's topic.posts field returns the full list unpaginated
+
+    With ``topic_ids``, listing yields post stubs and the full post is fetched
+    only when its ``updatedAt`` differs from the stored checksum.
     """
 
     @property
@@ -185,6 +188,14 @@ class SlabIngestionJob(IngestionJob):
 
     def get_raw_content(self, item: IngestionItem) -> str:
         post = item.source_ref
+        if "content" not in post:
+            # Topic listings return only id/title/updatedAt, so the full post is
+            # fetched here, after the checksum check has found the post changed.
+            full = (self._client.execute(_QUERY_GET_POST, {"postId": item.id}) or {}).get("post") or {}
+            if not full.get("id"):
+                logger.warning(f"[{self.source_name}] Slab post {item.id} not found")
+                return ""
+            post = {**post, **full}
         title = post.get("title") or ""
         content = self._extract_content(post.get("content") or "")
         parts = []
@@ -196,6 +207,16 @@ class SlabIngestionJob(IngestionJob):
 
     def get_item_name(self, item: IngestionItem) -> str:
         return slugify(item.id, max_len=255)
+
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        """Return a checksum from the post's updatedAt, so unchanged posts skip
+        the full post fetch in get_raw_content().
+
+        Returns None when last_modified is unavailable, falling back to content-based MD5.
+        """
+        if item.last_modified is None:
+            return None
+        return f"{item.id}:{item.last_modified.isoformat()}"
 
     def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
         post = item.source_ref
@@ -270,15 +291,9 @@ class SlabIngestionJob(IngestionJob):
             }
 
             for stub in topic.get("posts") or []:
-                post_id = stub.get("id")
-                if not post_id:
+                if not stub.get("id"):
                     continue
-                post_data = self._client.execute(_QUERY_GET_POST, {"postId": post_id})
-                post = (post_data or {}).get("post") or {}
-                if not post.get("id"):
-                    continue
-                post["_topic_meta"] = topic_meta
-                yield self._make_item(post)
+                yield self._make_item({**stub, "_topic_meta": topic_meta})
                 total += 1
 
         logger.info(f"[{self.source_name}] Found {total} post(s) from {len(self.topic_ids)} topic(s)")
