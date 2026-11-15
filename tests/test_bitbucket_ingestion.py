@@ -628,12 +628,19 @@ class TestBitbucketClientPullRequests(unittest.TestCase):
         self.assertTrue(call.args[0].endswith("/repositories/ws/repo/pullrequests/7/comments"))
         self.assertEqual(call.kwargs["params"]["pagelen"], 50)
 
+    def test_list_pull_request_comments_requests_newest_first_and_returns_oldest_first(self):
+        self.mock_get.return_value = _api_response([_comment("newest"), _comment("oldest")])
+        comments = self.client.list_pull_request_comments("ws", "repo", 7)
+        self.assertEqual(self.mock_get.call_args.kwargs["params"]["sort"], "-created_on")
+        self.assertEqual([c["content"]["raw"] for c in comments], ["oldest", "newest"])
+
     def test_list_pull_request_comments_warns_when_more_comments_exist(self):
         self.mock_get.return_value = _api_response([_comment("hi")], next_url="https://api.bitbucket.org/2.0/more")
         with self.assertLogs("tasks.bitbucket_ingestion", level="WARNING") as logs:
             comments = self.client.list_pull_request_comments("ws", "repo", 7)
         self.assertEqual(len(comments), 1)
         self.assertIn("more than 50 comments", logs.output[0])
+        self.assertIn("older ones are left out", logs.output[0])
         self.assertEqual(self.mock_get.call_count, 1)
 
     def test_list_pull_request_comments_raises_on_http_error(self):

@@ -130,16 +130,20 @@ class BitbucketClient:
             url = data.get("next", "")
 
     def list_pull_request_comments(self, workspace: str, repo: str, pr_id: int) -> list[dict[str, Any]]:
-        """Return up to ``MAX_COMMENTS_PER_PR`` comments of one pull request, oldest first."""
+        """Return the ``MAX_COMMENTS_PER_PR`` newest comments of one pull request, oldest first.
+
+        Bitbucket returns comments oldest first by default, so the request sorts
+        newest first to keep the latest comments, then the page is reversed.
+        """
         url = f"{self._pull_requests_url(workspace, repo)}/{pr_id}/comments"
-        params = {"pagelen": MAX_COMMENTS_PER_PR, "fields": _PR_COMMENT_FIELDS}
+        params = {"pagelen": MAX_COMMENTS_PER_PR, "sort": "-created_on", "fields": _PR_COMMENT_FIELDS}
         data = self._get_json(url, params, f"fetching comments of pull request {pr_id} in {workspace}/{repo}")
         if data.get("next"):
             logger.warning(
                 f"Pull request {pr_id} in {workspace}/{repo} has more than {MAX_COMMENTS_PER_PR} comments; "
-                f"only the first {MAX_COMMENTS_PER_PR} are ingested"
+                f"only the newest {MAX_COMMENTS_PER_PR} are ingested, older ones are left out"
             )
-        return data.get("values", [])[:MAX_COMMENTS_PER_PR]
+        return list(reversed(data.get("values", [])[:MAX_COMMENTS_PER_PR]))
 
     def list_files(
         self,
@@ -280,7 +284,7 @@ class BitbucketIngestionJob(IngestionJob):
         - config.include_pull_request_comments: Add the comments of each pull
           request to its text (optional, default false; requires
           include_pull_requests). Costs one extra request per changed pull
-          request that has comments, and reads at most 50 comments of each.
+          request that has comments, and reads the 50 newest comments of each.
     """
 
     @property
