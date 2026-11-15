@@ -435,6 +435,31 @@ class TestWikiJsIngestionJob(unittest.TestCase):
         content = job.get_raw_content(item)
         self.assertNotIn("<p>", content)
 
+    def test_get_raw_content_html_uses_convert_to_markdown_with_html_hint(self):
+        page = _make_page(1, "/test", "HTML Page")
+        item = IngestionItem(id="wikijs:1", source_ref=page)
+        self.mock_client.get_page.return_value = _make_page_detail(
+            1, title="HTML Page", content="<p>Body</p>", content_type="html"
+        )
+        job = self._make_job()
+        with patch.object(job, "convert_to_markdown", return_value="Body") as convert:
+            content = job.get_raw_content(item)
+
+        convert.assert_called_once_with("<p>Body</p>", file_extension=".html")
+        self.assertEqual(content, "# HTML Page\n\nBody")
+
+    def test_get_raw_content_markdown_skips_conversion(self):
+        page = _make_page(1, "/test", "MD Page")
+        item = IngestionItem(id="wikijs:1", source_ref=page)
+        self.mock_client.get_page.return_value = _make_page_detail(
+            1, title="MD Page", content="Body", content_type="markdown"
+        )
+        job = self._make_job()
+        with patch.object(job, "convert_to_markdown") as convert:
+            job.get_raw_content(item)
+
+        convert.assert_not_called()
+
     def test_get_raw_content_empty_warns_and_returns_empty(self):
         page = _make_page(1, "/test", "Empty Page")
         item = IngestionItem(id="wikijs:1", source_ref=page)
