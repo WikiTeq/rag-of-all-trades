@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +8,7 @@ from pydantic import ValidationError
 
 from tasks.directory_ingestion import DirectoryIngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.helper_classes.ingestion_result import IngestionItemResult, IngestionItemStatus
 
 
 class TestDirectoryIngestionJob(unittest.TestCase):
@@ -169,6 +171,106 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             self.assertEqual(result, "Converted text")
             self.mock_directory_reader.load_resource.assert_called_once_with(str(file_path))
 
+    def test_get_raw_content_transcribes_video(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video = Path(temp_dir) / "talk.mkv"
+            video.write_bytes(b"video")
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+            item = IngestionItem(id=f"file://{video}", source_ref=video)
+
+            with patch.object(job, "convert_video_to_markdown", return_value="[00:00-00:01] Hi") as convert:
+                result = job.get_raw_content(item)
+
+            self.assertEqual(result, IngestionItemResult(IngestionItemStatus.SUCCESS, "[00:00-00:01] Hi"))
+            convert.assert_called_once_with(video)
+            self.mock_directory_reader.load_resource.assert_not_called()
+
+    def test_get_raw_content_returns_success_for_video_without_speech(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video = Path(temp_dir) / "silent.mp4"
+            video.write_bytes(b"video")
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+            item = IngestionItem(id=f"file://{video}", source_ref=video)
+
+            with patch.object(job, "convert_video_to_markdown", return_value=""):
+                result = job.get_raw_content(item)
+
+            self.assertEqual(result, IngestionItemResult(IngestionItemStatus.SUCCESS, ""))
+
+    def test_get_raw_content_returns_fail_when_video_conversion_fails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video = Path(temp_dir) / "broken.mp4"
+            video.write_bytes(b"video")
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+            item = IngestionItem(id=f"file://{video}", source_ref=video)
+
+            with patch.object(job, "convert_video_to_markdown", side_effect=RuntimeError("conversion failed")):
+                result = job.get_raw_content(item)
+
+            self.assertEqual(result, IngestionItemResult(IngestionItemStatus.FAIL, errors=("conversion failed",)))
+
+    def test_get_item_checksum_hashes_video_bytes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video = Path(temp_dir) / "talk.webm"
+            video.write_bytes(b"video bytes")
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+            item = IngestionItem(id=f"file://{video}", source_ref=video)
+
+            expected = hashlib.md5(b"video bytes", usedforsecurity=False).hexdigest()
+            self.assertEqual(job.get_item_checksum(item), expected)
+
+            video.write_bytes(b"other bytes")
+            self.assertNotEqual(job.get_item_checksum(item), expected)
+
+    def test_get_item_checksum_hashes_document_bytes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            doc = Path(temp_dir) / "doc.txt"
+            doc.write_bytes(b"text")
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+            item = IngestionItem(id=f"file://{doc}", source_ref=doc)
+
+            expected = hashlib.md5(b"text", usedforsecurity=False).hexdigest()
+            self.assertEqual(job.get_item_checksum(item), expected)
+
+            doc.write_bytes(b"changed")
+            self.assertNotEqual(job.get_item_checksum(item), expected)
+
+    def test_get_item_checksum_is_none_when_file_unreadable(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+            missing = Path(temp_dir) / "gone.mp4"
+
+            self.assertIsNone(job.get_item_checksum(IngestionItem(id="x", source_ref=missing)))
+
+    def test_process_item_records_silent_video_once_and_skips_unchanged_run(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            video = Path(temp_dir) / "silent.mp4"
+            video.write_bytes(b"video bytes")
+            job = DirectoryIngestionJob({"name": "local", "config": {"path": temp_dir}})
+            item = IngestionItem(id=f"file://{video}", source_ref=video)
+            job.vector_manager = Mock()
+            job.metadata_tracker = Mock()
+            job.metadata_tracker.get_latest_record.return_value = None
+
+            with patch.object(job, "convert_video_to_markdown", return_value="") as convert:
+                self.assertEqual(job.process_item(item), 0)
+
+            expected = hashlib.md5(b"video bytes", usedforsecurity=False).hexdigest()
+            job.vector_manager.insert_documents.assert_not_called()
+            args = job.metadata_tracker.record_metadata.call_args.args
+            self.assertEqual(args[:4], ("silent.mp4", expected, 1, 0))
+            convert.assert_called_once_with(video)
+
+            job.metadata_tracker.record_metadata.reset_mock()
+            job.metadata_tracker.get_latest_record.return_value = Mock(checksum=expected, version=1)
+            job._seen.clear()
+
+            with patch.object(job, "convert_video_to_markdown", return_value="") as convert:
+                self.assertEqual(job.process_item(item), 0)
+
+            convert.assert_not_called()
+            job.metadata_tracker.record_metadata.assert_not_called()
+
     def test_get_raw_content_joins_multiple_documents(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             file_path = Path(temp_dir) / "doc.txt"
@@ -309,6 +411,36 @@ class TestDirectoryIngestionJob(unittest.TestCase):
             item = IngestionItem(id=f"file://{outside_path}", source_ref=outside_path)
             # Falls back to bare filename when relative_to raises ValueError
             self.assertEqual(job.get_item_name(item), "file.txt")
+
+
+class TestDirectoryDiscoveryWithRealReader(unittest.TestCase):
+    """Extension filtering belongs to SimpleDirectoryReader, so these tests do not mock it."""
+
+    def _list_names(self, directory: str, **config) -> list[str]:
+        job = DirectoryIngestionJob({"name": "local", "config": {"path": directory, **config}})
+        return sorted(Path(item.source_ref).name for item in job.list_items())
+
+    def test_video_is_listed_when_required_exts_is_omitted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / "talk.mp4").write_bytes(b"video")
+            (Path(temp_dir) / "note.txt").write_text("note", encoding="utf-8")
+
+            self.assertEqual(self._list_names(temp_dir), ["note.txt", "talk.mp4"])
+
+    def test_required_exts_without_video_excludes_it(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / "talk.mp4").write_bytes(b"video")
+            (Path(temp_dir) / "note.txt").write_text("note", encoding="utf-8")
+
+            self.assertEqual(self._list_names(temp_dir, required_exts="txt,md"), ["note.txt"])
+
+    def test_required_exts_with_video_lists_both(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / "talk.mp4").write_bytes(b"video")
+            (Path(temp_dir) / "note.txt").write_text("note", encoding="utf-8")
+            (Path(temp_dir) / "image.png").write_bytes(b"png")
+
+            self.assertEqual(self._list_names(temp_dir, required_exts="mp4,txt"), ["note.txt", "talk.mp4"])
 
 
 if __name__ == "__main__":

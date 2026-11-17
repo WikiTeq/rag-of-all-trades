@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from collections.abc import Iterable
 from datetime import datetime
@@ -8,6 +9,7 @@ from pydantic import BaseModel, field_validator
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.helper_classes.ingestion_result import IngestionItemResult, IngestionItemStatus
 from utils.parse import parse_list
 from utils.text import sanitize_ascii_key
 
@@ -136,8 +138,27 @@ class DirectoryIngestionJob(IngestionJob):
         """Load one file using the initialized directory reader context."""
         return self.reader.load_resource(str(file_path))
 
-    def get_raw_content(self, item: IngestionItem):
+    def get_item_checksum(self, item: IngestionItem) -> str | None:
+        """Hash the file bytes so an unchanged file is skipped before it is parsed or transcribed."""
         file_path = Path(item.source_ref)
+        try:
+            with file_path.open("rb") as handle:
+                return hashlib.file_digest(handle, lambda: hashlib.md5(usedforsecurity=False)).hexdigest()
+        except OSError as exc:
+            logger.warning("[%s] Failed to hash file: %s", file_path, exc)
+            return None
+
+    def get_raw_content(self, item: IngestionItem) -> str | IngestionItemResult:
+        file_path = Path(item.source_ref)
+
+        if file_path.suffix.lower() in self.VIDEO_EXTENSIONS:
+            # A video without speech is a successful empty result, so it is recorded once.
+            # A failed conversion is reported as FAIL, so the video is tried again next run.
+            try:
+                return IngestionItemResult(IngestionItemStatus.SUCCESS, self.convert_video_to_markdown(file_path))
+            except Exception as exc:
+                logger.warning("[%s] Video transcription failed: %s", file_path, exc, exc_info=True)
+                return IngestionItemResult(IngestionItemStatus.FAIL, errors=(str(exc),))
 
         try:
             docs = self._load_documents_for_path(file_path)
