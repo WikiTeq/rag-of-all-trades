@@ -4,6 +4,7 @@ from tasks.box_ingestion import BoxIngestionJob
 from tasks.confluence_ingestion import ConfluenceIngestionJob
 from tasks.database_ingestion import DatabaseIngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
+from tasks.discord_ingestion import DiscordIngestionJob
 from tasks.dropbox_ingestion import DropboxIngestionJob
 from tasks.gitbook_ingestion import GitBookIngestionJob
 from tasks.github_ingestion import GitHubIngestionJob
@@ -62,3 +63,4 @@ IngestionJobFactory.register("gitlab", GitLabIngestionJob)
 IngestionJobFactory.register("trello", TrelloIngestionJob)
 IngestionJobFactory.register("gitbook", GitBookIngestionJob)
 IngestionJobFactory.register("database", DatabaseIngestionJob)
+IngestionJobFactory.register("discord", DiscordIngestionJob)
