@@ -87,6 +87,7 @@ class RAGQueryEngine:
                             "source_url",
                             "title",
                             "file_name",
+                            "acl",
                         }
                     },
                 }
