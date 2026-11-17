@@ -324,7 +324,7 @@ class IngestionJob(ABC):
     @staticmethod
     def _log_fetch_failure(item: IngestionItem, result: IngestionItemResult) -> None:
         """Log the errors of a ``FAIL`` result."""
-        logger.error("Failed to fetch content for item %s: %s", item.id, "; ".join(result.errors) or "no details")
+        logger.warning("Failed to fetch content for item %s: %s", item.id, "; ".join(result.errors) or "no details")
 
     def _record_empty_item(self, item: IngestionItem, item_name: str, checksum: str, latest) -> None:
         """Store a zero-chunk record so an unchanged empty item is not fetched again.

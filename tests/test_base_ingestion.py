@@ -711,7 +711,7 @@ class TestIngestionJobItemResult:
     def test_failure_keeps_previous_record_and_logs_errors(self, pre_checksum, caplog):
         job, item = self._job(self._fail("ffmpeg missing", "bad stream"), pre_checksum, latest=Mock(checksum="old"))
 
-        with caplog.at_level("ERROR"):
+        with caplog.at_level("WARNING"):
             assert job.process_item(item) == 0
 
         assert "ffmpeg missing; bad stream" in caplog.text
