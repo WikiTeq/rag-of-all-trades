@@ -1,6 +1,7 @@
 from tasks.base import IngestionJob
 from tasks.bookstack_ingestion import BookStackIngestionJob
 from tasks.box_ingestion import BoxIngestionJob
+from tasks.clickup_ingestion import ClickUpIngestionJob
 from tasks.confluence_ingestion import ConfluenceIngestionJob
 from tasks.database_ingestion import DatabaseIngestionJob
 from tasks.directory_ingestion import DirectoryIngestionJob
@@ -62,3 +63,4 @@ IngestionJobFactory.register("gitlab", GitLabIngestionJob)
 IngestionJobFactory.register("trello", TrelloIngestionJob)
 IngestionJobFactory.register("gitbook", GitBookIngestionJob)
 IngestionJobFactory.register("database", DatabaseIngestionJob)
+IngestionJobFactory.register("clickup", ClickUpIngestionJob)

@@ -49,6 +49,7 @@ easily connect to an arbitrary number of data sources with pre-defined ingestion
 * Trello
 * GitBook
 * Database (MySQL + PostgreSQL)
+* ClickUp
 
 ## Embeddings support
 
@@ -1121,6 +1122,51 @@ DB_POSTGRES1_SCHEDULES=3600
 # MySQL
 DB_MYSQL1_CONNECTION_STRING=mysql+pymysql://user:pass@localhost/mydb
 DB_MYSQL1_SCHEDULES=3600
+```
+
+### ClickUp Connector
+
+The ClickUp connector ingests tasks from a ClickUp Workspace using the ClickUp API v2 directly.
+It ingests the whole Workspace by default. Set `connector_type` and `connector_ids` to limit it to
+specific spaces, folders or lists. Closed tasks are included. Subtasks are not requested, so
+only tasks that the API returns by default are ingested.
+
+Task descriptions are fetched as Markdown. When `retrieve_task_comments` is enabled (default), all
+top-level task comments are added to the document. Adding a comment re-ingests the task, because ClickUp
+updates the task's update time. Edits, deletions and replies of existing comments are picked up when the
+task changes for another reason.
+
+The connector keeps requests under `max_requests_per_minute` (default 100, the limit of the Free,
+Unlimited and Business plans) and retries failed or rate-limited requests up to `max_retries` times.
+
+Metadata collected per task: `task_id`, `task_name`, `url`, `status`, `list`, `project`, `folder`,
+`space_id`, `tags`, `priority`, `creator`, `assignees`, `date_created`, `date_updated`, `date_closed`,
+`date_done`, `due_date`, `start_date`.
+
+```yaml
+# config.yaml
+
+sources:
+  - type: "clickup"
+    name: "clickup1"
+    config:
+      api_token: "${CLICKUP1_API_TOKEN}"
+      team_id: "${CLICKUP1_TEAM_ID}"
+      #connector_type: "space"                      # optional: workspace (default), space, folder or list
+      #connector_ids: "${CLICKUP1_CONNECTOR_IDS}"   # comma-separated; required unless connector_type is workspace
+      retrieve_task_comments: true                  # optional, default true
+      #max_retries: 3                               # optional, default 3
+      #max_requests_per_minute: 100                 # optional, default 100
+      schedules: "${CLICKUP1_SCHEDULES}"
+```
+
+```dotenv
+# .env
+
+CLICKUP1_API_TOKEN=your-clickup-api-token
+CLICKUP1_TEAM_ID=your-workspace-id
+#CLICKUP1_CONNECTOR_IDS=spaceid1,spaceid2
+CLICKUP1_SCHEDULES=3600
 ```
 
 ## Video transcription
