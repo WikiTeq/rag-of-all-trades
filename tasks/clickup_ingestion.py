@@ -75,7 +75,7 @@ class ClickUpIngestionJob(IngestionJob):
             raise ValueError("max_requests_per_minute must be positive")
 
         self._request_times: deque[float] = deque()
-        self._session = RetrySession(max_retries=max_retries)
+        self._session = RetrySession(max_retries=max_retries, before_request=self._throttle)
         self._headers = {"Authorization": self.api_token}
 
         logger.info(
@@ -145,9 +145,9 @@ class ClickUpIngestionJob(IngestionJob):
         """Return a checksum from the task ID and update time, without any extra request.
 
         ClickUp changes ``date_updated`` of a task when a top-level comment is added, so new comments
-        re-ingest the task. Edits, deletions and replies of existing comments do not change it and are
-        picked up when the task changes for another reason. Comments are part of the content, so the
-        checksum also changes when ``retrieve_task_comments`` is switched.
+        re-ingest the task. Edits and deletions of existing comments do not change it and are picked
+        up when the task changes for another reason. Threaded replies are not ingested. Comments are
+        part of the content, so the checksum also changes when ``retrieve_task_comments`` is switched.
         """
         task = item.source_ref
         suffix = ":comments" if self.retrieve_task_comments else ""
@@ -177,8 +177,7 @@ class ClickUpIngestionJob(IngestionJob):
         return {key: value for key, value in metadata.items() if value is not None}
 
     def _get(self, endpoint: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
-        """GET an API v2 endpoint with client-side throttling and bounded retries."""
-        self._throttle()
+        """GET an API v2 endpoint. Every attempt, retries included, passes through ``_throttle``."""
         resp = self._session.get(f"{CLICKUP_API_BASE_URL}/{endpoint}", params=params, headers=self._headers)
         resp.raise_for_status()
         return resp.json()

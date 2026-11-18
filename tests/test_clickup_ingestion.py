@@ -317,6 +317,12 @@ class TestClickUpRateLimitAndRetries(unittest.TestCase):
             ClickUpIngestionJob(_make_config(max_retries=5))
         session_cls.assert_called_once_with(max_retries=5)
 
+    def test_session_is_built_with_throttle_hook(self):
+        with patch("tasks.clickup_ingestion.RetrySession") as session_cls:
+            job = ClickUpIngestionJob(_make_config())
+
+        self.assertEqual(session_cls.call_args.kwargs["before_request"], job._throttle)
+
     def test_throttle_sleeps_when_limit_reached(self):
         job = _make_job(max_requests_per_minute=2)
         with (

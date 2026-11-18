@@ -100,6 +100,16 @@ class TestRetrySession(unittest.TestCase):
         self.assertEqual(self.mock_sleep.call_count, 1)
 
     @patch("utils.http.requests.Session")
+    def test_before_request_runs_on_every_attempt(self, MockSession):
+        session = MockSession.return_value
+        session.request.side_effect = [_make_response(500), _make_response(429), _make_response(200)]
+        hook = MagicMock()
+
+        RetrySession(max_retries=3, before_request=hook).get("http://example.com")
+
+        self.assertEqual(hook.call_count, 3)
+
+    @patch("utils.http.requests.Session")
     def test_get_stream_defaults_to_false(self, MockSession):
         session = MockSession.return_value
         session.request.return_value = _make_response(200)

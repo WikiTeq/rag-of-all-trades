@@ -1133,8 +1133,8 @@ only tasks that the API returns by default are ingested.
 
 Task descriptions are fetched as Markdown. When `retrieve_task_comments` is enabled (default), all
 top-level task comments are added to the document. Adding a comment re-ingests the task, because ClickUp
-updates the task's update time. Edits, deletions and replies of existing comments are picked up when the
-task changes for another reason.
+updates the task's update time. Edits and deletions of existing comments are picked up when the task
+changes for another reason. Threaded replies are not ingested.
 
 The connector keeps requests under `max_requests_per_minute` (default 100, the limit of the Free,
 Unlimited and Business plans) and retries failed or rate-limited requests up to `max_retries` times.
