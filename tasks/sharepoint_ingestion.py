@@ -68,10 +68,12 @@ class SharePointIngestionJob(IngestionJob):
     spoken sentence that starts with a timestamp-shaped token cannot be told apart from a prefix
     in the plain converter output, so a prefix removal can also drop such a token from the speech.
     A page keeps the checksum of its own text, so a page whose text does not change is not
-    enriched again, even if an embedded video changed.
+    enriched again, even if an embedded video changed. Switching ``transcribe_videos`` changes the
+    checksum of every page, so each page is ingested once more.
     """
 
     DEFAULT_MAX_VIDEO_MB = 500
+    PAGE_VIDEOS_CHECKSUM_SUFFIX = "\0transcribe_videos"
     _SEGMENT_PREFIX = re.compile(r"^\[(?:\d+:)?\d{2}:\d{2}-(?:\d+:)?\d{2}:\d{2}\] ?")
 
     @property
@@ -328,14 +330,17 @@ class SharePointIngestionJob(IngestionJob):
 
         DRIVE items use the Graph etag, so an unchanged file is not downloaded or converted.
         PAGE items return None (the pipeline then hashes the content) unless video transcription
-        is on. Then the checksum is the MD5 of the page's own text, taken before transcripts
-        are appended, so an unchanged page does no video work.
+        is on. Then the checksum is the MD5 of the page's own text and ``PAGE_VIDEOS_CHECKSUM_SUFFIX``,
+        taken before transcripts are appended, so an unchanged page does no video work. The suffix
+        changes the checksum of every page when ``transcribe_videos`` is switched, so the next run
+        ingests each page again.
         """
         if self.sharepoint_type == SharePointType.DRIVE:
             etag = item.source_ref.get("etag")
             return str(etag) if etag is not None else None
         if self.transcribe_videos:
-            return hashlib.md5((item.source_ref.text or "").encode("utf-8"), usedforsecurity=False).hexdigest()
+            text = (item.source_ref.text or "") + self.PAGE_VIDEOS_CHECKSUM_SUFFIX
+            return hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()
         return None
 
     @classmethod

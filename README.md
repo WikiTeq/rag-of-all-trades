@@ -1147,15 +1147,15 @@ SharePoint connector:
 - Page mode: the transcripts follow the page text, each under a `## Video transcript: <file name>` heading with the
   SharePoint link of the video. Only videos on the tenant's own SharePoint and OneDrive hosts are downloaded. YouTube,
   Vimeo and other external embeds are skipped.
-- The checksum of a page is the checksum of the page text alone, so an unchanged page does no video work. A new or
-  replaced video that does not change the page text does not refresh the page. A video that fails to download or
-  convert is logged and skipped, and the page text and the other videos are still ingested. A failed video is tried
-  again only after the page text changes.
+- The checksum of a page is the checksum of the page text and the `transcribe_videos` setting, so an unchanged page
+  does no video work. A new or replaced video that does not change the page text does not refresh the page. A video
+  that fails to download or convert is logged and skipped, and the page text and the other videos are still ingested.
+  A failed video is tried again only after the page text changes.
 - A video without speech adds no section to a page. In file mode it is recorded once with zero chunks.
 - The connector removes the `[mm:ss-mm:ss]` prefixes. A spoken sentence that begins with a token that looks like
   such a prefix is removed too.
-- Turning `transcribe_videos` on does not change pages whose text did not change, so reprocess those pages to
-  transcribe their videos. Turning it off does not delete transcripts that are already indexed.
+- Turning `transcribe_videos` on or off changes the checksum of every page, so the next run ingests each page once
+  more. After you turn it on, the pages get their video transcripts. After you turn it off, the pages lose them.
 - Page mode needs read access (`Sites.Read.All` or `Files.Read.All`) to the files that pages reference. A video in a
   library the app cannot read is skipped.
 - The page video detection is provisional. It reads the web part data of the page and is not yet confirmed against

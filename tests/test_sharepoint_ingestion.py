@@ -576,12 +576,21 @@ class TestSharePointIngestionGetItemChecksum(unittest.TestCase):
         job = _make_job(transcribe_videos=True)
         self.assertEqual(job.get_item_checksum(item), '"{abc},1"')
 
-    def test_enabled_page_is_md5_of_page_text(self):
+    def test_enabled_page_is_md5_of_page_text_and_videos_suffix(self):
         item = IngestionItem(id="x", source_ref=Document(text="Page body", metadata={}))
         with patch("tasks.sharepoint_ingestion.GraphClient"):
             job = _make_job(sharepoint_type="page", transcribe_videos=True)
-        expected = hashlib.md5(b"Page body", usedforsecurity=False).hexdigest()
+        expected = hashlib.md5(b"Page body\0transcribe_videos", usedforsecurity=False).hexdigest()
         self.assertEqual(job.get_item_checksum(item), expected)
+
+    def test_enabled_page_checksum_differs_from_the_checksum_of_the_disabled_page(self):
+        item = IngestionItem(id="x", source_ref=Document(text="Page body", metadata={}))
+        with patch("tasks.sharepoint_ingestion.GraphClient"):
+            enabled = _make_job(sharepoint_type="page", transcribe_videos=True)
+            disabled = _make_job(sharepoint_type="page", transcribe_videos=False)
+        disabled_checksum = hashlib.md5(b"Page body", usedforsecurity=False).hexdigest()
+        self.assertIsNone(disabled.get_item_checksum(item))
+        self.assertNotEqual(enabled.get_item_checksum(item), disabled_checksum)
 
     def test_enabled_page_checksum_ignores_video_work(self):
         item = IngestionItem(id="x", source_ref=Document(text="Page body", metadata={}))
@@ -1018,7 +1027,7 @@ class TestSharePointPageVideos(unittest.TestCase):
         job = self._job(_canvas_html(_file_part(url)), {url: _drive_item("a.mp4")})
         job.metadata_tracker = MagicMock()
         job.vector_manager = MagicMock()
-        checksum = hashlib.md5(b"Page text.", usedforsecurity=False).hexdigest()
+        checksum = hashlib.md5(b"Page text.\0transcribe_videos", usedforsecurity=False).hexdigest()
         job.metadata_tracker.get_latest_record.return_value = MagicMock(checksum=checksum, version=1)
         with patch.object(SharePointIngestionJob, "convert_video_to_markdown") as convert:
             job.process_item(IngestionItem(id="p", source_ref=self._doc()))
@@ -1027,7 +1036,30 @@ class TestSharePointPageVideos(unittest.TestCase):
         job._graph.download_content.assert_not_called()
         convert.assert_not_called()
 
-    def test_changed_page_stores_the_original_text_checksum(self):
+    def test_turning_videos_on_ingests_a_page_stored_without_transcripts(self):
+        url = "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4"
+        job = self._job(_canvas_html(_file_part(url)), {url: _drive_item("a.mp4")})
+        job.metadata_tracker = MagicMock()
+        job.vector_manager = MagicMock()
+        stored = hashlib.md5(b"Page text.", usedforsecurity=False).hexdigest()
+        job.metadata_tracker.get_latest_record.return_value = MagicMock(checksum=stored, version=1)
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value="Speech."):
+            job.process_item(IngestionItem(id="p", source_ref=self._doc()))
+        stored_doc = job.vector_manager.insert_documents.call_args[0][0][0]
+        self.assertIn("Speech.", stored_doc.text)
+
+    def test_turning_videos_off_ingests_a_page_stored_with_transcripts(self):
+        with patch("tasks.sharepoint_ingestion.GraphClient"):
+            job = _make_job(sharepoint_type="page", transcribe_videos=False)
+        job.metadata_tracker = MagicMock()
+        job.vector_manager = MagicMock()
+        stored = hashlib.md5(b"Page text.\0transcribe_videos", usedforsecurity=False).hexdigest()
+        job.metadata_tracker.get_latest_record.return_value = MagicMock(checksum=stored, version=1)
+        job.process_item(IngestionItem(id="p", source_ref=self._doc()))
+        stored_doc = job.vector_manager.insert_documents.call_args[0][0][0]
+        self.assertEqual(stored_doc.text, "Page text.")
+
+    def test_changed_page_stores_the_checksum_of_the_original_text(self):
         url = "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4"
         job = self._job(_canvas_html(_file_part(url)), {url: _drive_item("a.mp4")})
         job.metadata_tracker = MagicMock()
@@ -1037,7 +1069,8 @@ class TestSharePointPageVideos(unittest.TestCase):
             job.process_item(IngestionItem(id="p", source_ref=self._doc()))
         stored_doc = job.vector_manager.insert_documents.call_args[0][0][0]
         self.assertIn("Speech.", stored_doc.text)
-        self.assertEqual(stored_doc.metadata["checksum"], hashlib.md5(b"Page text.", usedforsecurity=False).hexdigest())
+        expected = hashlib.md5(b"Page text.\0transcribe_videos", usedforsecurity=False).hexdigest()
+        self.assertEqual(stored_doc.metadata["checksum"], expected)
 
 
 if __name__ == "__main__":
