@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from typing import Any
 
 import requests
@@ -16,11 +17,17 @@ class RetrySession:
     - Network errors: exponential backoff (2**attempt seconds)
     - HTTP 429: honours Retry-After header, falls back to exponential backoff
     - HTTP 5xx: retries up to max_retries times
+
+    ``before_request`` is called before every HTTP attempt, including retries, so callers can
+    apply a rate limiter to each request that is sent.
     """
 
-    def __init__(self, max_retries: int = 3, timeout: int = 30) -> None:
+    def __init__(
+        self, max_retries: int = 3, timeout: int = 30, before_request: Callable[[], None] | None = None
+    ) -> None:
         self.max_retries = max_retries
         self.timeout = timeout
+        self._before_request = before_request
         self._session = requests.Session()
 
     def get(
@@ -46,6 +53,8 @@ class RetrySession:
         last_exc: Exception | None = None
 
         for attempt in range(self.max_retries + 1):
+            if self._before_request:
+                self._before_request()
             try:
                 resp = self._session.request(method, url, headers=headers, timeout=self.timeout, **kwargs)
             except requests.RequestException as exc:
