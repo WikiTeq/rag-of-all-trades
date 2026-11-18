@@ -59,6 +59,7 @@ class NotionIngestionJob(IngestionJob):
             raise ValueError("request_delay must be non-negative")
 
         self._client = Client(auth=self.integration_token)
+        self._client.client.headers["User-Agent"] = self.user_agent
 
         load_mode = self.LOAD_MODE_ALL if not self.page_ids and not self.database_ids else self.LOAD_MODE_SELECTIVE
         logger.info(

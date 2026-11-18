@@ -90,6 +90,7 @@ class OneDriveIngestionJob(IngestionJob):
             client_secret=self.client_secret,
             tenant_id=self.tenant_id,
             max_file_size_bytes=self._max_file_size_bytes,
+            user_agent=self.user_agent,
         )
 
         # Resolved lazily on first use in list_items() — requires an authenticated call.

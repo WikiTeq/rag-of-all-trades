@@ -120,6 +120,29 @@ class TestGitHubIngestionJob(unittest.TestCase):
     def _make_job(self, **kwargs):
         return GitHubIngestionJob(_make_config(**kwargs))
 
+    def test_user_agent_set_on_client_headers_with_token(self):
+        clients = [Mock(_headers={}, _base_headers={}), Mock(_headers={}, _base_headers={})]
+        self.mock_github_client_class.return_value = clients[0]
+        self.mock_issues_client_class.return_value = clients[1]
+        job = self._make_job()
+        for client in clients:
+            self.assertEqual(client._headers["User-Agent"], job.user_agent)
+            self.assertEqual(client._base_headers["User-Agent"], job.user_agent)
+
+    def test_user_agent_set_on_client_headers_with_app_auth(self):
+        clients = [Mock(_headers={}, _base_headers={}), Mock(_headers={}, _base_headers={})]
+        self.mock_github_client_class.return_value = clients[0]
+        self.mock_issues_client_class.return_value = clients[1]
+        with patch("tasks.github_ingestion.GitHubAppAuth"):
+            job = self._make_job(
+                personal_token="",
+                github_app_id="123",
+                github_app_installation_id="456",
+                github_app_private_key="key",
+            )
+        for client in clients:
+            self.assertEqual(client._base_headers["User-Agent"], job.user_agent)
+
     # ------------------------------------------------------------------
     # source_type
     # ------------------------------------------------------------------
