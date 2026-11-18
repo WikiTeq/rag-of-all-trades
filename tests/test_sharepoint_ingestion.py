@@ -1,16 +1,22 @@
+import hashlib
+import html
+import json
+import logging
 import tempfile
 import unittest
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from llama_index.core import SimpleDirectoryReader
 from llama_index.core.schema import Document
-from llama_index.readers.microsoft_sharepoint import SharePointType
+from llama_index.readers.microsoft_sharepoint import SharePointReader, SharePointType
 from openpyxl import Workbook
 
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.helper_classes.ingestion_result import IngestionItemResult, IngestionItemStatus
 from tasks.sharepoint_ingestion import SharePointIngestionJob
+from utils.http import UrlRedactingFilter
 
 
 def _make_job(**cfg_overrides):
@@ -564,6 +570,474 @@ class TestSharePointIngestionGetItemChecksum(unittest.TestCase):
         item = IngestionItem(id="x", source_ref=doc)
         job = _make_job(sharepoint_type="page")
         self.assertIsNone(job.get_item_checksum(item))
+
+    def test_enabled_drive_keeps_etag(self):
+        item = IngestionItem(id="x", source_ref={**_make_info("MySite/clip.mp4"), "etag": '"{abc},1"'})
+        job = _make_job(transcribe_videos=True)
+        self.assertEqual(job.get_item_checksum(item), '"{abc},1"')
+
+    def test_enabled_page_is_md5_of_page_text(self):
+        item = IngestionItem(id="x", source_ref=Document(text="Page body", metadata={}))
+        with patch("tasks.sharepoint_ingestion.GraphClient"):
+            job = _make_job(sharepoint_type="page", transcribe_videos=True)
+        expected = hashlib.md5(b"Page body", usedforsecurity=False).hexdigest()
+        self.assertEqual(job.get_item_checksum(item), expected)
+
+    def test_enabled_page_checksum_ignores_video_work(self):
+        item = IngestionItem(id="x", source_ref=Document(text="Page body", metadata={}))
+        with patch("tasks.sharepoint_ingestion.GraphClient") as MockGraph:
+            job = _make_job(sharepoint_type="page", transcribe_videos=True)
+            job._reader = MagicMock()
+            job.get_item_checksum(item)
+        job._reader.get_page_text.assert_not_called()
+        MockGraph.return_value.get_item_by_web_url.assert_not_called()
+
+
+class TestSharePointVideoConfig(unittest.TestCase):
+    def test_defaults(self):
+        job = _make_job()
+        self.assertFalse(job.transcribe_videos)
+        self.assertEqual(job.max_video_bytes, 500 * 1024 * 1024)
+
+    def test_transcribe_videos_string_true(self):
+        self.assertTrue(_make_job(transcribe_videos="true").transcribe_videos)
+
+    def test_max_video_mb_converted_to_bytes(self):
+        job = _make_job(transcribe_videos=True, max_video_mb="1.5")
+        self.assertEqual(job.max_video_bytes, int(1.5 * 1024 * 1024))
+
+    def test_invalid_max_video_mb_raises_when_enabled(self):
+        for value in (True, 0, -5, "abc", None, float("inf"), float("nan")):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                _make_job(transcribe_videos=True, max_video_mb=value)
+
+    def test_invalid_max_video_mb_is_ignored_when_disabled(self):
+        for value in (True, 0, -5, "abc", None, float("inf"), float("nan")):
+            with self.subTest(value=value):
+                job = _make_job(max_video_mb=value)
+                self.assertFalse(job.transcribe_videos)
+                self.assertEqual(job.max_video_bytes, 500 * 1024 * 1024)
+
+    def test_graph_client_built_once_for_page_mode_with_cap(self):
+        with patch("tasks.sharepoint_ingestion.GraphClient") as MockGraph:
+            job = _make_job(sharepoint_type="page", transcribe_videos=True, max_video_mb=2)
+        MockGraph.assert_called_once_with(
+            "test-client-id", "test-client-secret", "test-tenant-id", max_file_size_bytes=2 * 1024 * 1024
+        )
+        self.assertIs(job._graph, MockGraph.return_value)
+
+    def test_graph_client_not_built_when_disabled_or_file_mode(self):
+        with patch("tasks.sharepoint_ingestion.GraphClient") as MockGraph:
+            _make_job(sharepoint_type="page")
+            _make_job(transcribe_videos=True)
+        MockGraph.assert_not_called()
+
+
+class TestSharePointSegmentPrefixRemoval(unittest.TestCase):
+    def test_removes_one_prefix_per_segment(self):
+        text = "[00:00-00:04] Hello there.\n\n[00:04-00:09] Second part."
+        self.assertEqual(SharePointIngestionJob._strip_segment_prefixes(text), "Hello there.\n\nSecond part.")
+
+    def test_removes_hour_prefix_and_mixed_endpoints(self):
+        text = "[59:58-1:00:03] Crosses the hour.\n\n[1:02:03-1:02:09] Later."
+        self.assertEqual(SharePointIngestionJob._strip_segment_prefixes(text), "Crosses the hour.\n\nLater.")
+
+    def test_keeps_inline_lookalikes_and_spoken_times(self):
+        text = "[00:00-00:05] The meeting is at 3:30 on June 5 and [01:00-01:05] is not a prefix."
+        self.assertEqual(
+            SharePointIngestionJob._strip_segment_prefixes(text),
+            "The meeting is at 3:30 on June 5 and [01:00-01:05] is not a prefix.",
+        )
+
+    def test_removes_only_the_first_prefix_of_a_segment(self):
+        text = "[00:00-00:05] [00:05-00:09] Spoken lookalike."
+        self.assertEqual(SharePointIngestionJob._strip_segment_prefixes(text), "[00:05-00:09] Spoken lookalike.")
+
+    def test_text_without_prefix_is_unchanged(self):
+        self.assertEqual(SharePointIngestionJob._strip_segment_prefixes("Plain speech."), "Plain speech.")
+
+
+def _video_job(**cfg):
+    job = _make_job(transcribe_videos=True, **cfg)
+    job._reader = MagicMock()
+    return job
+
+
+class TestSharePointFileVideo(unittest.TestCase):
+    def _item(self, file_path="MySite/Documents/clip.mp4", **info):
+        return IngestionItem(id="sp:clip", source_ref={**_make_info(file_path), **info})
+
+    def test_every_video_extension_is_transcribed_case_insensitively(self):
+        for ext in (".mp4", ".avi", ".mov", ".mkv", ".webm", ".MP4", ".WebM"):
+            with self.subTest(ext=ext):
+                job = _video_job()
+                job._reader.read_file_content.return_value = b"video"
+                with patch.object(
+                    SharePointIngestionJob, "convert_video_to_markdown", return_value="[00:00-00:03] Hi."
+                ) as convert:
+                    result = job.get_raw_content(self._item(f"MySite/Documents/clip{ext}"))
+                self.assertEqual(result, IngestionItemResult(IngestionItemStatus.SUCCESS, "Hi."))
+                self.assertEqual(Path(convert.call_args[0][0]).suffix, ext.lower())
+                job._reader.load_resource.assert_not_called()
+
+    def test_non_video_file_uses_load_resource(self):
+        job = _video_job()
+        job._reader.load_resource.return_value = [_make_doc(text="PDF text")]
+        self.assertEqual(job.get_raw_content(self._item("MySite/Documents/report.pdf")), "PDF text")
+        job._reader.read_file_content.assert_not_called()
+
+    def test_disabled_video_keeps_the_old_path(self):
+        job = _make_job()
+        job._reader = MagicMock()
+        job._reader.load_resource.return_value = [_make_doc(text="")]
+        self.assertEqual(job.get_raw_content(self._item()), "")
+        job._reader.read_file_content.assert_not_called()
+
+    def test_declared_oversize_is_not_downloaded(self):
+        job = _video_job(max_video_mb=1)
+        result = job.get_raw_content(self._item(size=1024 * 1024 + 1))
+        self.assertEqual(result.status, IngestionItemStatus.FAIL)
+        job._reader.read_file_content.assert_not_called()
+
+    def test_actual_oversize_fails_when_size_is_missing_or_false(self):
+        for info in ({}, {"size": 1}, {"size": "big"}):
+            with self.subTest(info=info):
+                job = _video_job(max_video_mb=0.001)
+                job._reader.read_file_content.return_value = b"x" * 1100
+                with patch.object(SharePointIngestionJob, "convert_video_to_markdown") as convert:
+                    result = job.get_raw_content(self._item(**info))
+                self.assertEqual(result.status, IngestionItemStatus.FAIL)
+                convert.assert_not_called()
+
+    def test_file_exactly_at_the_cap_is_converted(self):
+        job = _video_job(max_video_mb=0.001)
+        cap = job.max_video_bytes
+        job._reader.read_file_content.return_value = b"x" * cap
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value="Speech."):
+            result = job.get_raw_content(self._item(size=cap))
+        self.assertEqual(result.status, IngestionItemStatus.SUCCESS)
+
+    def test_reader_error_log_does_not_leak_the_signed_url(self):
+        _video_job()
+        reader_logger = logging.getLogger(SharePointReader.__module__)
+        with self.assertLogs(reader_logger, level="ERROR") as logs:
+            reader_logger.error(
+                "An error occurred while reading file content from SharePoint: %s",
+                ConnectionError("Max retries exceeded with url: /f.mp4?tempauth=SECRET (Caused by X)"),
+            )
+        self.assertNotIn("SECRET", "".join(logs.output))
+        self.assertIn("reading file content", "".join(logs.output))
+
+    def test_reader_log_filter_is_added_once_and_only_when_enabled(self):
+        reader_logger = logging.getLogger(SharePointReader.__module__)
+        for existing in [f for f in reader_logger.filters if isinstance(f, UrlRedactingFilter)]:
+            reader_logger.removeFilter(existing)
+        _make_job()
+        self.assertEqual([f for f in reader_logger.filters if isinstance(f, UrlRedactingFilter)], [])
+        _video_job()
+        _video_job()
+        self.assertEqual(len([f for f in reader_logger.filters if isinstance(f, UrlRedactingFilter)]), 1)
+
+    def test_download_error_fails_without_leaking_the_signed_url(self):
+        job = _video_job()
+        job._reader.read_file_content.side_effect = ConnectionError("GET https://x.sharepoint.com/f?tempauth=SECRET")
+        with self.assertLogs("tasks.sharepoint_ingestion", level="WARNING") as logs:
+            result = job.get_raw_content(self._item())
+        self.assertEqual(result.status, IngestionItemStatus.FAIL)
+        self.assertNotIn("SECRET", "".join(logs.output) + "".join(result.errors))
+
+    def test_converter_error_fails(self):
+        job = _video_job()
+        job._reader.read_file_content.return_value = b"video"
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown", side_effect=RuntimeError("partial")):
+            result = job.get_raw_content(self._item())
+        self.assertEqual(result.status, IngestionItemStatus.FAIL)
+
+    def test_video_without_speech_is_an_explicit_empty_success(self):
+        for transcript in ("", "   ", "[00:00-00:03] "):
+            with self.subTest(transcript=transcript):
+                job = _video_job()
+                job._reader.read_file_content.return_value = b"video"
+                with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value=transcript):
+                    result = job.get_raw_content(self._item())
+                self.assertEqual(result, IngestionItemResult(IngestionItemStatus.SUCCESS, ""))
+
+    def test_video_without_speech_is_recorded_once_and_not_transcribed_again(self):
+        job = _video_job()
+        job.metadata_tracker = MagicMock()
+        job.vector_manager = MagicMock()
+        job.metadata_tracker.get_latest_record.return_value = None
+        job._reader.read_file_content.return_value = b"video"
+        item = self._item(etag='"{abc},1"')
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value="") as convert:
+            job.process_item(item)
+            job.vector_manager.insert_documents.assert_not_called()
+            job.metadata_tracker.record_metadata.assert_called_once()
+            self.assertEqual(job.metadata_tracker.record_metadata.call_args.args[1], '"{abc},1"')
+
+            next_run = _video_job()
+            next_run.metadata_tracker = MagicMock()
+            next_run.vector_manager = MagicMock()
+            next_run.metadata_tracker.get_latest_record.return_value = MagicMock(checksum='"{abc},1"', version=1)
+            next_run.process_item(item)
+
+        convert.assert_called_once()
+        job._reader.read_file_content.assert_called_once()
+        next_run._reader.read_file_content.assert_not_called()
+        next_run.metadata_tracker.record_metadata.assert_not_called()
+
+    def test_temp_directory_is_removed_after_success_and_failure(self):
+        for side_effect in (None, RuntimeError("boom")):
+            with self.subTest(failing=side_effect is not None):
+                seen = []
+
+                def convert(path, _side_effect=side_effect, _seen=seen):
+                    _seen.append(Path(path))
+                    self.assertTrue(Path(path).exists())
+                    if _side_effect:
+                        raise _side_effect
+                    return "Speech."
+
+                job = _video_job()
+                job._reader.read_file_content.return_value = b"video"
+                with patch.object(SharePointIngestionJob, "convert_video_to_markdown", side_effect=convert):
+                    job.get_raw_content(self._item())
+                self.assertFalse(seen[0].parent.exists())
+
+    def test_unchanged_video_is_skipped_by_etag_before_download(self):
+        job = _video_job()
+        job.metadata_tracker = MagicMock()
+        job.vector_manager = MagicMock()
+        job.metadata_tracker.get_latest_record.return_value = MagicMock(checksum='"{abc},1"', version=1)
+        job.process_item(self._item(etag='"{abc},1"'))
+        job._reader.read_file_content.assert_not_called()
+        job._reader.load_resource.assert_not_called()
+
+
+def _canvas_html(*webparts):
+    """Build CanvasContent1-like HTML with one ``data-sp-webpartdata`` attribute per web part."""
+    return "".join(
+        f'<div data-sp-webpart="" data-sp-webpartdata="{html.escape(json.dumps(part))}"></div>' for part in webparts
+    )
+
+
+def _file_part(url):
+    return {"title": "File viewer", "properties": {"file": url}, "serverProcessedContent": {"links": {"file": url}}}
+
+
+SITE_ID = "contoso.sharepoint.com,11111111-aaaa,22222222-bbbb"
+
+
+def _drive_item(name, drive_id="d1", item_id="i1", size=1000, web_url=None):
+    return {
+        "id": item_id,
+        "name": name,
+        "size": size,
+        "webUrl": web_url or f"https://contoso.sharepoint.com/sites/s/Shared%20Documents/{name}",
+        "parentReference": {"driveId": drive_id},
+        "@microsoft.graph.downloadUrl": f"https://download.example/{item_id}?tempauth=SECRET",
+    }
+
+
+class TestSharePointGraphClientLifecycle(unittest.TestCase):
+    def _page_job(self):
+        with patch("tasks.sharepoint_ingestion.GraphClient") as mock_graph:
+            job = _make_job(sharepoint_type="page", transcribe_videos=True)
+        return job, mock_graph.return_value
+
+    def test_graph_client_is_closed_after_the_listing_ends(self):
+        job, graph = self._page_job()
+        with (
+            patch("tasks.sharepoint_ingestion.SharePointReader"),
+            patch.object(job, "_list_page_items", return_value=iter([])),
+        ):
+            list(job.list_items())
+        graph.close.assert_called_once_with()
+
+    def test_graph_client_is_closed_when_the_listing_is_abandoned(self):
+        job, graph = self._page_job()
+        with (
+            patch("tasks.sharepoint_ingestion.SharePointReader"),
+            patch.object(job, "_list_page_items", return_value=iter([IngestionItem(id="p", source_ref=None)])),
+        ):
+            listing = job.list_items()
+            next(listing)
+            listing.close()
+        graph.close.assert_called_once_with()
+
+    def test_listing_without_a_graph_client_does_not_fail(self):
+        job = _make_job(sharepoint_type="page")
+        with (
+            patch("tasks.sharepoint_ingestion.SharePointReader"),
+            patch.object(job, "_list_page_items", return_value=iter([])),
+        ):
+            self.assertEqual(list(job.list_items()), [])
+
+
+class TestSharePointPageVideos(unittest.TestCase):
+    def _job(self, raw_html, items_by_url=None, **cfg):
+        with patch("tasks.sharepoint_ingestion.GraphClient") as MockGraph:
+            job = _make_job(sharepoint_type="page", transcribe_videos=True, **cfg)
+        job._reader = MagicMock()
+        job._reader.get_page_text.return_value = {"rawHtml": raw_html}
+        job._graph.get_item_by_web_url.side_effect = lambda url: items_by_url[url]
+        job._graph.download_content.side_effect = lambda url: url.encode()
+        self.assertIs(job._graph, MockGraph.return_value)
+        return job
+
+    def _doc(self, text="Page text."):
+        return Document(text=text, metadata={"site_id": SITE_ID, "page_id": "list1:7"}, id_="list1:7")
+
+    @staticmethod
+    def _convert(path):
+        return f"[00:00-00:05] Speech of {Path(path).read_bytes().decode().split('/')[-1].split('?')[0]}."
+
+    def test_appends_transcripts_in_page_order_with_labels(self):
+        urls = [
+            "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4",
+            "https://contoso.sharepoint.com/sites/s/Shared%20Documents/b.webm",
+        ]
+        job = self._job(
+            _canvas_html(_file_part(urls[0]), _file_part(urls[1])),
+            {urls[0]: _drive_item("a.mp4", item_id="i1"), urls[1]: _drive_item("b.webm", item_id="i2")},
+        )
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown", side_effect=self._convert):
+            text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+        self.assertTrue(text.startswith("Page text.\n\n## Video transcript: a.mp4\n\nhttps://contoso.sharepoint.com/"))
+        self.assertLess(text.index("a.mp4"), text.index("b.webm"))
+        self.assertIn("Speech of i1.", text)
+        self.assertIn("Speech of i2.", text)
+        self.assertNotIn("[00:00-00:05]", text)
+
+    def test_same_video_through_two_references_is_converted_once(self):
+        urls = [
+            "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4",
+            "https://contoso.sharepoint.com/sites/s/Other/a.mp4",
+        ]
+        job = self._job(
+            _canvas_html(_file_part(urls[0]), _file_part(urls[1])),
+            {url: _drive_item("a.mp4") for url in urls},
+        )
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value="Speech.") as convert:
+            job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+        convert.assert_called_once()
+
+    def test_external_and_other_tenant_videos_are_not_resolved_or_downloaded(self):
+        html_page = _canvas_html(
+            _file_part("https://www.youtube.com/watch?v=abc.mp4"),
+            _file_part("https://other.sharepoint.com/sites/s/a.mp4"),
+        )
+        job = self._job(html_page, {})
+        text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+        self.assertEqual(text, "Page text.")
+        job._graph.get_item_by_web_url.assert_not_called()
+        job._graph.download_content.assert_not_called()
+
+    def test_failed_video_does_not_block_page_text_or_the_next_video(self):
+        urls = [
+            "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4",
+            "https://contoso.sharepoint.com/sites/s/Shared%20Documents/b.mp4",
+        ]
+        job = self._job(
+            _canvas_html(_file_part(urls[0]), _file_part(urls[1])),
+            {urls[0]: _drive_item("a.mp4", item_id="i1"), urls[1]: _drive_item("b.mp4", item_id="i2")},
+        )
+        job._graph.download_content.side_effect = [
+            RuntimeError("Download failed (403) for https://download.example/i1?tempauth=SECRET"),
+            b"video",
+        ]
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value="Second speech."):
+            with self.assertLogs("tasks.sharepoint_ingestion", level="WARNING") as logs:
+                text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+        self.assertIn("Page text.", text)
+        self.assertIn("Second speech.", text)
+        self.assertNotIn("a.mp4\n\n", text)
+        self.assertNotIn("SECRET", "".join(logs.output))
+
+    def test_unresolvable_reference_does_not_stop_later_videos(self):
+        urls = [
+            "https://contoso.sharepoint.com/sites/s/Shared%20Documents/gone.mp4",
+            "https://contoso.sharepoint.com/sites/s/Shared%20Documents/b.mp4",
+        ]
+        job = self._job(_canvas_html(_file_part(urls[0]), _file_part(urls[1])), {urls[1]: _drive_item("b.mp4")})
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value="Speech."):
+            text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+        self.assertIn("## Video transcript: b.mp4", text)
+
+    def test_oversize_and_non_video_items_are_skipped_without_download(self):
+        urls = [
+            "https://contoso.sharepoint.com/sites/s/Shared%20Documents/big.mp4",
+            "https://contoso.sharepoint.com/sites/s/Shared%20Documents/renamed.mp4",
+        ]
+        job = self._job(
+            _canvas_html(_file_part(urls[0]), _file_part(urls[1])),
+            {urls[0]: _drive_item("big.mp4", size=3 * 1024 * 1024), urls[1]: _drive_item("notes.docx", item_id="i2")},
+            max_video_mb=1,
+        )
+        text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+        self.assertEqual(text, "Page text.")
+        job._graph.download_content.assert_not_called()
+
+    def test_page_html_fetch_failure_keeps_the_page_text(self):
+        job = self._job("", {})
+        job._reader.get_page_text.side_effect = RuntimeError("Graph down")
+        text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+        self.assertEqual(text, "Page text.")
+
+    def test_page_without_ids_keeps_the_page_text(self):
+        job = self._job("", {})
+        doc = Document(text="Page text.", metadata={}, id_="")
+        self.assertEqual(job.get_raw_content(IngestionItem(id="p", source_ref=doc)), "Page text.")
+        job._reader.get_page_text.assert_not_called()
+
+    def test_silent_video_adds_nothing(self):
+        url = "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4"
+        job = self._job(_canvas_html(_file_part(url)), {url: _drive_item("a.mp4")})
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value=""):
+            text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+        self.assertEqual(text, "Page text.")
+
+    def test_text_less_page_with_only_a_silent_video_is_an_explicit_empty_success(self):
+        url = "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4"
+        job = self._job(_canvas_html(_file_part(url)), {url: _drive_item("a.mp4")})
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value=""):
+            result = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc(text="")))
+        self.assertEqual(result, IngestionItemResult(IngestionItemStatus.SUCCESS, ""))
+
+    def test_text_less_page_stays_a_retryable_empty_string_when_a_video_failed_or_none_found(self):
+        url = "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4"
+        failing = self._job(_canvas_html(_file_part(url)), {url: _drive_item("a.mp4")})
+        failing._graph.download_content.side_effect = RuntimeError("boom")
+        no_videos = self._job("", {})
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value=""):
+            self.assertEqual(failing.get_raw_content(IngestionItem(id="p", source_ref=self._doc(text=""))), "")
+            self.assertEqual(no_videos.get_raw_content(IngestionItem(id="p", source_ref=self._doc(text=""))), "")
+
+    def test_unchanged_page_does_no_video_work(self):
+        url = "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4"
+        job = self._job(_canvas_html(_file_part(url)), {url: _drive_item("a.mp4")})
+        job.metadata_tracker = MagicMock()
+        job.vector_manager = MagicMock()
+        checksum = hashlib.md5(b"Page text.", usedforsecurity=False).hexdigest()
+        job.metadata_tracker.get_latest_record.return_value = MagicMock(checksum=checksum, version=1)
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown") as convert:
+            job.process_item(IngestionItem(id="p", source_ref=self._doc()))
+        job._reader.get_page_text.assert_not_called()
+        job._graph.get_item_by_web_url.assert_not_called()
+        job._graph.download_content.assert_not_called()
+        convert.assert_not_called()
+
+    def test_changed_page_stores_the_original_text_checksum(self):
+        url = "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4"
+        job = self._job(_canvas_html(_file_part(url)), {url: _drive_item("a.mp4")})
+        job.metadata_tracker = MagicMock()
+        job.vector_manager = MagicMock()
+        job.metadata_tracker.get_latest_record.return_value = None
+        with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value="Speech."):
+            job.process_item(IngestionItem(id="p", source_ref=self._doc()))
+        stored_doc = job.vector_manager.insert_documents.call_args[0][0][0]
+        self.assertIn("Speech.", stored_doc.text)
+        self.assertEqual(stored_doc.metadata["checksum"], hashlib.md5(b"Page text.", usedforsecurity=False).hexdigest())
 
 
 if __name__ == "__main__":

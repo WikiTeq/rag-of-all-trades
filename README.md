@@ -471,6 +471,8 @@ sources:
       sharepoint_folder_path: "Documents/Reports"
       sharepoint_type: "file"                   # "file" (default) or "page"
       recursive: true                           # see "Known limitation" below
+      transcribe_videos: false                  # optional, default false, see "Video transcription" below
+      max_video_mb: 500                         # optional, default 500, largest video in MiB
       schedules: "${SHAREPOINT1_SCHEDULES}"
 
   # Loading SharePoint site pages
@@ -1121,11 +1123,13 @@ DB_MYSQL1_SCHEDULES=3600
 Connectors that read video files (`.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`) transcribe the audio track with
 Docling and ingest the transcript as Markdown, with a `[mm:ss-mm:ss]` time prefix on each segment (`[h:mm:ss-h:mm:ss]`
 after one hour). Frames and speakers are not analyzed. Transcription runs on the CPU, so it is slow for long
-videos. At the moment only the Directory connector reads video files.
+videos. `video_asr_model` is a Directory connector setting. `transcribe_videos` and `max_video_mb` are SharePoint connector settings.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `video_asr_model` | string | `WHISPER_TINY` | Name of a Docling Whisper model for the native `openai-whisper` runtime, for example `WHISPER_TINY`, `WHISPER_BASE`, `WHISPER_SMALL`, `WHISPER_MEDIUM`, `WHISPER_LARGE` or `WHISPER_TURBO`. The name is not case-sensitive. An unknown name stops the connector at start with an error that lists the valid names. |
+| `transcribe_videos` | boolean | `false` | Transcribe videos. File mode transcribes `.mp4`, `.avi`, `.mov`, `.mkv` and `.webm` files. Page mode appends the transcript of each SharePoint-hosted video on a page to the page text. |
+| `max_video_mb` | number | `500` | Largest video in MiB (1 MiB = 1,048,576 bytes). A larger video is skipped. The value must be a positive number. |
 
 - The Docker image contains the weights of `WHISPER_TINY`. Any other model downloads on first use and is larger and
   slower on the CPU.
@@ -1134,6 +1138,28 @@ videos. At the moment only the Directory connector reads video files.
 - A video without speech is a successful result. It is recorded once with zero chunks and is not transcribed again.
 - A video that fails to convert is logged with the Docling errors and tried again on the next run. A video that
   was ingested before keeps its previous version.
+
+SharePoint connector:
+
+- File mode: the transcript is the content of the file. The etag of the file is the checksum, so an unchanged video
+  is not downloaded or transcribed again. The SharePoint reader keeps the whole file in memory while it downloads and
+  sets no timeout or size limit, so the connector checks the declared size first and the downloaded size second.
+- Page mode: the transcripts follow the page text, each under a `## Video transcript: <file name>` heading with the
+  SharePoint link of the video. Only videos on the tenant's own SharePoint and OneDrive hosts are downloaded. YouTube,
+  Vimeo and other external embeds are skipped.
+- The checksum of a page is the checksum of the page text alone, so an unchanged page does no video work. A new or
+  replaced video that does not change the page text does not refresh the page. A video that fails to download or
+  convert is logged and skipped, and the page text and the other videos are still ingested. A failed video is tried
+  again only after the page text changes.
+- A video without speech adds no section to a page. In file mode it is recorded once with zero chunks.
+- The connector removes the `[mm:ss-mm:ss]` prefixes. A spoken sentence that begins with a token that looks like
+  such a prefix is removed too.
+- Turning `transcribe_videos` on does not change pages whose text did not change, so reprocess those pages to
+  transcribe their videos. Turning it off does not delete transcripts that are already indexed.
+- Page mode needs read access (`Sites.Read.All` or `Files.Read.All`) to the files that pages reference. A video in a
+  library the app cannot read is skipped.
+- The page video detection is provisional. It reads the web part data of the page and is not yet confirmed against
+  File viewer and Stream web part samples from a live tenant.
 
 ## Reference of the `config.yaml`
 
