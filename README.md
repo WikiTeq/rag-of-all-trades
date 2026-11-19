@@ -1123,13 +1123,13 @@ DB_MYSQL1_SCHEDULES=3600
 Connectors that read video files (`.mp4`, `.avi`, `.mov`, `.mkv`, `.webm`) transcribe the audio track with
 Docling and ingest the transcript as Markdown, with a `[mm:ss-mm:ss]` time prefix on each segment (`[h:mm:ss-h:mm:ss]`
 after one hour). Frames and speakers are not analyzed. Transcription runs on the CPU, so it is slow for long
-videos. `video_asr_model` is a Directory connector setting. `transcribe_videos` and `max_video_mb` are SharePoint connector settings.
+videos. `video_asr_model` applies to the Directory and SharePoint connectors. `transcribe_videos` and `max_video_mb` are SharePoint connector settings.
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
 | `video_asr_model` | string | `WHISPER_TINY` | Name of a Docling Whisper model for the native `openai-whisper` runtime, for example `WHISPER_TINY`, `WHISPER_BASE`, `WHISPER_SMALL`, `WHISPER_MEDIUM`, `WHISPER_LARGE` or `WHISPER_TURBO`. The name is not case-sensitive. An unknown name stops the connector at start with an error that lists the valid names. |
 | `transcribe_videos` | boolean | `false` | Transcribe videos. File mode transcribes `.mp4`, `.avi`, `.mov`, `.mkv` and `.webm` files. Page mode appends the transcript of each SharePoint-hosted video on a page to the page text. |
-| `max_video_mb` | number | `500` | Largest video in MiB (1 MiB = 1,048,576 bytes). A larger video is skipped. The value must be a positive number. |
+| `max_video_mb` | number | `500` | Largest video in MiB (1 MiB = 1,048,576 bytes). A larger video is skipped. The value must be a positive number. The connector checks it only when `transcribe_videos` is `true`. |
 
 - The Docker image contains the weights of `WHISPER_TINY`. Any other model downloads on first use and is larger and
   slower on the CPU.
@@ -1143,14 +1143,17 @@ SharePoint connector:
 
 - File mode: the transcript is the content of the file. The etag of the file is the checksum, so an unchanged video
   is not downloaded or transcribed again. The SharePoint reader keeps the whole file in memory while it downloads and
-  sets no timeout or size limit, so the connector checks the declared size first and the downloaded size second.
+  sets no timeout or size limit, so the connector checks the declared size first and the downloaded size second. A
+  video that fails to download or convert, or that is larger than `max_video_mb`, is logged and tried again on the
+  next run.
 - Page mode: the transcripts follow the page text, each under a `## Video transcript: <file name>` heading with the
   SharePoint link of the video. Only videos on the tenant's own SharePoint and OneDrive hosts are downloaded. YouTube,
   Vimeo and other external embeds are skipped.
 - The checksum of a page is the checksum of the page text and the `transcribe_videos` setting, so an unchanged page
   does no video work. A new or replaced video that does not change the page text does not refresh the page. A video
   that fails to download or convert is logged and skipped, and the page text and the other videos are still ingested.
-  A failed video is tried again only after the page text changes.
+  A failed video is tried again only after the page text changes. The exception is a page that has no text and whose
+  videos all fail: the page has no content, so it is tried again on the next run.
 - A video without speech adds no section to a page. In file mode it is recorded once with zero chunks.
 - The connector removes the `[mm:ss-mm:ss]` prefixes. A spoken sentence that begins with a token that looks like
   such a prefix is removed too.
