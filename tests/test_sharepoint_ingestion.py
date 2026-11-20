@@ -580,7 +580,7 @@ class TestSharePointIngestionGetItemChecksum(unittest.TestCase):
         item = IngestionItem(id="x", source_ref=Document(text="Page body", metadata={}))
         with patch("tasks.sharepoint_ingestion.GraphClient"):
             job = _make_job(sharepoint_type="page", transcribe_videos=True)
-        expected = hashlib.md5(b"Page body\0transcribe_videos", usedforsecurity=False).hexdigest()
+        expected = _page_checksum("Page body")
         self.assertEqual(job.get_item_checksum(item), expected)
 
     def test_enabled_page_checksum_differs_from_the_checksum_of_the_disabled_page(self):
@@ -642,28 +642,9 @@ class TestSharePointVideoConfig(unittest.TestCase):
         MockGraph.assert_not_called()
 
 
-class TestSharePointSegmentPrefixRemoval(unittest.TestCase):
-    def test_removes_one_prefix_per_segment(self):
-        text = "[00:00-00:04] Hello there.\n\n[00:04-00:09] Second part."
-        self.assertEqual(SharePointIngestionJob._strip_segment_prefixes(text), "Hello there.\n\nSecond part.")
-
-    def test_removes_hour_prefix_and_mixed_endpoints(self):
-        text = "[59:58-1:00:03] Crosses the hour.\n\n[1:02:03-1:02:09] Later."
-        self.assertEqual(SharePointIngestionJob._strip_segment_prefixes(text), "Crosses the hour.\n\nLater.")
-
-    def test_keeps_inline_lookalikes_and_spoken_times(self):
-        text = "[00:00-00:05] The meeting is at 3:30 on June 5 and [01:00-01:05] is not a prefix."
-        self.assertEqual(
-            SharePointIngestionJob._strip_segment_prefixes(text),
-            "The meeting is at 3:30 on June 5 and [01:00-01:05] is not a prefix.",
-        )
-
-    def test_removes_only_the_first_prefix_of_a_segment(self):
-        text = "[00:00-00:05] [00:05-00:09] Spoken lookalike."
-        self.assertEqual(SharePointIngestionJob._strip_segment_prefixes(text), "[00:05-00:09] Spoken lookalike.")
-
-    def test_text_without_prefix_is_unchanged(self):
-        self.assertEqual(SharePointIngestionJob._strip_segment_prefixes("Plain speech."), "Plain speech.")
+def _page_checksum(text):
+    digest = hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()
+    return f"{SharePointIngestionJob.PAGE_VIDEOS_CHECKSUM_PREFIX}{digest}"
 
 
 def _video_job(**cfg):
@@ -685,7 +666,7 @@ class TestSharePointFileVideo(unittest.TestCase):
                     SharePointIngestionJob, "convert_video_to_markdown", return_value="[00:00-00:03] Hi."
                 ) as convert:
                     result = job.get_raw_content(self._item(f"MySite/Documents/clip{ext}"))
-                self.assertEqual(result, IngestionItemResult(IngestionItemStatus.SUCCESS, "Hi."))
+                self.assertEqual(result, IngestionItemResult(IngestionItemStatus.SUCCESS, "[00:00-00:03] Hi."))
                 self.assertEqual(Path(convert.call_args[0][0]).suffix, ext.lower())
                 job._reader.load_resource.assert_not_called()
 
@@ -763,7 +744,7 @@ class TestSharePointFileVideo(unittest.TestCase):
         self.assertEqual(result.status, IngestionItemStatus.FAIL)
 
     def test_video_without_speech_is_an_explicit_empty_success(self):
-        for transcript in ("", "   ", "[00:00-00:03] "):
+        for transcript in ("", "   "):
             with self.subTest(transcript=transcript):
                 job = _video_job()
                 job._reader.read_file_content.return_value = b"video"
@@ -914,9 +895,8 @@ class TestSharePointPageVideos(unittest.TestCase):
             text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
         self.assertTrue(text.startswith("Page text.\n\n## Video transcript: a.mp4\n\nhttps://contoso.sharepoint.com/"))
         self.assertLess(text.index("a.mp4"), text.index("b.webm"))
-        self.assertIn("Speech of i1.", text)
-        self.assertIn("Speech of i2.", text)
-        self.assertNotIn("[00:00-00:05]", text)
+        self.assertIn("[00:00-00:05] Speech of i1.", text)
+        self.assertIn("[00:00-00:05] Speech of i2.", text)
 
     def test_same_video_through_two_references_is_converted_once(self):
         urls = [
@@ -1027,7 +1007,7 @@ class TestSharePointPageVideos(unittest.TestCase):
         job = self._job(_canvas_html(_file_part(url)), {url: _drive_item("a.mp4")})
         job.metadata_tracker = MagicMock()
         job.vector_manager = MagicMock()
-        checksum = hashlib.md5(b"Page text.\0transcribe_videos", usedforsecurity=False).hexdigest()
+        checksum = _page_checksum("Page text.")
         job.metadata_tracker.get_latest_record.return_value = MagicMock(checksum=checksum, version=1)
         with patch.object(SharePointIngestionJob, "convert_video_to_markdown") as convert:
             job.process_item(IngestionItem(id="p", source_ref=self._doc()))
@@ -1053,7 +1033,7 @@ class TestSharePointPageVideos(unittest.TestCase):
             job = _make_job(sharepoint_type="page", transcribe_videos=False)
         job.metadata_tracker = MagicMock()
         job.vector_manager = MagicMock()
-        stored = hashlib.md5(b"Page text.\0transcribe_videos", usedforsecurity=False).hexdigest()
+        stored = _page_checksum("Page text.")
         job.metadata_tracker.get_latest_record.return_value = MagicMock(checksum=stored, version=1)
         job.process_item(IngestionItem(id="p", source_ref=self._doc()))
         stored_doc = job.vector_manager.insert_documents.call_args[0][0][0]
@@ -1069,7 +1049,7 @@ class TestSharePointPageVideos(unittest.TestCase):
             job.process_item(IngestionItem(id="p", source_ref=self._doc()))
         stored_doc = job.vector_manager.insert_documents.call_args[0][0][0]
         self.assertIn("Speech.", stored_doc.text)
-        expected = hashlib.md5(b"Page text.\0transcribe_videos", usedforsecurity=False).hexdigest()
+        expected = _page_checksum("Page text.")
         self.assertEqual(stored_doc.metadata["checksum"], expected)
 
 

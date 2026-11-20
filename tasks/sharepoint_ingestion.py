@@ -1,7 +1,6 @@
 import hashlib
 import logging
 import math
-import re
 import tempfile
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -64,17 +63,14 @@ class SharePointIngestionJob(IngestionJob):
           videos referenced by a page (page mode) and index the speech (optional, default false)
         - config.max_video_mb: largest video to download, in MiB (optional, default 500)
 
-    Video transcripts: the converter output has its ``[mm:ss-mm:ss]`` segment prefixes removed. A
-    spoken sentence that starts with a timestamp-shaped token cannot be told apart from a prefix
-    in the plain converter output, so a prefix removal can also drop such a token from the speech.
-    A page keeps the checksum of its own text, so a page whose text does not change is not
-    enriched again, even if an embedded video changed. Switching ``transcribe_videos`` changes the
+    Video transcripts keep the ``[mm:ss-mm:ss]`` time prefix of each segment, as in the
+    Directory connector. A page keeps the checksum of its own text, so a page whose text does not
+    change is not enriched again, even if an embedded video changed. Switching ``transcribe_videos`` changes the
     checksum of every page, so each page is ingested once more.
     """
 
     DEFAULT_MAX_VIDEO_MB = 500
-    PAGE_VIDEOS_CHECKSUM_SUFFIX = "\0transcribe_videos"
-    _SEGMENT_PREFIX = re.compile(r"^\[(?:\d+:)?\d{2}:\d{2}-(?:\d+:)?\d{2}:\d{2}\] ?")
+    PAGE_VIDEOS_CHECKSUM_PREFIX = "videos:"
 
     @property
     def source_type(self) -> str:
@@ -330,35 +326,30 @@ class SharePointIngestionJob(IngestionJob):
 
         DRIVE items use the Graph etag, so an unchanged file is not downloaded or converted.
         PAGE items return None (the pipeline then hashes the content) unless video transcription
-        is on. Then the checksum is the MD5 of the page's own text and ``PAGE_VIDEOS_CHECKSUM_SUFFIX``,
-        taken before transcripts are appended, so an unchanged page does no video work. The suffix
-        changes the checksum of every page when ``transcribe_videos`` is switched, so the next run
-        ingests each page again.
+        is on. Then the checksum is ``PAGE_VIDEOS_CHECKSUM_PREFIX`` followed by the MD5 of the page's
+        own text, taken before transcripts are appended, so an unchanged page does no video work.
+        The prefix changes the checksum of every page when ``transcribe_videos`` is switched, so
+        the next run ingests each page again.
         """
         if self.sharepoint_type == SharePointType.DRIVE:
             etag = item.source_ref.get("etag")
             return str(etag) if etag is not None else None
         if self.transcribe_videos:
-            text = (item.source_ref.text or "") + self.PAGE_VIDEOS_CHECKSUM_SUFFIX
-            return hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()
+            digest = hashlib.md5((item.source_ref.text or "").encode("utf-8"), usedforsecurity=False).hexdigest()
+            return f"{self.PAGE_VIDEOS_CHECKSUM_PREFIX}{digest}"
         return None
 
     @classmethod
     def _is_video_path(cls, path: str) -> bool:
         return Path(path).suffix.lower() in cls.VIDEO_EXTENSIONS
 
-    @classmethod
-    def _strip_segment_prefixes(cls, transcript: str) -> str:
-        """Remove the one converter-generated time prefix at the start of each transcript segment."""
-        return "\n\n".join(cls._SEGMENT_PREFIX.sub("", segment, count=1) for segment in transcript.split("\n\n"))
-
     def _transcribe_video(self, content: bytes, suffix: str) -> str:
-        """Convert video bytes to a transcript without time prefixes. The temporary files are always removed."""
+        """Convert video bytes to a transcript. The temporary files are always removed."""
         with tempfile.TemporaryDirectory(prefix="sharepoint_video_") as tmp_dir:
             video_path = Path(tmp_dir) / f"video{suffix}"
             video_path.write_bytes(content)
             transcript = self.convert_video_to_markdown(video_path)
-        return self._strip_segment_prefixes(transcript).strip()
+        return transcript.strip()
 
     def _get_drive_video_content(self, item: IngestionItem) -> IngestionItemResult:
         """Download and transcribe one video file.

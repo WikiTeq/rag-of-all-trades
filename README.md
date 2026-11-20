@@ -1155,8 +1155,6 @@ SharePoint connector:
   A failed video is tried again only after the page text changes. The exception is a page that has no text and whose
   videos all fail: the page has no content, so it is tried again on the next run.
 - A video without speech adds no section to a page. In file mode it is recorded once with zero chunks.
-- The connector removes the `[mm:ss-mm:ss]` prefixes. A spoken sentence that begins with a token that looks like
-  such a prefix is removed too.
 - Turning `transcribe_videos` on or off changes the checksum of every page, so the next run ingests each page once
   more. After you turn it on, the pages get their video transcripts. After you turn it off, the pages lose them.
 - Page mode needs read access (`Sites.Read.All` or `Files.Read.All`) to the files that pages reference. A video in a
