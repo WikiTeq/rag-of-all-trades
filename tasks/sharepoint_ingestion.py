@@ -308,7 +308,7 @@ class SharePointIngestionJob(IngestionJob):
                 last_modified = parsed.astimezone(UTC)
             yield IngestionItem(id=item_id, source_ref=doc, last_modified=last_modified)
 
-    def get_raw_content(self, item: IngestionItem) -> str | IngestionItemResult:
+    def get_raw_content(self, item: IngestionItem) -> IngestionItemResult:
         """Return document text; for file mode, downloads one file at a time."""
         if self.sharepoint_type == SharePointType.DRIVE:
             if self.transcribe_videos and self._is_video_path(item.source_ref["file_path"]):
@@ -316,10 +316,17 @@ class SharePointIngestionJob(IngestionJob):
             docs = self._reader.load_resource(item.source_ref["file_path"])
             # The reader returns one document per sheet for Excel workbooks.
             pieces = ((doc.text or "").strip() for doc in docs)
-            return "\n\n".join(piece for piece in pieces if piece)
+            return self._text_result("\n\n".join(piece for piece in pieces if piece))
         if self.transcribe_videos:
             return self._append_page_video_transcripts(item.source_ref)
-        return item.source_ref.text or ""
+        return self._text_result(item.source_ref.text or "")
+
+    @staticmethod
+    def _text_result(text: str) -> IngestionItemResult:
+        """Wrap extracted text. Empty text is a FAIL, so the item is tried again on the next run."""
+        if text.strip():
+            return IngestionItemResult(IngestionItemStatus.SUCCESS, text)
+        return IngestionItemResult(IngestionItemStatus.FAIL, errors=("empty content",))
 
     def get_item_checksum(self, item: IngestionItem) -> str | None:
         """Return the checksum that lets the pipeline skip unchanged items before any download.
@@ -377,7 +384,7 @@ class SharePointIngestionJob(IngestionJob):
         # A video without speech is a successful, empty result, as in the Directory connector.
         return IngestionItemResult(IngestionItemStatus.SUCCESS, transcript)
 
-    def _append_page_video_transcripts(self, doc: Document) -> str | IngestionItemResult:
+    def _append_page_video_transcripts(self, doc: Document) -> IngestionItemResult:
         """Return the page text followed by the transcript of each SharePoint-hosted video on the page.
 
         Any failure while finding or transcribing videos leaves the page text, and the transcripts
@@ -399,8 +406,8 @@ class SharePointIngestionJob(IngestionJob):
         if not sections:
             if not text.strip() and succeeded and not failed:
                 return IngestionItemResult(IngestionItemStatus.SUCCESS, "")
-            return text
-        return "\n\n".join(part for part in (text.rstrip(), *sections) if part)
+            return self._text_result(text)
+        return self._text_result("\n\n".join(part for part in (text.rstrip(), *sections) if part))
 
     def _collect_page_video_sections(self, doc: Document, sections: list[str]) -> tuple[int, int]:
         """Append the section of each page video to ``sections``. Return how many videos succeeded and failed."""

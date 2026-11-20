@@ -387,9 +387,9 @@ class TestSharePointIngestionGetRawContent(unittest.TestCase):
             result = job.get_raw_content(item)
 
         MockReader.return_value.load_resource.assert_called_once_with("MySite/Docs/report.pdf")
-        self.assertEqual(result, "File content")
+        self.assertEqual(result, _success("File content"))
 
-    def test_drive_returns_empty_when_load_resource_empty(self):
+    def test_drive_fails_when_load_resource_empty(self):
         info = _make_info()
         item = IngestionItem(id="sharepoint:sp1:MySite/Docs/report.pdf", source_ref=info)
         with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
@@ -398,9 +398,9 @@ class TestSharePointIngestionGetRawContent(unittest.TestCase):
             job._reader = MockReader.return_value
             result = job.get_raw_content(item)
 
-        self.assertEqual(result, "")
+        self.assertEqual(result, _EMPTY_CONTENT)
 
-    def test_drive_returns_empty_string_for_none_text(self):
+    def test_drive_fails_for_none_text(self):
         doc = Document(text=None, metadata={})
         info = _make_info()
         item = IngestionItem(id="sharepoint:sp1:MySite/Docs/report.pdf", source_ref=info)
@@ -410,7 +410,7 @@ class TestSharePointIngestionGetRawContent(unittest.TestCase):
             job._reader = MockReader.return_value
             result = job.get_raw_content(item)
 
-        self.assertEqual(result, "")
+        self.assertEqual(result, _EMPTY_CONTENT)
 
     def _drive_content(self, docs):
         item = IngestionItem(id="sharepoint:sp1:MySite/Docs/book.xlsx", source_ref=_make_info("MySite/Docs/book.xlsx"))
@@ -422,7 +422,7 @@ class TestSharePointIngestionGetRawContent(unittest.TestCase):
 
     def test_drive_joins_all_documents_in_order(self):
         docs = [Document(text="Sheet one", metadata={}), Document(text="Sheet two", metadata={})]
-        self.assertEqual(self._drive_content(docs), "Sheet one\n\nSheet two")
+        self.assertEqual(self._drive_content(docs), _success("Sheet one\n\nSheet two"))
 
     def test_drive_skips_empty_documents(self):
         docs = [
@@ -431,14 +431,16 @@ class TestSharePointIngestionGetRawContent(unittest.TestCase):
             Document(text=None, metadata={}),
             Document(text="Sheet three", metadata={}),
         ]
-        self.assertEqual(self._drive_content(docs), "Sheet one\n\nSheet three")
+        self.assertEqual(self._drive_content(docs), _success("Sheet one\n\nSheet three"))
 
-    def test_drive_returns_empty_when_all_documents_empty(self):
+    def test_drive_fails_when_all_documents_empty(self):
         docs = [Document(text="", metadata={}), Document(text=" ", metadata={})]
-        self.assertEqual(self._drive_content(docs), "")
+        self.assertEqual(self._drive_content(docs), _EMPTY_CONTENT)
 
     def test_drive_strips_whitespace_around_single_document(self):
-        self.assertEqual(self._drive_content([Document(text="\n File content \n", metadata={})]), "File content")
+        self.assertEqual(
+            self._drive_content([Document(text="\n File content \n", metadata={})]), _success("File content")
+        )
 
     def test_drive_keeps_every_sheet_of_real_xlsx(self):
         workbook = Workbook()
@@ -453,7 +455,7 @@ class TestSharePointIngestionGetRawContent(unittest.TestCase):
             workbook.save(path)
             docs = SimpleDirectoryReader(input_files=[str(path)]).load_data()
 
-        result = self._drive_content(docs)
+        result = self._drive_content(docs).result
 
         self.assertIn("alpha_marker", result)
         self.assertIn("beta_marker", result)
@@ -462,13 +464,13 @@ class TestSharePointIngestionGetRawContent(unittest.TestCase):
         doc = Document(text="Page content", metadata={})
         item = IngestionItem(id="sharepoint:sp1:page", source_ref=doc)
         job = _make_job(sharepoint_type="page")
-        self.assertEqual(job.get_raw_content(item), "Page content")
+        self.assertEqual(job.get_raw_content(item), _success("Page content"))
 
-    def test_page_returns_empty_string_for_none_text(self):
+    def test_page_fails_for_none_text(self):
         doc = Document(text=None, metadata={})
         item = IngestionItem(id="sharepoint:sp1:page", source_ref=doc)
         job = _make_job(sharepoint_type="page")
-        self.assertEqual(job.get_raw_content(item), "")
+        self.assertEqual(job.get_raw_content(item), _EMPTY_CONTENT)
 
 
 class TestSharePointIngestionGetItemName(unittest.TestCase):
@@ -642,6 +644,13 @@ class TestSharePointVideoConfig(unittest.TestCase):
         MockGraph.assert_not_called()
 
 
+_EMPTY_CONTENT = IngestionItemResult(IngestionItemStatus.FAIL, errors=("empty content",))
+
+
+def _success(text):
+    return IngestionItemResult(IngestionItemStatus.SUCCESS, text)
+
+
 def _page_checksum(text):
     digest = hashlib.md5(text.encode("utf-8"), usedforsecurity=False).hexdigest()
     return f"{SharePointIngestionJob.PAGE_VIDEOS_CHECKSUM_PREFIX}{digest}"
@@ -673,14 +682,14 @@ class TestSharePointFileVideo(unittest.TestCase):
     def test_non_video_file_uses_load_resource(self):
         job = _video_job()
         job._reader.load_resource.return_value = [_make_doc(text="PDF text")]
-        self.assertEqual(job.get_raw_content(self._item("MySite/Documents/report.pdf")), "PDF text")
+        self.assertEqual(job.get_raw_content(self._item("MySite/Documents/report.pdf")), _success("PDF text"))
         job._reader.read_file_content.assert_not_called()
 
     def test_disabled_video_keeps_the_old_path(self):
         job = _make_job()
         job._reader = MagicMock()
         job._reader.load_resource.return_value = [_make_doc(text="")]
-        self.assertEqual(job.get_raw_content(self._item()), "")
+        self.assertEqual(job.get_raw_content(self._item()), _EMPTY_CONTENT)
         job._reader.read_file_content.assert_not_called()
 
     def test_declared_oversize_is_not_downloaded(self):
@@ -892,7 +901,7 @@ class TestSharePointPageVideos(unittest.TestCase):
             {urls[0]: _drive_item("a.mp4", item_id="i1"), urls[1]: _drive_item("b.webm", item_id="i2")},
         )
         with patch.object(SharePointIngestionJob, "convert_video_to_markdown", side_effect=self._convert):
-            text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+            text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc())).result
         self.assertTrue(text.startswith("Page text.\n\n## Video transcript: a.mp4\n\nhttps://contoso.sharepoint.com/"))
         self.assertLess(text.index("a.mp4"), text.index("b.webm"))
         self.assertIn("[00:00-00:05] Speech of i1.", text)
@@ -917,7 +926,7 @@ class TestSharePointPageVideos(unittest.TestCase):
             _file_part("https://other.sharepoint.com/sites/s/a.mp4"),
         )
         job = self._job(html_page, {})
-        text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+        text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc())).result
         self.assertEqual(text, "Page text.")
         job._graph.get_item_by_web_url.assert_not_called()
         job._graph.download_content.assert_not_called()
@@ -937,7 +946,7 @@ class TestSharePointPageVideos(unittest.TestCase):
         ]
         with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value="Second speech."):
             with self.assertLogs("tasks.sharepoint_ingestion", level="WARNING") as logs:
-                text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+                text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc())).result
         self.assertIn("Page text.", text)
         self.assertIn("Second speech.", text)
         self.assertNotIn("a.mp4\n\n", text)
@@ -950,7 +959,7 @@ class TestSharePointPageVideos(unittest.TestCase):
         ]
         job = self._job(_canvas_html(_file_part(urls[0]), _file_part(urls[1])), {urls[1]: _drive_item("b.mp4")})
         with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value="Speech."):
-            text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+            text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc())).result
         self.assertIn("## Video transcript: b.mp4", text)
 
     def test_oversize_and_non_video_items_are_skipped_without_download(self):
@@ -963,27 +972,27 @@ class TestSharePointPageVideos(unittest.TestCase):
             {urls[0]: _drive_item("big.mp4", size=3 * 1024 * 1024), urls[1]: _drive_item("notes.docx", item_id="i2")},
             max_video_mb=1,
         )
-        text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+        text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc())).result
         self.assertEqual(text, "Page text.")
         job._graph.download_content.assert_not_called()
 
     def test_page_html_fetch_failure_keeps_the_page_text(self):
         job = self._job("", {})
         job._reader.get_page_text.side_effect = RuntimeError("Graph down")
-        text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+        text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc())).result
         self.assertEqual(text, "Page text.")
 
     def test_page_without_ids_keeps_the_page_text(self):
         job = self._job("", {})
         doc = Document(text="Page text.", metadata={}, id_="")
-        self.assertEqual(job.get_raw_content(IngestionItem(id="p", source_ref=doc)), "Page text.")
+        self.assertEqual(job.get_raw_content(IngestionItem(id="p", source_ref=doc)), _success("Page text."))
         job._reader.get_page_text.assert_not_called()
 
     def test_silent_video_adds_nothing(self):
         url = "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4"
         job = self._job(_canvas_html(_file_part(url)), {url: _drive_item("a.mp4")})
         with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value=""):
-            text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc()))
+            text = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc())).result
         self.assertEqual(text, "Page text.")
 
     def test_text_less_page_with_only_a_silent_video_is_an_explicit_empty_success(self):
@@ -993,14 +1002,18 @@ class TestSharePointPageVideos(unittest.TestCase):
             result = job.get_raw_content(IngestionItem(id="p", source_ref=self._doc(text="")))
         self.assertEqual(result, IngestionItemResult(IngestionItemStatus.SUCCESS, ""))
 
-    def test_text_less_page_stays_a_retryable_empty_string_when_a_video_failed_or_none_found(self):
+    def test_text_less_page_stays_a_retryable_failure_when_a_video_failed_or_none_found(self):
         url = "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4"
         failing = self._job(_canvas_html(_file_part(url)), {url: _drive_item("a.mp4")})
         failing._graph.download_content.side_effect = RuntimeError("boom")
         no_videos = self._job("", {})
         with patch.object(SharePointIngestionJob, "convert_video_to_markdown", return_value=""):
-            self.assertEqual(failing.get_raw_content(IngestionItem(id="p", source_ref=self._doc(text=""))), "")
-            self.assertEqual(no_videos.get_raw_content(IngestionItem(id="p", source_ref=self._doc(text=""))), "")
+            self.assertEqual(
+                failing.get_raw_content(IngestionItem(id="p", source_ref=self._doc(text=""))), _EMPTY_CONTENT
+            )
+            self.assertEqual(
+                no_videos.get_raw_content(IngestionItem(id="p", source_ref=self._doc(text=""))), _EMPTY_CONTENT
+            )
 
     def test_unchanged_page_does_no_video_work(self):
         url = "https://contoso.sharepoint.com/sites/s/Shared%20Documents/a.mp4"
