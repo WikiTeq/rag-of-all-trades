@@ -329,7 +329,8 @@ class IngestionJob(ABC):
                     acl_list = self._sanitize_acl_list(raw_acl, item.id)
                     acl_failed = False
                 except Exception:
-                    logger.exception(f"ACL resolution failed for item {item.id}; keeping last-known ACL")
+                    fallback = "keeping stored ACL" if latest else "no stored ACL, applying empty ACL"
+                    logger.exception(f"ACL resolution failed for item {item.id}; {fallback}")
                     acl_list = list(stored_acl)
                     acl_failed = True
 

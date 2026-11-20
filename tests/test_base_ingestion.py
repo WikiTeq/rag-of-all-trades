@@ -531,6 +531,31 @@ class TestIngestionJobACL:
         assert kwargs["metadata"]["acl"] == []
 
     @patch("tasks.base.Document")
+    def test_acl_failure_log_says_empty_acl_applied_on_first_ingest(self, mock_document, base_config, caplog):
+        job, item = self._acl_job(base_config, acl_side_effect=RuntimeError("boom"))
+
+        with caplog.at_level("ERROR"):
+            job.process_item(item)
+
+        assert "no stored ACL, applying empty ACL" in caplog.text
+        assert "keeping stored ACL" not in caplog.text
+
+    @patch("tasks.base.Document")
+    def test_acl_failure_log_says_stored_acl_kept_for_existing_record(self, mock_document, base_config, caplog):
+        job, item = self._acl_job(base_config, acl_side_effect=RuntimeError("boom"))
+        job.metadata_tracker.get_latest_record.return_value = Mock(
+            checksum="old-checksum",
+            version=1,
+            metadata_content={"acl": ["alice@example.com"]},
+        )
+
+        with caplog.at_level("ERROR"):
+            job.process_item(item)
+
+        assert "keeping stored ACL" in caplog.text
+        assert "applying empty ACL" not in caplog.text
+
+    @patch("tasks.base.Document")
     def test_get_acl_list_failure_does_not_crash_process_item(self, mock_document, base_config):
         job, item = self._acl_job(base_config, acl_side_effect=RuntimeError("boom"))
 
@@ -613,6 +638,26 @@ class TestIngestionJobACL:
         assert result == 0
         job.metadata_tracker.delete_previous_embeddings.assert_not_called()
         job.vector_manager.insert_documents.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("acl_return", "expected_result"),
+        [([], 0), (["bob@example.com"], 1)],
+    )
+    @patch("tasks.base.Document")
+    def test_record_without_stored_acl_reingested_only_when_resolved_acl_not_empty(
+        self, mock_document, acl_return, expected_result, base_config
+    ):
+        content = "same content"
+        checksum = hashlib.md5(content.encode("utf-8"), usedforsecurity=False).hexdigest()
+        item = IngestionItem(id="item-1", source_ref="src")
+        job = DummyIngestionJob(base_config, items=[item], content_by_id={"item-1": content})
+        job.acl_enabled = True
+        job.metadata_tracker = Mock()
+        job.vector_manager = Mock()
+        job.metadata_tracker.get_latest_record.return_value = Mock(checksum=checksum, version=1, metadata_content={})
+        job.get_acl_list = Mock(return_value=acl_return)
+
+        assert job.process_item(item) == expected_result
 
     @patch("tasks.base.Document")
     def test_get_extra_metadata_acl_key_is_filtered_out(self, mock_document, base_config):
