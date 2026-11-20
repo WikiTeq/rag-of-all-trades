@@ -450,7 +450,11 @@ PIPEDRIVE1_SCHEDULES=3600
 
 The SharePoint connector ingests files from SharePoint document libraries or site pages using the
 LlamaIndex SharePoint reader. Authentication is via Microsoft Entra ID (client credentials).
-Content is stored as the plain text the reader extracts (metadata `format: text`); it is not converted to Markdown.
+File content is stored as the plain text the reader extracts (metadata `format: text`); it is not converted to Markdown.
+Page content is converted from the page HTML to Markdown (metadata `format: markdown`). The reader's own page text
+contains raw web-part JSON, so the connector fetches the HTML of each page (one extra Graph request per page).
+Content that exists only in web-part attributes, such as a link or title of a web part without visible text, is not
+extracted. If the HTML cannot be fetched or converted, the connector skips the page and keeps its previous embeddings.
 
 Supports two modes:
 - **File mode** (`sharepoint_type: file`, default): load files from a drive/folder

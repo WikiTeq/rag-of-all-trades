@@ -10,6 +10,7 @@ from llama_index.readers.microsoft_sharepoint import SharePointType
 from openpyxl import Workbook
 
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.helper_classes.ingestion_result import IngestionItemStatus
 from tasks.sharepoint_ingestion import SharePointIngestionJob
 
 
@@ -94,9 +95,13 @@ class TestSharePointIngestionInit(unittest.TestCase):
         job = _make_job()
         self.assertEqual(job.source_type, "sharepoint")
 
-    def test_content_format_is_text(self):
+    def test_content_format_is_text_for_drive(self):
         job = _make_job()
         self.assertEqual(job.content_format, "text")
+
+    def test_content_format_is_markdown_for_page(self):
+        job = _make_job(sharepoint_type="page")
+        self.assertEqual(job.content_format, "markdown")
 
     def test_optional_fields_none_when_empty(self):
         job = _make_job()
@@ -332,15 +337,14 @@ class TestSharePointIngestionListItemsPage(unittest.TestCase):
         call_kwargs = MockReader.return_value.load_data.call_args[1]
         self.assertNotIn("recursive", call_kwargs)
 
-    def test_site_id_passed_to_load_data(self):
-        with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
+    def test_site_id_only_config_calls_load_data_without_unsupported_keyword(self):
+        with patch("tasks.sharepoint_ingestion.SharePointReader", autospec=True) as MockReader:
             MockReader.return_value.load_data.return_value = []
             job = _make_job(sharepoint_type="page", sharepoint_site_name="", sharepoint_site_id="abc-123")
             list(job.list_items())
 
-        call_kwargs = MockReader.return_value.load_data.call_args[1]
-        self.assertEqual(call_kwargs["sharepoint_site_id"], "abc-123")
-        self.assertNotIn("sharepoint_site_name", call_kwargs)
+        self.assertEqual(MockReader.call_args[1]["sharepoint_site_id"], "abc-123")
+        MockReader.return_value.load_data.assert_called_once_with()
 
     def test_last_modified_from_camel_case_key(self):
         doc = Document(
@@ -452,17 +456,94 @@ class TestSharePointIngestionGetRawContent(unittest.TestCase):
         self.assertIn("alpha_marker", result)
         self.assertIn("beta_marker", result)
 
-    def test_page_returns_document_text(self):
-        doc = Document(text="Page content", metadata={})
-        item = IngestionItem(id="sharepoint:sp1:page", source_ref=doc)
-        job = _make_job(sharepoint_type="page")
-        self.assertEqual(job.get_raw_content(item), "Page content")
+    @staticmethod
+    def _page_item(site_id="site-1", page_id="list-1:42", text="reader text with JSON"):
+        metadata = {}
+        if site_id is not None:
+            metadata["site_id"] = site_id
+        if page_id is not None:
+            metadata["page_id"] = page_id
+        doc_kwargs = {"id_": page_id} if page_id is not None else {}
+        return IngestionItem(id="sharepoint:sp1:page", source_ref=Document(text=text, metadata=metadata, **doc_kwargs))
 
-    def test_page_returns_empty_string_for_none_text(self):
-        doc = Document(text=None, metadata={})
-        item = IngestionItem(id="sharepoint:sp1:page", source_ref=doc)
-        job = _make_job(sharepoint_type="page")
-        self.assertEqual(job.get_raw_content(item), "")
+    def _page_content(self, item, page_text=None, side_effect=None):
+        with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
+            job = _make_job(sharepoint_type="page")
+            job._reader = MockReader.return_value
+            if side_effect is not None:
+                job._reader.get_page_text.side_effect = side_effect
+            else:
+                job._reader.get_page_text.return_value = page_text
+            return job, job.get_raw_content(item)
+
+    def test_page_fetches_html_with_ids_from_metadata(self):
+        job, _ = self._page_content(self._page_item(), {"rawHtml": "<p>Hi</p>"})
+        job._reader.get_page_text.assert_called_once_with(site_id="site-1", list_id="list-1", page_id="list-1:42")
+
+    def test_page_converts_html_to_markdown(self):
+        html = "<h2>Heading</h2><p>Real text</p><table><tr><th>A</th></tr><tr><td>1</td></tr></table>"
+        _, result = self._page_content(self._page_item(), {"rawHtml": html})
+        self.assertEqual(result.status, IngestionItemStatus.SUCCESS)
+        self.assertIn("## Heading", result.result)
+        self.assertIn("Real text", result.result)
+        self.assertIn("| A |", result.result)
+
+    def test_page_drops_escaped_web_part_json(self):
+        html = (
+            '<div data-sp-webpartdata="{&quot;titleHTML&quot;:&quot;&lt;b&gt;Learn more&lt;/b&gt;'
+            '&quot;,&quot;image&quot;:{&quot;siteId&quot;:&quot;x&quot;}}"><p>Real text here</p></div>'
+        )
+        _, result = self._page_content(self._page_item(), {"rawHtml": html})
+        self.assertIn("Real text here", result.result)
+        self.assertNotIn("siteId", result.result)
+        self.assertNotIn("titleHTML", result.result)
+
+    def test_page_does_not_use_reader_text(self):
+        _, result = self._page_content(self._page_item(text="reader text with JSON"), {"rawHtml": "<p>Clean</p>"})
+        self.assertNotIn("reader text with JSON", result.result)
+
+    def test_page_fetch_error_returns_fail(self):
+        _, result = self._page_content(self._page_item(), side_effect=RuntimeError("boom"))
+        self.assertEqual(result.status, IngestionItemStatus.FAIL)
+        self.assertIn("boom", result.errors[0])
+
+    def test_page_blank_html_returns_empty_success(self):
+        for raw_html in (None, "", "   "):
+            with self.subTest(raw_html=raw_html):
+                _, result = self._page_content(self._page_item(), {"rawHtml": raw_html})
+                self.assertEqual(result.status, IngestionItemStatus.SUCCESS)
+                self.assertEqual(result.result, "")
+
+    def test_page_empty_conversion_returns_fail(self):
+        html = '<div data-sp-webpartdata="{&quot;title&quot;:&quot;only attribute&quot;}"></div>'
+        _, result = self._page_content(self._page_item(), {"rawHtml": html})
+        self.assertEqual(result.status, IngestionItemStatus.FAIL)
+
+    def test_page_conversion_exception_returns_fail(self):
+        with patch.object(SharePointIngestionJob, "_get_markitdown") as get_markitdown:
+            get_markitdown.return_value.convert_stream.side_effect = ValueError("bad html")
+            _, result = self._page_content(self._page_item(), {"rawHtml": "<p>Hi</p>"})
+        self.assertEqual(result.status, IngestionItemStatus.FAIL)
+
+    def test_page_missing_or_malformed_ids_return_fail_without_request(self):
+        cases = [
+            self._page_item(site_id=None),
+            self._page_item(page_id=None),
+            self._page_item(page_id="no-colon"),
+        ]
+        for item in cases:
+            with self.subTest(metadata=item.source_ref.metadata):
+                job, result = self._page_content(item, {"rawHtml": "<p>Hi</p>"})
+                self.assertEqual(result.status, IngestionItemStatus.FAIL)
+                job._reader.get_page_text.assert_not_called()
+
+    def test_drive_makes_no_page_request(self):
+        with patch("tasks.sharepoint_ingestion.SharePointReader") as MockReader:
+            MockReader.return_value.load_resource.return_value = [_make_doc(text="x")]
+            job = _make_job()
+            job._reader = MockReader.return_value
+            job.get_raw_content(IngestionItem(id="i", source_ref={"file_path": "a.pdf"}))
+        MockReader.return_value.get_page_text.assert_not_called()
 
 
 class TestSharePointIngestionGetItemName(unittest.TestCase):
