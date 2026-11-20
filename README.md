@@ -703,11 +703,25 @@ ACL rules:
   document's ACL falls back to `[acl_owner]` instead of staying empty (this
   models a connector's acting user owning a document that would otherwise be
   inaccessible even to them, e.g. a personal Google Drive file). This
-  fallback does not apply if ACL resolution fails — a failure is treated as
-  a genuinely empty (private) ACL.
+  fallback does not apply if ACL resolution fails.
+- If ACL resolution fails (the hook raises, returns something other than a
+  list, or returns `*` together with emails), the ingestion run logs an error
+  and keeps the ACL already stored for the document. On the first ingest there
+  is nothing stored, so the ACL is empty (private).
 - When a document's ACL changes on the remote source, the next ingestion run
   re-ingests the document (even if its content is unchanged) so the stored
   `acl` stays current.
+
+Enabling or disabling `ENABLE_ACL` on an existing installation:
+
+- Enabling: documents are not all re-ingested at once. A document is
+  re-ingested on the next run when its resolved ACL differs from the stored
+  one, which includes any document that now resolves to a non-empty ACL (or to
+  `[acl_owner]`) but has no `acl` stored yet. A document that resolves to an
+  empty ACL and has no stored `acl` stays as it is; it is private either way.
+- Disabling: new and updated documents are stored without `acl`. Values
+  already stored are not removed until the document is re-ingested because its
+  content changed.
 
 ```yaml
 sources: # holds the list of sources to ingest from (Connectors)
