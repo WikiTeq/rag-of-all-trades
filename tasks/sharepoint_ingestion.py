@@ -4,10 +4,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from llama_index.core.schema import Document
 from llama_index.readers.microsoft_sharepoint import SharePointReader, SharePointType
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.helper_classes.ingestion_result import IngestionItemResult, IngestionItemStatus
 from utils.parse import parse_bool, parse_timestamp
 from utils.text import slugify
 
@@ -51,7 +53,7 @@ class SharePointIngestionJob(IngestionJob):
 
     @property
     def content_format(self) -> str:
-        return "text"
+        return "markdown" if self.sharepoint_type == SharePointType.PAGE else "text"
 
     def __init__(self, config: dict):
         super().__init__(config)
@@ -187,14 +189,11 @@ class SharePointIngestionJob(IngestionJob):
             yield IngestionItem(id=item_id, source_ref=info, last_modified=last_modified)
 
     def _list_page_items(self) -> Iterator[IngestionItem]:
-        load_kwargs: dict[str, Any] = {
-            k: v
-            for k, v in {
-                "sharepoint_site_name": self.sharepoint_site_name,
-                "sharepoint_site_id": self.sharepoint_site_id,
-            }.items()
-            if v is not None
-        }
+        # SharePointReader.load_data() has no sharepoint_site_id parameter. The reader
+        # gets the site ID in its constructor.
+        load_kwargs: dict[str, Any] = {}
+        if self.sharepoint_site_name:
+            load_kwargs["sharepoint_site_name"] = self.sharepoint_site_name
 
         docs = self._reader.load_data(**load_kwargs)
         logger.info(f"[{self.source_name}] Loaded {len(docs)} page(s) from SharePoint")
@@ -229,14 +228,44 @@ class SharePointIngestionJob(IngestionJob):
                 last_modified = parsed.astimezone(UTC)
             yield IngestionItem(id=item_id, source_ref=doc, last_modified=last_modified)
 
-    def get_raw_content(self, item: IngestionItem) -> str:
-        """Return document text; for file mode, downloads one file at a time."""
+    def get_raw_content(self, item: IngestionItem) -> str | IngestionItemResult:
+        """Return document text; for file mode, downloads one file at a time.
+
+        For page mode, returns Markdown converted from the page HTML. The reader's own
+        text contains web-part JSON, because it removes HTML tags after it unescapes the
+        HTML. A failed fetch or conversion returns a FAIL result, so the pipeline keeps
+        the embeddings of the previous successful run.
+        """
         if self.sharepoint_type == SharePointType.DRIVE:
             docs = self._reader.load_resource(item.source_ref["file_path"])
             # The reader returns one document per sheet for Excel workbooks.
             pieces = ((doc.text or "").strip() for doc in docs)
             return "\n\n".join(piece for piece in pieces if piece)
-        return item.source_ref.text or ""
+        return self._get_page_markdown(item.source_ref)
+
+    def _get_page_markdown(self, doc: Document) -> IngestionItemResult:
+        site_id = doc.metadata.get("site_id")
+        page_id = doc.metadata.get("page_id") or doc.id_
+        if not site_id or not page_id or ":" not in page_id:
+            return IngestionItemResult(
+                IngestionItemStatus.FAIL,
+                errors=(f"missing site_id or listId:itemId page_id (site_id={site_id!r}, page_id={page_id!r})",),
+            )
+        list_id = page_id.split(":", 1)[0]
+        try:
+            raw_html = self._reader.get_page_text(site_id=site_id, list_id=list_id, page_id=page_id).get("rawHtml")
+        except Exception as exc:
+            logger.exception("[%s] Failed to fetch HTML of page %r", self.source_name, page_id)
+            return IngestionItemResult(IngestionItemStatus.FAIL, errors=(f"page fetch failed: {exc}",))
+        if not raw_html or not raw_html.strip():
+            return IngestionItemResult(IngestionItemStatus.SUCCESS, "")
+        # Bytes input: convert_to_markdown() returns "" and not the HTML when conversion fails.
+        markdown = self.convert_to_markdown(raw_html.encode("utf-8"), file_extension=".html")
+        if not markdown.strip():
+            return IngestionItemResult(
+                IngestionItemStatus.FAIL, errors=(f"HTML to Markdown conversion gave no text for page {page_id!r}",)
+            )
+        return IngestionItemResult(IngestionItemStatus.SUCCESS, markdown)
 
     def get_item_checksum(self, item: IngestionItem) -> str | None:
         """Return Graph etag as checksum for DRIVE items to skip unchanged files.
