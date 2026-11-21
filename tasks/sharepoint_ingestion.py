@@ -1,17 +1,33 @@
+import hashlib
 import logging
+import math
+import tempfile
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from llama_index.core.schema import Document
 from llama_index.readers.microsoft_sharepoint import SharePointReader, SharePointType
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
+from tasks.helper_classes.ingestion_result import IngestionItemResult, IngestionItemStatus
+from tasks.helper_classes.sharepoint_video_refs import SharePointVideoReferences
+from utils.graph_client import GraphClient
+from utils.http import UrlRedactingFilter
 from utils.parse import parse_bool, parse_timestamp
 from utils.text import slugify
 
 logger = logging.getLogger(__name__)
+
+
+class _VideoSkipped(Exception):
+    """A page video was skipped. ``reason`` is safe to log: it never contains a URL."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 class SharePointIngestionJob(IngestionJob):
@@ -43,7 +59,18 @@ class SharePointIngestionJob(IngestionJob):
         - config.recursive: traverse subfolders recursively (optional, default true).
           Ignored when sharepoint_folder_path is unset: the upstream reader always
           recurses from the drive root (run-llama/llama_index#22320).
+        - config.transcribe_videos: transcribe video files (file mode) and the SharePoint-hosted
+          videos referenced by a page (page mode) and index the speech (optional, default false)
+        - config.max_video_mb: largest video to download, in MiB (optional, default 500)
+
+    Video transcripts keep the ``[mm:ss-mm:ss]`` time prefix of each segment, as in the
+    Directory connector. A page keeps the checksum of its own text, so a page whose text does not
+    change is not enriched again, even if an embedded video changed. Switching ``transcribe_videos`` changes the
+    checksum of every page, so each page is ingested once more.
     """
+
+    DEFAULT_MAX_VIDEO_MB = 500
+    PAGE_VIDEOS_CHECKSUM_PREFIX = "videos:"
 
     @property
     def source_type(self) -> str:
@@ -101,10 +128,51 @@ class SharePointIngestionJob(IngestionJob):
 
         self.recursive = parse_bool(cfg.get("recursive", True), default=True)
 
+        self.transcribe_videos = parse_bool(cfg.get("transcribe_videos"), default=False)
+        if self.transcribe_videos:
+            self.max_video_bytes = self._parse_max_video_bytes(cfg.get("max_video_mb", self.DEFAULT_MAX_VIDEO_MB))
+        else:
+            # A disabled connector never reads the limit, so a bad value must not stop ordinary ingestion.
+            self.max_video_bytes = self._parse_max_video_bytes(self.DEFAULT_MAX_VIDEO_MB)
+        self._graph: GraphClient | None = None
+        if self.transcribe_videos and self.sharepoint_type == SharePointType.PAGE:
+            self._graph = GraphClient(
+                self.client_id,
+                self.client_secret,
+                self.tenant_id,
+                max_file_size_bytes=self.max_video_bytes,
+            )
+        if self.transcribe_videos and self.sharepoint_type == SharePointType.DRIVE:
+            self._redact_reader_logs()
+
         logger.info(
             f"Initialized SharePoint connector: site={self.sharepoint_site_name!r}, "
-            f"type={sharepoint_type_raw!r}, recursive={self.recursive}"
+            f"type={sharepoint_type_raw!r}, recursive={self.recursive}, transcribe_videos={self.transcribe_videos}"
         )
+
+    @staticmethod
+    def _redact_reader_logs() -> None:
+        """Keep signed download URLs out of the reader's own error logs.
+
+        The reader logs the raw exception of a failed download, and a transport error names the
+        signed URL. A filter on the reader's logger is the only place to remove it.
+        """
+        reader_logger = logging.getLogger(SharePointReader.__module__)
+        if not any(isinstance(log_filter, UrlRedactingFilter) for log_filter in reader_logger.filters):
+            reader_logger.addFilter(UrlRedactingFilter())
+
+    @staticmethod
+    def _parse_max_video_bytes(value: Any) -> int:
+        """Convert ``max_video_mb`` (MiB) to bytes. Reject booleans, non-numbers, and non-positive or infinite values."""
+        if isinstance(value, bool):
+            raise ValueError(f"Invalid max_video_mb {value!r}; expected a positive number")
+        try:
+            megabytes = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid max_video_mb {value!r}; expected a positive number") from None
+        if not math.isfinite(megabytes) or megabytes <= 0:
+            raise ValueError(f"Invalid max_video_mb {value!r}; expected a positive number")
+        return int(megabytes * 1024 * 1024)
 
     def list_items(self) -> Iterator[IngestionItem]:
         """Discover SharePoint items and yield one IngestionItem per document/page."""
@@ -129,9 +197,20 @@ class SharePointIngestionJob(IngestionJob):
                     "sharepoint_site_name (optionally alongside sharepoint_site_id).",
                     self.source_name,
                 )
-            yield from self._list_drive_items()
+            try:
+                yield from self._list_drive_items()
+            finally:
+                self._close_graph()
         else:
-            yield from self._list_page_items()
+            try:
+                yield from self._list_page_items()
+            finally:
+                self._close_graph()
+
+    def _close_graph(self) -> None:
+        """Close the Graph HTTP sessions once the run has no more items to process."""
+        if self._graph is not None:
+            self._graph.close()
 
     def _list_drive_items(self) -> Iterator[IngestionItem]:
         list_kwargs: dict[str, Any] = {
@@ -229,27 +308,166 @@ class SharePointIngestionJob(IngestionJob):
                 last_modified = parsed.astimezone(UTC)
             yield IngestionItem(id=item_id, source_ref=doc, last_modified=last_modified)
 
-    def get_raw_content(self, item: IngestionItem) -> str:
+    def get_raw_content(self, item: IngestionItem) -> IngestionItemResult:
         """Return document text; for file mode, downloads one file at a time."""
         if self.sharepoint_type == SharePointType.DRIVE:
+            if self.transcribe_videos and self._is_video_path(item.source_ref["file_path"]):
+                return self._get_drive_video_content(item)
             docs = self._reader.load_resource(item.source_ref["file_path"])
             # The reader returns one document per sheet for Excel workbooks.
             pieces = ((doc.text or "").strip() for doc in docs)
-            return "\n\n".join(piece for piece in pieces if piece)
-        return item.source_ref.text or ""
+            return self._text_result("\n\n".join(piece for piece in pieces if piece))
+        if self.transcribe_videos:
+            return self._append_page_video_transcripts(item.source_ref)
+        return self._text_result(item.source_ref.text or "")
+
+    @staticmethod
+    def _text_result(text: str) -> IngestionItemResult:
+        """Wrap extracted text. Empty text is a FAIL, so the item is tried again on the next run."""
+        if text.strip():
+            return IngestionItemResult(IngestionItemStatus.SUCCESS, text)
+        return IngestionItemResult(IngestionItemStatus.FAIL, errors=("empty content",))
 
     def get_item_checksum(self, item: IngestionItem) -> str | None:
-        """Return Graph etag as checksum for DRIVE items to skip unchanged files.
+        """Return the checksum that lets the pipeline skip unchanged items before any download.
 
-        When the stored checksum matches, the pipeline skips get_raw_content()
-        (and therefore load_resource()), avoiding a redundant file download.
-        Returns None for PAGE items and when etag is unavailable (falls back to
-        content MD5).
+        DRIVE items use the Graph etag, so an unchanged file is not downloaded or converted.
+        PAGE items return None (the pipeline then hashes the content) unless video transcription
+        is on. Then the checksum is ``PAGE_VIDEOS_CHECKSUM_PREFIX`` followed by the MD5 of the page's
+        own text, taken before transcripts are appended, so an unchanged page does no video work.
+        The prefix changes the checksum of every page when ``transcribe_videos`` is switched, so
+        the next run ingests each page again.
         """
         if self.sharepoint_type == SharePointType.DRIVE:
             etag = item.source_ref.get("etag")
             return str(etag) if etag is not None else None
+        if self.transcribe_videos:
+            digest = hashlib.md5((item.source_ref.text or "").encode("utf-8"), usedforsecurity=False).hexdigest()
+            return f"{self.PAGE_VIDEOS_CHECKSUM_PREFIX}{digest}"
         return None
+
+    @classmethod
+    def _is_video_path(cls, path: str) -> bool:
+        return Path(path).suffix.lower() in cls.VIDEO_EXTENSIONS
+
+    def _transcribe_video(self, content: bytes, suffix: str) -> str:
+        """Convert video bytes to a transcript. The temporary files are always removed."""
+        with tempfile.TemporaryDirectory(prefix="sharepoint_video_") as tmp_dir:
+            video_path = Path(tmp_dir) / f"video{suffix}"
+            video_path.write_bytes(content)
+            transcript = self.convert_video_to_markdown(video_path)
+        return transcript.strip()
+
+    def _get_drive_video_content(self, item: IngestionItem) -> IngestionItemResult:
+        """Download and transcribe one video file.
+
+        Every failure returns FAIL, so the item is retried. A video without speech returns an
+        explicit empty SUCCESS, so the pipeline records it once and does not transcribe it again.
+        """
+        info = item.source_ref
+        file_path = info["file_path"]
+        declared_size = info.get("size")
+        if isinstance(declared_size, int) and not isinstance(declared_size, bool):
+            if declared_size > self.max_video_bytes:
+                logger.warning("[%s] Video %s exceeds max_video_mb; skipping", self.source_name, item.id)
+                return IngestionItemResult(IngestionItemStatus.FAIL, errors=("video exceeds max_video_mb",))
+        try:
+            content = self._reader.read_file_content(Path(file_path))
+            if len(content) > self.max_video_bytes:
+                logger.warning("[%s] Video %s exceeds max_video_mb; skipping", self.source_name, item.id)
+                return IngestionItemResult(IngestionItemStatus.FAIL, errors=("video exceeds max_video_mb",))
+            transcript = self._transcribe_video(content, Path(file_path).suffix.lower())
+        except Exception as exc:
+            reason = f"video transcription failed ({type(exc).__name__})"
+            logger.warning("[%s] %s for %s", self.source_name, reason, item.id)
+            return IngestionItemResult(IngestionItemStatus.FAIL, errors=(reason,))
+        # A video without speech is a successful, empty result, as in the Directory connector.
+        return IngestionItemResult(IngestionItemStatus.SUCCESS, transcript)
+
+    def _append_page_video_transcripts(self, doc: Document) -> IngestionItemResult:
+        """Return the page text followed by the transcript of each SharePoint-hosted video on the page.
+
+        Any failure while finding or transcribing videos leaves the page text, and the transcripts
+        that already succeeded, in the result. A page with no text whose videos all converted
+        without speech returns an explicit empty SUCCESS, so the pipeline records it once.
+        """
+        text = doc.text or ""
+        sections: list[str] = []
+        succeeded = failed = 0
+        try:
+            succeeded, failed = self._collect_page_video_sections(doc, sections)
+        except Exception as exc:
+            logger.warning(
+                "[%s] Could not read videos of page %s (%s); indexing page text only",
+                self.source_name,
+                doc.id_,
+                type(exc).__name__,
+            )
+        if not sections:
+            if not text.strip() and succeeded and not failed:
+                return IngestionItemResult(IngestionItemStatus.SUCCESS, "")
+            return self._text_result(text)
+        return self._text_result("\n\n".join(part for part in (text.rstrip(), *sections) if part))
+
+    def _collect_page_video_sections(self, doc: Document, sections: list[str]) -> tuple[int, int]:
+        """Append the section of each page video to ``sections``. Return how many videos succeeded and failed."""
+        site_id = doc.metadata.get("site_id")
+        page_id = doc.metadata.get("page_id") or doc.id_
+        if not site_id or not page_id:
+            logger.warning("[%s] Page %s has no site or page ID; skipping videos", self.source_name, doc.id_)
+            return 0, 0
+        page = self._reader.get_page_text(site_id=site_id, list_id="", page_id=page_id)
+        references = SharePointVideoReferences.parse(
+            page.get("rawHtml") or "",
+            SharePointVideoReferences.allowed_hosts(site_id.split(",")[0]),
+            self.VIDEO_EXTENSIONS,
+        )
+        for reason, count in references.skipped.items():
+            logger.warning("[%s] Page %s: skipped %d video reference(s): %s", self.source_name, page_id, count, reason)
+
+        seen: set[tuple[str, str]] = set()
+        succeeded = failed = 0
+        for url in references.urls:
+            try:
+                drive_item = self._graph.get_item_by_web_url(url)
+                identity = (drive_item["parentReference"]["driveId"], drive_item["id"])
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                section = self._transcribe_page_video(drive_item)
+            except Exception as exc:
+                logger.warning(
+                    "[%s] Skipping a video on page %s: %s (%s)",
+                    self.source_name,
+                    page_id,
+                    getattr(exc, "reason", "video could not be processed"),
+                    type(exc).__name__,
+                )
+                failed += 1
+                continue
+            succeeded += 1
+            if section:
+                sections.append(section)
+        return succeeded, failed
+
+    def _transcribe_page_video(self, drive_item: dict[str, Any]) -> str | None:
+        """Download and transcribe one drive item. Return a labelled section, or None without speech."""
+        name = drive_item.get("name") or ""
+        suffix = Path(name).suffix.lower()
+        if suffix not in self.VIDEO_EXTENSIONS:
+            raise _VideoSkipped("not a supported video file")
+        size = drive_item.get("size")
+        if isinstance(size, int) and not isinstance(size, bool) and size > self.max_video_bytes:
+            raise _VideoSkipped("video exceeds max_video_mb")
+        download_url = drive_item.get("@microsoft.graph.downloadUrl")
+        if not download_url:
+            raise _VideoSkipped("no download URL")
+        transcript = self._transcribe_video(self._graph.download_content(download_url), suffix)
+        if not transcript:
+            return None
+        heading = f"## Video transcript: {name}"
+        web_url = drive_item.get("webUrl")
+        return f"{heading}\n\n{web_url}\n\n{transcript}" if web_url else f"{heading}\n\n{transcript}"
 
     def get_item_name(self, item: IngestionItem) -> str:
         """Return a filesystem-safe unique name for this item."""

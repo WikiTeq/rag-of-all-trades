@@ -1,12 +1,27 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from typing import Any
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+# Full URLs, and the scheme-less ``url: /path?query`` that ``requests`` puts in connection errors.
+# ``requests`` percent-encodes whitespace, so a URL or path ends at the next whitespace. Characters such as
+# quotes, parentheses and apostrophes can be part of a file name, so they do not end the match.
+_URL_PATTERN = re.compile(r"https?://\S+|(?<=url: )\S+")
+
+
+class UrlRedactingFilter(logging.Filter):
+    """Logging filter that replaces URLs in a record, so a third-party logger cannot write signed URLs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = RetrySession.redact_urls(record.getMessage())
+        record.args = None
+        return True
 
 
 class RetrySession:
@@ -41,6 +56,11 @@ class RetrySession:
             return self._request("POST", url, json=json, data=data, headers=headers)
         return self._session.request("POST", url, json=json, data=data, headers=headers or {}, timeout=self.timeout)
 
+    @staticmethod
+    def redact_urls(message: str) -> str:
+        """Replace URLs in an exception message, which can carry signed download tokens."""
+        return _URL_PATTERN.sub("<url>", message)
+
     def _request(self, method: str, url: str, **kwargs: Any) -> requests.Response:
         headers = kwargs.pop("headers", None) or {}
         last_exc: Exception | None = None
@@ -56,7 +76,7 @@ class RetrySession:
                         "Request error (attempt %d/%d): %s — retrying in %ds",
                         attempt + 1,
                         self.max_retries + 1,
-                        exc,
+                        self.redact_urls(str(exc)),
                         wait,
                     )
                     time.sleep(wait)

@@ -391,6 +391,175 @@ class TestGetItemByPath(unittest.TestCase):
         called_url = self.mock_api_session.get.call_args.args[0]
         self.assertEqual(called_url, "https://graph.microsoft.com/v1.0/drives/drive1/root:/Documents/Reports")
 
+    def _resolve(self, web_url: str, responses: dict[str, dict]) -> tuple[dict, list[str]]:
+        """Run get_item_by_web_url with Graph answers keyed by request URL. Return the item and the URLs called."""
+        called: list[str] = []
+
+        def get(url, headers=None):
+            called.append(url)
+            if url not in responses:
+                return MagicMock(ok=False, status_code=404, text="not found")
+            return MagicMock(ok=True, status_code=200, json=MagicMock(return_value=responses[url]))
+
+        self.mock_api_session.get.side_effect = get
+        item = _make_client().get_item_by_web_url(web_url)
+        return item, [url.removeprefix("https://graph.microsoft.com/v1.0") for url in called]
+
+    def test_web_url_resolves_through_site_library_and_path(self):
+        item, called = self._resolve(
+            "https://contoso.sharepoint.com/sites/Team/Shared%20Documents/Q1%20Videos/O'Brien%20%231.mp4?web=1",
+            {
+                "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com:/sites/Team": {
+                    "id": "contoso.sharepoint.com,g1,g2"
+                },
+                "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com,g1,g2/drives": {
+                    "value": [
+                        {"id": "other", "webUrl": "https://contoso.sharepoint.com/sites/Team/Other"},
+                        {"id": "docs", "webUrl": "https://contoso.sharepoint.com/sites/Team/Shared%20Documents"},
+                    ]
+                },
+                "https://graph.microsoft.com/v1.0/drives/docs/root:/Q1%20Videos/O%27Brien%20%231.mp4": {"id": "item1"},
+            },
+        )
+        self.assertEqual(item, {"id": "item1"})
+        self.assertEqual(
+            called,
+            [
+                "/sites/contoso.sharepoint.com:/sites/Team",
+                "/sites/contoso.sharepoint.com,g1,g2/drives",
+                "/drives/docs/root:/Q1%20Videos/O%27Brien%20%231.mp4",
+            ],
+        )
+
+    def test_web_url_without_a_site_prefix_uses_the_root_site_and_follows_drive_paging(self):
+        item, called = self._resolve(
+            "https://contoso.sharepoint.com/Shared%20Documents/clip.mp4",
+            {
+                "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com": {"id": "contoso.sharepoint.com,g1,g2"},
+                "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com,g1,g2/drives": {
+                    "value": [],
+                    "@odata.nextLink": "https://graph.microsoft.com/v1.0/next-page",
+                },
+                "https://graph.microsoft.com/v1.0/next-page": {
+                    "value": [{"id": "docs", "webUrl": "https://contoso.sharepoint.com/Shared%20Documents"}]
+                },
+                "https://graph.microsoft.com/v1.0/drives/docs/root:/clip.mp4": {"id": "item2"},
+            },
+        )
+        self.assertEqual(item, {"id": "item2"})
+        self.assertEqual(called[0], "/sites/contoso.sharepoint.com")
+
+    def test_web_url_picks_the_longest_matching_library(self):
+        item, _ = self._resolve(
+            "https://contoso.sharepoint.com/sites/Team/Shared%20Documents/Sub/clip.mp4",
+            {
+                "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com:/sites/Team": {"id": "s"},
+                "https://graph.microsoft.com/v1.0/sites/s/drives": {
+                    "value": [
+                        {"id": "docs", "webUrl": "https://contoso.sharepoint.com/sites/Team/Shared%20Documents"},
+                        {"id": "sub", "webUrl": "https://contoso.sharepoint.com/sites/Team/Shared%20Documents/Sub"},
+                    ]
+                },
+                "https://graph.microsoft.com/v1.0/drives/sub/root:/clip.mp4": {"id": "item3"},
+            },
+        )
+        self.assertEqual(item, {"id": "item3"})
+
+    def test_web_url_in_a_subsite_resolves_through_the_subsite_libraries(self):
+        item, called = self._resolve(
+            "https://contoso.sharepoint.com/sites/Parent/Child/Shared%20Documents/clip.mp4",
+            {
+                "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com:/sites/Parent": {"id": "parent"},
+                "https://graph.microsoft.com/v1.0/sites/parent/drives": {
+                    "value": [
+                        {"id": "p-docs", "webUrl": "https://contoso.sharepoint.com/sites/Parent/Shared%20Documents"}
+                    ]
+                },
+                "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com:/sites/Parent/Child": {"id": "child"},
+                "https://graph.microsoft.com/v1.0/sites/child/drives": {
+                    "value": [
+                        {
+                            "id": "c-docs",
+                            "webUrl": "https://contoso.sharepoint.com/sites/Parent/Child/Shared%20Documents",
+                        }
+                    ]
+                },
+                "https://graph.microsoft.com/v1.0/drives/c-docs/root:/clip.mp4": {"id": "item4"},
+            },
+        )
+        self.assertEqual(item, {"id": "item4"})
+        self.assertEqual(called[-1], "/drives/c-docs/root:/clip.mp4")
+
+    def test_web_url_in_a_deeply_nested_subsite_resolves(self):
+        base = "https://graph.microsoft.com/v1.0"
+        item, _ = self._resolve(
+            "https://contoso.sharepoint.com/sites/Root/A/B/C/D/Documents/clip.mp4",
+            {
+                f"{base}/sites/contoso.sharepoint.com:/sites/Root": {"id": "root"},
+                f"{base}/sites/root/drives": {"value": []},
+                f"{base}/sites/contoso.sharepoint.com:/sites/Root/A/B/C/D": {"id": "deep"},
+                f"{base}/sites/deep/drives": {
+                    "value": [{"id": "docs", "webUrl": "https://contoso.sharepoint.com/sites/Root/A/B/C/D/Documents"}]
+                },
+                f"{base}/drives/docs/root:/clip.mp4": {"id": "item6"},
+            },
+        )
+        self.assertEqual(item, {"id": "item6"})
+
+    def test_close_closes_both_sessions(self):
+        client = GraphClient("id", "secret", "tenant")
+        client._api_session = MagicMock()
+        client._download_session = MagicMock()
+        client.close()
+        client._api_session.close.assert_called_once_with()
+        client._download_session.close.assert_called_once_with()
+
+    def test_web_url_read_link_is_normalised_to_the_plain_path(self):
+        base = "https://graph.microsoft.com/v1.0"
+        item, called = self._resolve(
+            "https://contoso.sharepoint.com/:v:/r/sites/Team/Shared%20Documents/clip.mp4?csf=1",
+            {
+                f"{base}/sites/contoso.sharepoint.com:/sites/Team": {"id": "s"},
+                f"{base}/sites/s/drives": {
+                    "value": [{"id": "docs", "webUrl": "https://contoso.sharepoint.com/sites/Team/Shared%20Documents"}]
+                },
+                f"{base}/drives/docs/root:/clip.mp4": {"id": "item7"},
+            },
+        )
+        self.assertEqual(item, {"id": "item7"})
+        self.assertEqual(called[0], "/sites/contoso.sharepoint.com:/sites/Team")
+
+    def test_web_url_token_link_is_not_found_without_guessing_a_path(self):
+        with self.assertRaises(GraphItemNotFoundError):
+            self._resolve("https://contoso.sharepoint.com/:v:/s/Team/EXyzToken?e=abc", {})
+
+    def test_a_file_in_the_site_collection_costs_one_site_lookup(self):
+        _, called = self._resolve(
+            "https://contoso.sharepoint.com/sites/Team/Shared%20Documents/a/b/c/clip.mp4",
+            {
+                "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com:/sites/Team": {"id": "s"},
+                "https://graph.microsoft.com/v1.0/sites/s/drives": {
+                    "value": [{"id": "docs", "webUrl": "https://contoso.sharepoint.com/sites/Team/Shared%20Documents"}]
+                },
+                "https://graph.microsoft.com/v1.0/drives/docs/root:/a/b/c/clip.mp4": {"id": "item5"},
+            },
+        )
+        self.assertEqual(len([url for url in called if url.startswith("/sites/contoso")]), 1)
+
+    def test_web_url_raises_not_found_when_no_library_contains_the_file(self):
+        with self.assertRaises(GraphItemNotFoundError):
+            self._resolve(
+                "https://contoso.sharepoint.com/sites/Team/Missing/clip.mp4",
+                {
+                    "https://graph.microsoft.com/v1.0/sites/contoso.sharepoint.com:/sites/Team": {"id": "s"},
+                    "https://graph.microsoft.com/v1.0/sites/s/drives": {
+                        "value": [
+                            {"id": "docs", "webUrl": "https://contoso.sharepoint.com/sites/Team/Shared%20Documents"}
+                        ]
+                    },
+                },
+            )
+
 
 class TestGetDownloadUrl(unittest.TestCase):
     def setUp(self):
@@ -475,6 +644,16 @@ class TestDownloadContent(unittest.TestCase):
         client = _make_client()
         with self.assertRaises(RuntimeError):
             client.download_content("https://example.com/dl?tok=abc")
+
+    def test_closes_the_response_on_non_ok_status(self):
+        resp = self._streamed_response([], status_code=403)
+        self.mock_download_session.get.return_value = resp
+
+        client = _make_client()
+        with self.assertRaises(RuntimeError):
+            client.download_content("https://example.com/dl?tok=abc")
+
+        resp.close.assert_called_once()
 
     def test_raises_when_cumulative_size_exceeds_cap(self):
         # 3 chunks of 40 bytes each = 120 bytes, cap = 100

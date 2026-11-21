@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Iterator
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlparse
 
 import msal
 
@@ -31,6 +31,7 @@ class GraphClient:
     """
 
     BASE_URL = "https://graph.microsoft.com/v1.0"
+    _SITE_PATH_PREFIXES = frozenset({"sites", "teams", "personal"})
     SCOPES = ["https://graph.microsoft.com/.default"]
 
     def __init__(
@@ -49,6 +50,11 @@ class GraphClient:
         self._msal_app = self._build_msal_app()
         self._api_session = RetrySession(max_retries=max_retries, timeout=30)
         self._download_session = RetrySession(max_retries=max_retries, timeout=120)
+
+    def close(self) -> None:
+        """Close both HTTP sessions. Later calls open new connections."""
+        self._api_session.close()
+        self._download_session.close()
 
     def _build_msal_app(self) -> msal.ConfidentialClientApplication:
         return msal.ConfidentialClientApplication(
@@ -188,6 +194,64 @@ class GraphClient:
         encoded_path = "/".join(quote(segment, safe="") for segment in path.strip("/").split("/"))
         return self._graph_get(f"/drives/{quote(drive_id, safe='')}/root:/{encoded_path}")
 
+    def get_item_by_web_url(self, web_url: str) -> dict:
+        """Resolve a SharePoint or OneDrive file URL to its current drive item metadata.
+
+        Looks up the site, picks the document library whose URL is the longest prefix of the
+        file URL, then resolves the rest as a path. This needs only read permissions
+        (``Sites.Read.All`` or ``Files.Read.All``); the Graph shares API needs write permissions
+        for an application. The item carries ``id`` and ``parentReference.driveId``.
+
+        Raises:
+            GraphItemNotFoundError: When the site or a library that contains the file is not found.
+        """
+        parsed = urlparse(web_url)
+        segments = [unquote(segment) for segment in parsed.path.split("/") if segment]
+        # A read link such as ``/:v:/r/sites/Team/Docs/clip.mp4`` carries the plain file path after
+        # ``/:<type>:/r``. A token link (``/:v:/s/Team/EXyz``) has no path and cannot be resolved here.
+        if len(segments) > 2 and len(segments[0]) == 3 and segments[0][0] == segments[0][2] == ":":
+            if segments[1].lower() == "r":
+                segments = segments[2:]
+        lowered = [segment.lower() for segment in segments]
+
+        # The site collection comes first. A subsite (``/sites/Parent/Child``) is tried only when no
+        # library of the shorter site path contains the file, so the usual file costs one site lookup.
+        if len(segments) >= 2 and lowered[0] in self._SITE_PATH_PREFIXES:
+            site_depths = range(2, len(segments))
+        else:
+            site_depths = [0]
+        for depth in site_depths:
+            site_path = quote("/".join(segments[:depth]), safe="/")
+            site_url = f"/sites/{parsed.hostname}:/{site_path}" if depth else f"/sites/{parsed.hostname}"
+            try:
+                site = self._graph_get(site_url)
+            except GraphItemNotFoundError:
+                continue
+            library = self._find_containing_library(site["id"], lowered)
+            if library:
+                drive, length = library
+                return self.get_item_by_path(drive["id"], "/".join(segments[length:]))
+        raise GraphItemNotFoundError("No document library of the site contains the file")
+
+    def _find_containing_library(self, site_id: str, lowered_segments: list[str]) -> tuple[dict, int] | None:
+        """Return the library of a site whose URL is the longest prefix of the file path, with its length."""
+        best: tuple[dict, int] | None = None
+        next_url: str | None = f"/sites/{quote(site_id, safe=',')}/drives"
+        while next_url:
+            page = self._graph_get(next_url)
+            for drive in page.get("value", []):
+                drive_segments = [
+                    unquote(segment).lower()
+                    for segment in urlparse(drive.get("webUrl") or "").path.split("/")
+                    if segment
+                ]
+                length = len(drive_segments)
+                longest_so_far = best[1] if best else 0
+                if longest_so_far < length < len(lowered_segments) and lowered_segments[:length] == drive_segments:
+                    best = (drive, length)
+            next_url = page.get("@odata.nextLink")
+        return best
+
     def get_download_url(self, drive_id: str, item_id: str) -> str:
         """Fetch a fresh, short-lived pre-authenticated download URL for a file item.
 
@@ -210,7 +274,9 @@ class GraphClient:
         """
         resp = self._download_session.get(download_url, stream=True)
         if not resp.ok:
-            raise RuntimeError(f"Download failed ({resp.status_code}) for {download_url}")
+            status_code = resp.status_code
+            resp.close()
+            raise RuntimeError(f"Download failed ({status_code}) for {download_url}")
 
         chunks: list[bytes] = []
         total = 0
