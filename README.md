@@ -1133,9 +1133,9 @@ with the title, notes and comments.
   projects is ingested once. Tasks that belong to no project are skipped.
 - **Project mode** (`project_id` set): tasks of that project only. The project must belong to `workspace_id`.
 - Comments are loaded newest first, up to `max_comments` per task. Set `load_comments: false` to skip them.
-- Every run lists all tasks, but loads comments only for tasks that changed. A task is re-ingested when its
-  `modified_at` (Asana updates it when a comment is added) or its metadata changes, or when `load_comments` or
-  `max_comments` changes.
+- Every run lists all tasks and loads the comments of each task, so an edited comment is found. This makes one
+  extra API request for each task, unless `load_comments` is `false`. A task is re-ingested when its `modified_at`,
+  its metadata or its comment text changes, or when `load_comments` or `max_comments` changes.
 
 Metadata per task (empty values are omitted): `task_id`, `task_title`, `url`, `completed`, `created_at`, `due_on`,
 `tags`, `workspace_id`, `assignee`, `followers`, `projects`, `custom_fields`.
@@ -1161,7 +1161,7 @@ sources:
 ASANA1_TOKEN=your-asana-personal-access-token
 ASANA1_WORKSPACE_ID=1234567890
 #ASANA1_PROJECT_ID=9876543210
-ASANA1_SCHEDULES=60
+ASANA1_SCHEDULES=3600
 ```
 
 ## Video transcription

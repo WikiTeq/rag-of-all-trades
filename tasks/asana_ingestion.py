@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -79,6 +80,9 @@ class AsanaIngestionJob(IngestionJob):
         if self.max_comments <= 0:
             raise ValueError("max_comments must be positive")
 
+        self._failed = 0
+        self._comments_cache: tuple[str, str] | None = None
+
         configuration = asana.Configuration()
         configuration.access_token = self.asana_token
         api_client = asana.ApiClient(configuration)
@@ -94,9 +98,7 @@ class AsanaIngestionJob(IngestionJob):
     def list_items(self) -> Iterator[IngestionItem]:
         """Yield one IngestionItem per Asana task. API errors propagate.
 
-        Comments are not fetched here. get_item_checksum() lets the base class skip
-        unchanged tasks, so only changed tasks reach get_raw_content(), which loads
-        their comments.
+        Comments are not fetched here. get_item_checksum() loads them for each task.
         """
         seen: set[str] = set()
         total = 0
@@ -119,12 +121,12 @@ class AsanaIngestionJob(IngestionJob):
     def get_raw_content(self, item: IngestionItem) -> str:
         """Build content from the task title, notes and comments.
 
-        Loads the comments of the task, so it makes one API request unless
-        ``load_comments`` is false. A failed request is logged by the base class
-        and the task is retried on the next run, because nothing is stored for it.
+        Uses the comments that get_item_checksum() loaded for this task. A failed
+        comments request is logged by the base class and counted as failed. The task
+        is retried on the next run, because nothing is stored for it.
         """
         task = item.source_ref
-        comments = self._build_comments_section(str(task.get("gid")))
+        comments = self._comments_for(str(task.get("gid")))
         parts: list[str] = [f"# {task.get('name') or ''}".strip()]
 
         notes = (task.get("notes") or "").strip()
@@ -150,18 +152,21 @@ class AsanaIngestionJob(IngestionJob):
         return f"asana_{digest}_{slugify(str(task.get('gid')))}"
 
     def get_item_checksum(self, item: IngestionItem) -> str | None:
-        """Hash ``modified_at``, the metadata and the comment options, without any API request.
+        """Hash ``modified_at``, the metadata, the comment options and the comment text.
 
-        Asana updates ``modified_at`` when a task is edited or commented, so an
-        unchanged task never needs a comments request. The base class computes
-        metadata only after the unchanged check, so the metadata is part of the
-        hash: a change that does not touch ``modified_at`` (for example a project
-        move) still reaches the stored metadata. The comment options are included
-        so that changing them ingests the tasks again.
+        Asana does not update ``modified_at`` when a comment is edited, so the hash
+        includes the text of the comments. This makes one comments request for each
+        task on every run, unless ``load_comments`` is false. The base class computes
+        metadata only after the unchanged check, so the metadata is part of the hash
+        too: a change that does not touch ``modified_at`` (for example a project move)
+        still reaches the stored metadata. The comment options are included so that
+        changing them ingests the tasks again. The comments are kept for
+        get_raw_content(), which makes no second request.
         """
         task = item.source_ref
+        comments = self._load_comments_section(str(task.get("gid")))
         metadata = json.dumps(self.get_extra_metadata(item, "", {}), sort_keys=True)
-        key = f"{task.get('modified_at')}\n{self.load_comments}\n{self.max_comments}\n{metadata}"
+        key = f"{task.get('modified_at')}\n{self.load_comments}\n{self.max_comments}\n{metadata}\n{comments}"
         return hashlib.md5(key.encode(), usedforsecurity=False).hexdigest()
 
     def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
@@ -213,6 +218,53 @@ class AsanaIngestionJob(IngestionJob):
         )
         for project in projects:
             yield str(project["gid"])
+
+    def run(self) -> str:
+        """Run the job and report failed comment requests apart from skipped tasks.
+
+        The base class counts a task as skipped when ``process_item()`` returns 0.
+        That also happens when the comments request fails, so this loop counts those
+        failures separately. A failed task stays out of the skipped count.
+        """
+        total = 0
+        skipped = 0
+        self._failed = 0
+
+        logger.info(f"[{self.source_name}] Starting ingestion job")
+
+        for item in self.list_items():
+            failed_before = self._failed
+            count = self.process_item(item)
+            if count == 0:
+                if self._failed == failed_before:
+                    skipped += 1
+                continue
+
+            total += count
+            if self.request_delay > 0:
+                time.sleep(self.request_delay)
+
+        result_msg = f"[{self.source_name}] Completed: {total} ingested, {skipped} skipped, {self._failed} failed"
+        logger.info(result_msg)
+        return result_msg
+
+    def _load_comments_section(self, task_gid: str) -> str:
+        """Fetch the comments of a task and keep them for the next _comments_for() call."""
+        self._comments_cache = None
+        try:
+            section = self._build_comments_section(task_gid)
+        except Exception:
+            self._failed += 1
+            raise
+        self._comments_cache = (task_gid, section)
+        return section
+
+    def _comments_for(self, task_gid: str) -> str:
+        """Return the comments loaded by get_item_checksum(), or fetch them."""
+        cached, self._comments_cache = self._comments_cache, None
+        if cached and cached[0] == task_gid:
+            return cached[1]
+        return self._load_comments_section(task_gid)
 
     def _build_comments_section(self, task_gid: str) -> str:
         """Fetch and format the newest comments of a task. API errors propagate."""

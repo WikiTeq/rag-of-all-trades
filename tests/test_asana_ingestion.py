@@ -352,10 +352,26 @@ class TestAsanaChangeDetection(unittest.TestCase):
     def test_new_modified_at_changes_checksum(self):
         self.assertNotEqual(self._checksum(), self._checksum(_make_task(modified_at="2027-01-01T00:00:00Z")))
 
-    def test_checksum_makes_no_api_call(self):
+    def test_checksum_loads_comments_once_per_task(self):
         job = _make_job()
         job.get_item_checksum(_item(_make_task()))
+        job._stories_api.get_stories_for_task.assert_called_once()
+
+    def test_checksum_makes_no_comment_request_when_comments_are_off(self):
+        job = _make_job(load_comments=False)
+        job.get_item_checksum(_item(_make_task()))
         job._stories_api.get_stories_for_task.assert_not_called()
+
+    def test_edited_comment_changes_checksum(self):
+        def checksum(text):
+            job = _make_job()
+            job._stories_api.get_stories_for_task.return_value = iter(
+                [{"text": text, "created_at": "x", "created_by": {"name": "Bob"}}]
+            )
+            return job.get_item_checksum(_item(_make_task()))
+
+        self.assertEqual(checksum("old"), checksum("old"))
+        self.assertNotEqual(checksum("old"), checksum("new"))
 
     def test_comment_options_change_checksum(self):
         base = self._checksum()
@@ -376,14 +392,14 @@ class TestAsanaChangeDetection(unittest.TestCase):
 
 
 class TestAsanaProcessItem(unittest.TestCase):
-    def test_ingests_document_with_metadata_and_skips_unchanged_without_comment_request_and_reingests_on_change(self):
+    def test_ingests_document_with_metadata_and_skips_unchanged_and_reingests_on_change(self):
         job = _make_job()
         job.metadata_tracker = MagicMock()
         job.vector_manager = MagicMock()
         job.metadata_tracker.get_latest_record.return_value = None
         task = _make_task()
         item = _item(task)
-        job._stories_api.get_stories_for_task.return_value = iter(
+        job._stories_api.get_stories_for_task.side_effect = lambda *args, **kwargs: iter(
             [{"text": "hi", "created_at": "x", "created_by": {"name": "Bob"}}]
         )
 
@@ -401,9 +417,9 @@ class TestAsanaProcessItem(unittest.TestCase):
         job._seen.clear()
         job._stories_api.get_stories_for_task.reset_mock()
         self.assertEqual(job.process_item(item), 0)
-        job._stories_api.get_stories_for_task.assert_not_called()
+        job._stories_api.get_stories_for_task.assert_called_once()
 
-        job._stories_api.get_stories_for_task.return_value = iter([])
+        job._stories_api.get_stories_for_task.side_effect = lambda *args, **kwargs: iter([])
         changed = _item(_make_task(modified_at="2026-06-01T10:00:00.000Z"))
         self.assertEqual(job.process_item(changed), 1)
         job.metadata_tracker.delete_previous_embeddings.assert_called_once_with(job.get_item_name(item))
@@ -420,6 +436,42 @@ class TestAsanaProcessItem(unittest.TestCase):
         job.vector_manager.insert_documents.assert_not_called()
         job.metadata_tracker.delete_previous_embeddings.assert_not_called()
         job.metadata_tracker.record_metadata.assert_not_called()
+
+
+class TestAsanaRun(unittest.TestCase):
+    def _job(self):
+        job = _make_job()
+        job.metadata_tracker = MagicMock()
+        job.vector_manager = MagicMock()
+        job.metadata_tracker.get_latest_record.return_value = None
+        job.request_delay = 0
+        return job
+
+    def test_failed_comments_request_is_counted_as_failed_not_skipped(self):
+        job = self._job()
+        job._projects_api.get_projects.return_value = iter([{"gid": "p1"}])
+        job._tasks_api.get_tasks_for_project.return_value = iter([_make_task()])
+        job._stories_api.get_stories_for_task.side_effect = ApiException(status=429, reason="rate limited")
+        self.assertEqual(job.run(), "[asana1] Completed: 0 ingested, 0 skipped, 1 failed")
+
+    def test_unchanged_task_is_counted_as_skipped(self):
+        job = self._job()
+        task = _make_task()
+        job._stories_api.get_stories_for_task.return_value = iter([])
+        job.metadata_tracker.get_latest_record.return_value = MagicMock(
+            checksum=job.get_item_checksum(_item(task)), version=1
+        )
+        job._projects_api.get_projects.return_value = iter([{"gid": "p1"}])
+        job._tasks_api.get_tasks_for_project.return_value = iter([task])
+        job._stories_api.get_stories_for_task.return_value = iter([])
+        self.assertEqual(job.run(), "[asana1] Completed: 0 ingested, 1 skipped, 0 failed")
+
+    def test_failure_does_not_stop_later_tasks(self):
+        job = self._job()
+        job._projects_api.get_projects.return_value = iter([{"gid": "p1"}])
+        job._tasks_api.get_tasks_for_project.return_value = iter([_make_task(gid="1"), _make_task(gid="2")])
+        job._stories_api.get_stories_for_task.side_effect = [ApiException(status=500, reason="boom"), iter([])]
+        self.assertEqual(job.run(), "[asana1] Completed: 1 ingested, 0 skipped, 1 failed")
 
 
 class TestAsanaFactory(unittest.TestCase):
