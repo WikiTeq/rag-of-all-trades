@@ -1127,14 +1127,18 @@ DB_MYSQL1_SCHEDULES=3600
 ### Wiki.js Connector
 
 The Wiki.js connector ingests pages from a self-hosted [Wiki.js](https://js.wiki/) instance via the
-GraphQL API. Both `markdown` and `html` content types are handled; HTML is automatically converted to
-Markdown. Metadata collected per page includes: page_id, path, locale, title, url, updated_at, tags, is_published.
+GraphQL API. The `markdown`, `html` and `asciidoc` content types are handled; HTML and the rendered HTML of
+asciidoc pages are automatically converted to Markdown. Metadata collected per page includes: page_id, path,
+locale, title, url, created_at, updated_at, tags, is_published.
+
+> **Only Wiki.js v2 is supported.** Wiki.js v3 replaces the GraphQL API with a REST API, so this connector
+> does not work with v3.
 
 The API token requires three permission scopes:
 
 - `read:pages` — required for `pages.list` (page discovery and metadata)
-- `manage:pages` (or `delete:pages`) — required by the Wiki.js `pages.single` resolver; with only `read:pages` and `read:source` every page is rejected with `PageViewForbidden` and nothing is ingested
-- `read:source` — required for `Page.content` (page body); without it Wiki.js returns a `Forbidden` error for the content field
+- `manage:pages` (or `delete:pages`) — required by the Wiki.js `pages.single` resolver, see [requarks/wiki#8065](https://github.com/requarks/wiki/discussions/8065)
+- `read:source` — required for `Page.content` (page body)
 
 The group of the API key also needs a page rule that grants `read:pages` and `manage:pages` (or `delete:pages`) on the pages to ingest. To ingest all pages, use the match type **Path Starts With** with an empty path. Without a matching rule, Wiki.js lists no pages or rejects every page fetch.
 

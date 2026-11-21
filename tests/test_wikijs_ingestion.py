@@ -7,6 +7,7 @@ import requests
 from tasks.helper_classes.ingestion_item import IngestionItem
 from tasks.wikijs_ingestion import WikiJsClient, WikiJsIngestionJob
 from utils.graphql import GraphQLError
+from utils.text import slugify
 
 
 def _make_config(**kwargs):
@@ -26,12 +27,14 @@ def _make_page(
     is_published=True,
     locale="en",
     tags=None,
+    created_at="2024-05-01T08:00:00.000Z",
 ):
     return {
         "id": page_id,
         "path": path,
         "locale": locale,
         "title": title,
+        "createdAt": created_at,
         "updatedAt": updated_at,
         "isPublished": is_published,
         "tags": list(tags or []),
@@ -183,6 +186,17 @@ class TestWikiJsClient(unittest.TestCase):
 
         self.assertEqual(page["id"], 5)
         self.assertEqual(self.mock_request.call_args.kwargs["json"]["variables"], {"id": 5})
+
+    def test_get_page_render_returns_rendered_html(self):
+        self.mock_request.return_value = self._single_ok({"render": "<p>Hi</p>"})
+
+        self.assertEqual(self.client.get_page_render(5), "<p>Hi</p>")
+        self.assertEqual(self.mock_request.call_args.kwargs["json"]["variables"], {"id": 5})
+
+    def test_get_page_render_returns_empty_string_when_render_is_null(self):
+        self.mock_request.return_value = self._single_ok({"render": None})
+
+        self.assertEqual(self.client.get_page_render(5), "")
 
     def test_get_page_returns_empty_dict_when_shape_is_unexpected(self):
         self.mock_request.return_value = _response(200, {"data": {"pages": {"single": None}}})
@@ -472,30 +486,86 @@ class TestWikiJsIngestionJob(unittest.TestCase):
         self.assertIn("read:source", cm.output[0])
         self.assertEqual(content, "")
 
-    def test_get_raw_content_caches_url_and_title(self):
-        page = _make_page(1, "/eng/setup", "Setup Guide", locale="en")
-        item = IngestionItem(id="wikijs:1", source_ref=page)
-        detail = {**_make_page_detail(1, path="/eng/setup", title="Setup Guide"), "locale": "en"}
-        self.mock_client.get_page.return_value = detail
+    def test_get_raw_content_uses_list_title_for_heading(self):
+        item = IngestionItem(id="wikijs:1", source_ref=_make_page(1, "/test", "List Title"))
+        self.mock_client.get_page.return_value = _make_page_detail(1, content="Body")
 
+        content = self._make_job().get_raw_content(item)
+
+        self.assertEqual(content, "# List Title\n\nBody")
+
+    def test_get_raw_content_unknown_content_type_is_used_as_text(self):
+        item = IngestionItem(id="wikijs:1", source_ref=_make_page(1, "/test", "Page"))
+        self.mock_client.get_page.return_value = _make_page_detail(1, content=" plain body ", content_type="code")
         job = self._make_job()
-        job.get_raw_content(item)
+        with patch.object(job, "convert_to_markdown") as convert:
+            content = job.get_raw_content(item)
 
-        self.assertEqual(item._metadata_cache["title"], "Setup Guide")
-        self.assertIn("en/eng/setup", item._metadata_cache["url"])
+        convert.assert_not_called()
+        self.assertEqual(content, "# Page\n\nplain body")
 
-    def test_get_item_name_uses_only_stable_id(self):
-        page = _make_page(42, "/test", "My Page")
+    def test_get_raw_content_asciidoc_converts_rendered_html(self):
+        item = IngestionItem(id="wikijs:1", source_ref=_make_page(1, "/test", "Adoc Page"))
+        self.mock_client.get_page.return_value = _make_page_detail(1, content="== Section", content_type="asciidoc")
+        self.mock_client.get_page_render.return_value = "<h2>Section</h2>"
+        job = self._make_job()
+        with patch.object(job, "convert_to_markdown", return_value="## Section\n") as convert:
+            content = job.get_raw_content(item)
+
+        self.mock_client.get_page_render.assert_called_once_with(1)
+        convert.assert_called_once_with(b"<h2>Section</h2>", file_extension=".html")
+        self.assertEqual(content, "# Adoc Page\n\n## Section")
+
+    def test_get_raw_content_asciidoc_strips_heading_anchors_and_keeps_single_title(self):
+        item = IngestionItem(id="wikijs:1", source_ref=_make_page(1, "/test", "Adoc Page"))
+        self.mock_client.get_page.return_value = _make_page_detail(1, content="= Adoc Page", content_type="asciidoc")
+        self.mock_client.get_page_render.return_value = "<h1>Adoc Page</h1>"
+        job = self._make_job()
+        converted = "# [¶](#adoc-page) Adoc Page\n\n## [¶](#_section) Section\n\nBody"
+        with patch.object(job, "convert_to_markdown", return_value=converted):
+            content = job.get_raw_content(item)
+
+        self.assertEqual(content, "# Adoc Page\n\n## Section\n\nBody")
+
+    def test_get_raw_content_asciidoc_without_render_warns_and_returns_empty(self):
+        item = IngestionItem(id="wikijs:1", source_ref=_make_page(1, "/test", "Adoc Page"))
+        self.mock_client.get_page.return_value = _make_page_detail(1, content="== Section", content_type="asciidoc")
+        self.mock_client.get_page_render.return_value = ""
+        job = self._make_job()
+
+        with self.assertLogs("tasks.wikijs_ingestion", level="WARNING") as logs:
+            content = job.get_raw_content(item)
+
+        self.assertEqual(content, "")
+        self.assertIn("No rendered HTML", logs.output[0])
+
+    def test_get_raw_content_asciidoc_conversion_failure_returns_empty(self):
+        item = IngestionItem(id="wikijs:1", source_ref=_make_page(1, "/test", "Adoc Page"))
+        self.mock_client.get_page.return_value = _make_page_detail(1, content="== Section", content_type="asciidoc")
+        self.mock_client.get_page_render.return_value = "<h2>Section</h2>"
+        job = self._make_job()
+
+        with patch.object(job, "convert_to_markdown", return_value=""):
+            with self.assertLogs("tasks.wikijs_ingestion", level="WARNING") as logs:
+                content = job.get_raw_content(item)
+
+        self.assertEqual(content, "")
+        self.assertIn("Could not convert", logs.output[0])
+
+    def test_get_item_name_uses_title(self):
+        page = _make_page(42, "/test", "My Page: Intro")
         item = IngestionItem(id="wikijs:42", source_ref=page)
-        job = self._make_job()
-        name = job.get_item_name(item)
-        self.assertEqual(name, "wikijs-42")
+        name = self._make_job().get_item_name(item)
+        self.assertEqual(name, slugify("My Page: Intro", max_len=255))
         self.assertLessEqual(len(name), 255)
+
+    def test_get_item_name_falls_back_to_id_when_title_is_empty(self):
+        item = IngestionItem(id="wikijs:42", source_ref=_make_page(42, "/test", ""))
+        self.assertEqual(self._make_job().get_item_name(item), "wikijs-42")
 
     def test_get_extra_metadata_fields(self):
         page = _make_page(7, "/eng/guide", "Guide", "2024-06-01T12:00:00.000Z", locale="fr", tags=["public", "docs"])
         item = IngestionItem(id="wikijs:7", source_ref=page)
-        object.__setattr__(item, "_metadata_cache", {"title": "Guide", "url": "https://wiki.example.com/fr/eng/guide"})
 
         job = self._make_job()
         extra = job.get_extra_metadata(item=item, content="", metadata={})
@@ -505,6 +575,7 @@ class TestWikiJsIngestionJob(unittest.TestCase):
         self.assertEqual(extra["locale"], "fr")
         self.assertEqual(extra["title"], "Guide")
         self.assertEqual(extra["url"], "https://wiki.example.com/fr/eng/guide")
+        self.assertIn("2024-05-01", extra["created_at"])
         self.assertIn("2024", extra["updated_at"])
         self.assertEqual(extra["tags"], "public,docs")
         self.assertTrue(extra["is_published"])

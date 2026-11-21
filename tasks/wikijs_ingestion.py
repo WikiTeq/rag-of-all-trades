@@ -1,4 +1,5 @@
 import logging
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -23,6 +24,7 @@ query PageList($tags: [String!], $locale: String) {
       path
       locale
       title
+      createdAt
       updatedAt
       isPublished
       tags
@@ -36,11 +38,18 @@ query PageSingle($id: Int!) {
   pages {
     single(id: $id) {
       id
-      path
-      title
-      updatedAt
       content
       contentType
+    }
+  }
+}
+"""
+
+    _PAGE_RENDER_QUERY = """
+query PageRender($id: Int!) {
+  pages {
+    single(id: $id) {
+      render
     }
   }
 }
@@ -74,9 +83,16 @@ query PageSingle($id: Int!) {
         return pages
 
     def get_page(self, page_id: int) -> dict:
+        return self._get_single(self._PAGE_SINGLE_QUERY, page_id)
+
+    def get_page_render(self, page_id: int) -> str:
+        """Return the HTML Wiki.js renders for a page (used for asciidoc pages)."""
+        return self._get_single(self._PAGE_RENDER_QUERY, page_id).get("render") or ""
+
+    def _get_single(self, query: str, page_id: int) -> dict:
         data = graphql_request(
             f"{self.base_url}/graphql",
-            self._PAGE_SINGLE_QUERY,
+            query,
             {"id": page_id},
             self._headers,
             session=self._session,
@@ -92,18 +108,26 @@ class WikiJsIngestionJob(IngestionJob):
     """Ingestion connector for Wiki.js instances.
 
     Fetches pages via the Wiki.js GraphQL API and stores them in the vector store.
+    Only Wiki.js v2 is supported: v3 replaces the GraphQL API with a REST API.
 
     Configuration (config.yaml):
         - config.base_url: Wiki.js instance base URL (required)
         - config.api_token: API token (required). Needs the read:pages, read:source and
-          manage:pages (or delete:pages) scopes. Wiki.js `pages.single` rejects tokens that
-          only have read:pages and read:source.
+          manage:pages (or delete:pages) scopes. See
+          https://github.com/requarks/wiki/discussions/8065 for why `pages.single` needs
+          manage:pages (or delete:pages).
         - config.paths: path prefixes to ingest; if omitted, all pages are ingested
           (optional, comma-separated string or list)
         - config.tags: server-side tag filter (optional, comma-separated string or list)
         - config.locale: server-side locale filter, e.g. "en" (optional)
         - config.include_unpublished: whether to ingest unpublished pages (optional, default false)
     """
+
+    # manage:pages (or delete:pages) is needed on top of read:pages and read:source because
+    # of how Wiki.js v2 checks permissions in `pages.single`; see
+    # https://github.com/requarks/wiki/discussions/8065
+    # Wiki.js adds a pilcrow anchor link to every rendered heading, e.g. "[¶](#section)"
+    _HEADING_ANCHOR = re.compile(r"\[¶\]\(#[^)]*\)\s*")
 
     _SCOPES_HINT = "The API token needs the read:pages, read:source and manage:pages (or delete:pages) scopes."
 
@@ -141,8 +165,7 @@ class WikiJsIngestionJob(IngestionJob):
         logger.info(f"[{self.source_name}] Listing Wiki.js pages")
 
         try:
-            tags = self.tags or None
-            pages = self._client.list_pages(tags=tags, locale=self.locale)
+            pages = self._client.list_pages(tags=self.tags, locale=self.locale)
         except GraphQLError as e:
             logger.error(f"[{self.source_name}] Failed to list pages: {e}")
             return
@@ -183,35 +206,49 @@ class WikiJsIngestionJob(IngestionJob):
             logger.error(f"[{self.source_name}] Cannot read page {page_id} ({e}). {self._SCOPES_HINT}")
             raise
 
-        title = detail.get("title", "") or item.source_ref.get("title", "") or ""
-        path = detail.get("path", "") or item.source_ref.get("path", "") or ""
-        locale = detail.get("locale", "") or item.source_ref.get("locale", "") or "en"
-        url = f"{self._client.base_url}/{locale}/{path.lstrip('/')}"
-
-        item._metadata_cache["title"] = title
-        item._metadata_cache["url"] = url
-
         raw = detail.get("content", "") or ""
         if not raw.strip():
+            path = item.source_ref.get("path", "")
             logger.warning(f"[{self.source_name}] Empty content for page {page_id} ({path!r}). {self._SCOPES_HINT}")
             return ""
 
-        content_type = (detail.get("contentType", "") or "markdown").lower()
+        content_type = detail.get("contentType", "").lower()
         if content_type == "html":
             content = self.convert_to_markdown(raw, file_extension=".html")
+        elif content_type == "asciidoc":
+            content = self._asciidoc_to_markdown(page_id)
+            if not content:
+                return ""
         else:
             content = raw.strip()
 
         # Don't prepend title if content already starts with it
+        title = item.source_ref.get("title", "") or ""
         first_line = content.split("\n", 1)[0].lstrip("# ").strip()
         if title and first_line.lower() != title.lower():
             return f"# {title}\n\n{content}"
         return content
 
+    def _asciidoc_to_markdown(self, page_id: int) -> str:
+        """Convert an asciidoc page to Markdown through the HTML that Wiki.js renders.
+
+        MarkItDown has no asciidoc converter, so the rendered HTML is converted instead.
+        Returns an empty string when Wiki.js returns no render or the conversion fails.
+        """
+        rendered = self._client.get_page_render(page_id)
+        if not rendered.strip():
+            logger.warning(f"[{self.source_name}] No rendered HTML for asciidoc page {page_id}, skipping")
+            return ""
+        # Pass bytes: for str input convert_to_markdown falls back to the original HTML on failure
+        converted = self.convert_to_markdown(rendered.encode("utf-8"), file_extension=".html")
+        content = self._HEADING_ANCHOR.sub("", converted).strip()
+        if not content:
+            logger.warning(f"[{self.source_name}] Could not convert asciidoc page {page_id} to Markdown")
+        return content
+
     def get_item_name(self, item: IngestionItem) -> str:
-        page_id = item.source_ref.get("id", "")
-        # Use only stable id — title can change and would orphan old embeddings
-        return slugify(f"wikijs-{page_id}", max_len=255)
+        title = item.source_ref.get("title", "") or f"wikijs-{item.source_ref.get('id', '')}"
+        return slugify(title, max_len=255)
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         data = item.source_ref
@@ -221,8 +258,9 @@ class WikiJsIngestionJob(IngestionJob):
             "page_id": str(data.get("id", "")),
             "path": data.get("path", "") or "",
             "locale": data.get("locale", "") or "",
-            "title": item._metadata_cache.get("title", data.get("title", "") or ""),
-            "url": item._metadata_cache.get("url", ""),
+            "title": data.get("title", "") or "",
+            "url": f"{self._client.base_url}/{data.get('locale', '')}/{(data.get('path', '') or '').lstrip('/')}",
+            "created_at": str(data.get("createdAt", "") or ""),
             "updated_at": str(data.get("updatedAt", "") or ""),
             "tags": ",".join(tags),
             "is_published": bool(data.get("isPublished", True)),
