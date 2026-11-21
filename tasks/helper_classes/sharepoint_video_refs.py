@@ -35,9 +35,13 @@ class SharePointVideoReferences:
 
     PROVISIONAL: the parser reads the JSON in the ``data-sp-webpartdata`` attribute of
     ``CanvasContent1`` and treats every URL string in it whose path ends in a known video
-    extension as a reference. It was written without approved tenant fixtures, so the
-    File viewer and Stream web part layouts are not confirmed. The host allow-list keeps
-    external embeds (YouTube, Vimeo, other tenants) from ever being downloaded.
+    extension as a reference. Confirmed on a live tenant: the Video web part with a single
+    video. The File viewer and Stream web part layouts are not confirmed. The host allow-list
+    keeps external embeds (YouTube, Vimeo, other tenants) from ever being downloaded.
+
+    TODO: list the page web parts with the Microsoft Graph webParts API instead of parsing
+    the page HTML, see https://learn.microsoft.com/en-us/graph/api/webpart-list. On the test
+    tenant the Video web part returns the file URL in ``data.properties.file``.
     """
 
     @staticmethod
