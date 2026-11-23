@@ -76,6 +76,40 @@ class TestRetrySession(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
 
     @patch("utils.http.requests.Session")
+    def test_retry_log_does_not_contain_urls_from_the_exception(self, MockSession):
+        session = MockSession.return_value
+        session.request.side_effect = [
+            requests.ConnectionError("HTTPSConnectionPool: Max retries with url: /f?tempauth=SECRET (host='x')"),
+            requests.ConnectionError("Failed for https://download.example/f?tempauth=SECRET"),
+            _make_response(200),
+        ]
+
+        with self.assertLogs("utils.http", level="WARNING") as logs:
+            RetrySession().get("http://example.com")
+
+        self.assertIn("<url>", "".join(logs.output))
+        self.assertNotIn("SECRET", "".join(logs.output))
+        self.assertNotIn("download.example", "".join(logs.output))
+
+    @patch("utils.http.requests.Session")
+    def test_retry_log_redacts_paths_with_parentheses_and_apostrophes(self, MockSession):
+        for path in ("/clip(1).mp4", "/Docs/O'Brien.mp4", '/say"hi".mp4'):
+            with self.subTest(path=path):
+                session = MockSession.return_value
+                session.request.side_effect = [
+                    requests.ConnectionError(f"Max retries exceeded with url: {path}?tempauth=SECRET (Caused by X)"),
+                    requests.ConnectionError(f"Failed for https://download.example{path}?tempauth=SECRET"),
+                    _make_response(200),
+                ]
+
+                with self.assertLogs("utils.http", level="WARNING") as logs:
+                    RetrySession().get("http://example.com")
+
+                self.assertNotIn("SECRET", "".join(logs.output))
+                self.assertNotIn("Brien", "".join(logs.output))
+                self.assertNotIn("clip(1)", "".join(logs.output))
+
+    @patch("utils.http.requests.Session")
     def test_raises_after_max_retries_exceeded(self, MockSession):
         session = MockSession.return_value
         session.request.side_effect = requests.ConnectionError("always fails")
