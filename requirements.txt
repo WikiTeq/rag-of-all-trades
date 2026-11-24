@@ -35,6 +35,11 @@ requests==2.34.2
 jira==3.10.5
 pyadf==0.5.2
 
+# Slab connector (quill-delta[html] extra pins lxml<5, so its deps are listed explicitly)
+quill-delta==1.0.3
+cssutils==2.15.0
+diff-match-patch==20181111  # exact pin required by quill-delta
+
 # Web connector
 llama-index-readers-web==0.6.0
 # Slack connector

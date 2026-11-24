@@ -18,6 +18,7 @@ from tasks.pipedrive_ingestion import PipedriveIngestionJob
 from tasks.s3_ingestion import S3IngestionJob
 from tasks.serpapi_ingestion import SerpAPIIngestionJob
 from tasks.sharepoint_ingestion import SharePointIngestionJob
+from tasks.slab_ingestion import SlabIngestionJob
 from tasks.slack_ingestion import SlackIngestionJob
 from tasks.trello_ingestion import TrelloIngestionJob
 from tasks.web_ingestion import WebIngestionJob
@@ -62,3 +63,4 @@ IngestionJobFactory.register("gitlab", GitLabIngestionJob)
 IngestionJobFactory.register("trello", TrelloIngestionJob)
 IngestionJobFactory.register("gitbook", GitBookIngestionJob)
 IngestionJobFactory.register("database", DatabaseIngestionJob)
+IngestionJobFactory.register("slab", SlabIngestionJob)
