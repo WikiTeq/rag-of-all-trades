@@ -5,15 +5,20 @@ from pathlib import Path
 from typing import Any
 
 from llama_index.core import SimpleDirectoryReader
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.schemas import DirectoryMetadataSchema
 from utils.parse import parse_list
 from utils.text import sanitize_ascii_key
 
 logger = logging.getLogger(__name__)
+
+
+class DirectoryMetadataSchema(BaseModel):
+    file_path: str = Field(description="Absolute path to the ingested file")
+    file_extension: str = Field(description="File extension including leading dot, e.g. .md")
+    file_size: int = Field(description="File size in bytes")
 
 
 class DirectoryConnectorConfig(BaseModel):
