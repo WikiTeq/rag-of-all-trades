@@ -4,7 +4,8 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from tasks.serpapi_ingestion import SerpAPIIngestionJob
+from tasks.schemas import BaseMetadataSchema
+from tasks.serpapi_ingestion import SerpAPIIngestionJob, SerpAPIMetadataSchema
 
 
 class TestSerpAPIIngestionJob(unittest.TestCase):
@@ -176,8 +177,6 @@ class TestSerpAPIIngestionJob(unittest.TestCase):
 
     def test_get_extra_metadata_conforms_to_schema(self):
         """Extra metadata must validate against SerpAPIMetadataSchema."""
-        from tasks.schemas import BaseMetadataSchema, SerpAPIMetadataSchema
-
         job = SerpAPIIngestionJob(self.config)
         item = next(job.list_items())
         meta = job.get_extra_metadata(item, "", {})

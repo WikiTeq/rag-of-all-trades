@@ -2,14 +2,19 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.schemas import SerpAPIMetadataSchema
 from utils.http import RetrySession
 from utils.parse import parse_list
 from utils.text import slugify
 
 logger = logging.getLogger(__name__)
+
+
+class SerpAPIMetadataSchema(BaseModel):
+    query: str = Field(description="Search query that produced this result set")
 
 
 class SerpAPIIngestionJob(IngestionJob):
