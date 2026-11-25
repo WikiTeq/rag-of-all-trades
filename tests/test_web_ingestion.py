@@ -4,7 +4,8 @@ from unittest.mock import MagicMock, patch
 from llama_index.core.schema import Document
 
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.web_ingestion import WebIngestionJob, _title_extractor
+from tasks.schemas import BaseMetadataSchema
+from tasks.web_ingestion import WebIngestionJob, WebMetadataSchema, _title_extractor
 
 
 class _WebIngestionTestCase(unittest.TestCase):
@@ -223,8 +224,6 @@ class TestWebIngestionGetDocumentMetadata(_WebIngestionTestCase):
 
     def test_metadata_conforms_to_schema(self):
         """Extra metadata must validate against WebMetadataSchema."""
-        from tasks.schemas import BaseMetadataSchema, WebMetadataSchema
-
         job = self._make_job(urls=["https://example.com"])
         item = IngestionItem(id="web:https://example.com/p", source_ref="https://example.com/p")
         item._metadata_cache["url"] = "https://example.com/p"

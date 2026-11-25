@@ -5,10 +5,10 @@ from typing import Any
 
 from llama_index.readers.web import BeautifulSoupWebReader
 from llama_index.readers.web.sitemap.base import SitemapReader
+from pydantic import BaseModel, Field
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.schemas import WebMetadataSchema
 from utils.config_validation import mutually_exclusive
 from utils.parse import parse_bool, parse_list
 from utils.text import slugify
@@ -17,6 +17,11 @@ logger = logging.getLogger(__name__)
 
 
 Extractor = Callable[..., tuple[str, dict[str, Any]]]
+
+
+class WebMetadataSchema(BaseModel):
+    url: str = Field(description="URL of the scraped page")
+    title: str = Field(description="HTML title of the page, empty when unavailable")
 
 
 class CatchAllWebsiteExtractor(Mapping[str, Extractor]):
