@@ -10,6 +10,7 @@ import requests
 from bs4 import BeautifulSoup
 from llama_index.readers.web import BeautifulSoupWebReader
 from llama_index.readers.web.sitemap.base import SitemapReader
+from pydantic import BaseModel, Field
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -21,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 
 Extractor = Callable[..., tuple[str, dict[str, Any]]]
+
+
+class WebMetadataSchema(BaseModel):
+    url: str = Field(description="URL of the scraped page")
+    title: str = Field(description="HTML title of the page, empty when unavailable")
 
 
 class CatchAllWebsiteExtractor(Mapping[str, Extractor]):
@@ -195,10 +201,10 @@ class WebIngestionJob(IngestionJob):
 
     def get_extra_metadata(self, item: IngestionItem, content: str, metadata: dict[str, Any]) -> dict[str, Any]:
         """Return web-specific metadata fields."""
-        return {
-            "url": item._metadata_cache.get("url", ""),
-            "title": item._metadata_cache.get("title", ""),
-        }
+        return WebMetadataSchema(
+            url=item._metadata_cache.get("url", ""),
+            title=item._metadata_cache.get("title", ""),
+        ).model_dump()
 
     def _crawl(self, seed_urls: list[str]) -> list[str]:
         """Return all URLs reachable from seed_urls within self.depth hops."""

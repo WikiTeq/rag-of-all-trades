@@ -4,7 +4,8 @@ from unittest.mock import MagicMock, patch
 from llama_index.core.schema import Document
 
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.web_ingestion import WebIngestionJob, _title_extractor
+from tasks.schemas import BaseMetadataSchema
+from tasks.web_ingestion import WebIngestionJob, WebMetadataSchema, _title_extractor
 
 
 class _WebIngestionTestCase(unittest.TestCase):
@@ -311,6 +312,21 @@ class TestWebIngestionGetDocumentMetadata(_WebIngestionTestCase):
         extra = job.get_extra_metadata(item=item, content="", metadata={})
         self.assertEqual(extra["url"], "")
         self.assertEqual(extra["title"], "")
+
+    def test_metadata_conforms_to_schema(self):
+        """Extra metadata must validate against WebMetadataSchema."""
+        job = self._make_job(urls=["https://example.com"])
+        item = IngestionItem(id="web:https://example.com/p", source_ref="https://example.com/p")
+        item._metadata_cache["url"] = "https://example.com/p"
+        item._metadata_cache["title"] = "My Page"
+
+        extra = job.get_extra_metadata(item=item, content="", metadata={})
+
+        validated = WebMetadataSchema(**extra)
+        self.assertEqual(validated.url, "https://example.com/p")
+        self.assertEqual(validated.title, "My Page")
+        # Schema fields must not collide with the reserved base metadata keys
+        self.assertTrue(set(WebMetadataSchema.model_fields).isdisjoint(BaseMetadataSchema.model_fields))
 
 
 def _make_html(links=(), title="Page", base_href=None):
