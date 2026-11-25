@@ -2,13 +2,20 @@ import logging
 import os
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.schemas import S3MetadataSchema
 from utils.s3_client import get_s3_client
 from utils.text import sanitize_ascii_key
 
 logger = logging.getLogger(__name__)
+
+
+class S3MetadataSchema(BaseModel):
+    bucket: str = Field(description="Name of the S3 bucket the object was ingested from")
+    object_key: str = Field(description="Object key inside the bucket")
+    file_extension: str = Field(description="File extension including leading dot, empty when the key has none")
 
 
 class S3IngestionJob(IngestionJob):

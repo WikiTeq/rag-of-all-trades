@@ -7,7 +7,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.s3_ingestion import S3IngestionJob
+from tasks.s3_ingestion import S3IngestionJob, S3MetadataSchema
+from tasks.schemas import BaseMetadataSchema
 
 
 class TestS3IngestionJob:
@@ -60,8 +61,6 @@ class TestS3IngestionJob:
 
     def test_get_extra_metadata_conforms_to_schema(self):
         """Extra metadata must validate against S3MetadataSchema."""
-        from tasks.schemas import BaseMetadataSchema, S3MetadataSchema
-
         job = S3IngestionJob(self.config)
         item = IngestionItem(id="s3://bucket-a/x/report.pdf", source_ref=("bucket-a", "x/report.pdf"))
         meta = job.get_extra_metadata(item, "", {})
