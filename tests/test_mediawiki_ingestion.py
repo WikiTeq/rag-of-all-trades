@@ -15,7 +15,12 @@ from requests.adapters import HTTPAdapter
 sys.modules.setdefault("llama_index.readers.mediawiki", MagicMock())
 
 from tasks.helper_classes.ingestion_item import IngestionItem  # noqa: E402
-from tasks.mediawiki_ingestion import HostOverrideAdapter, MediaWikiIngestionJob  # noqa: E402
+from tasks.mediawiki_ingestion import (  # noqa: E402
+    HostOverrideAdapter,
+    MediaWikiIngestionJob,
+    MediaWikiMetadataSchema,
+)
+from tasks.schemas import BaseMetadataSchema  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -541,8 +546,6 @@ class TestGetExtraMetadata:
 
     def test_extra_metadata_conforms_to_schema(self, base_wiki_job):
         """Extra metadata must validate against MediaWikiMetadataSchema."""
-        from tasks.schemas import BaseMetadataSchema, MediaWikiMetadataSchema
-
         job, _ = base_wiki_job
         item = _make_item(
             "Test Page",
@@ -563,8 +566,6 @@ class TestGetExtraMetadata:
 
     def test_extra_metadata_schema_without_url(self):
         """url is optional in the schema; omitted url must still validate."""
-        from tasks.schemas import MediaWikiMetadataSchema
-
         job, _ = _make_job()
         item = _make_item("Test Page", last_modified=datetime(2024, 1, 1, 12, 0, 0), pageid=10, namespace=0)
 

@@ -8,11 +8,11 @@ import mwclient
 import requests
 from llama_index.readers.mediawiki import MediaWikiReader
 from mwclient.client import USER_AGENT
+from pydantic import BaseModel, Field
 from requests.adapters import HTTPAdapter
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.schemas import MediaWikiMetadataSchema
 from utils.parse import parse_bool
 from utils.text import slugify
 
@@ -46,6 +46,13 @@ class HostOverrideAdapter(HTTPAdapter):
         new_netloc = parsed.netloc.replace(parsed.hostname, self._dest_ip)
         request.url = parsed._replace(netloc=new_netloc).geturl()
         return super().send(request, **kwargs)
+
+
+class MediaWikiMetadataSchema(BaseModel):
+    title: str = Field(description="Page title")
+    page_id: int = Field(description="Numeric MediaWiki page ID")
+    namespace: int = Field(description="Namespace ID of the page")
+    url: str | None = Field(default=None, description="Full URL of the wiki page; omitted when unavailable")
 
 
 class MediaWikiIngestionJob(IngestionJob):
