@@ -1,5 +1,8 @@
 import logging
 from datetime import UTC, datetime
+from typing import Any
+
+from pydantic import BaseModel, Field
 
 from tasks.base import IngestionJob
 from tasks.helper_classes.ingestion_item import IngestionItem
@@ -8,6 +11,10 @@ from utils.parse import parse_list
 from utils.text import slugify
 
 logger = logging.getLogger(__name__)
+
+
+class SerpAPIMetadataSchema(BaseModel):
+    query: str = Field(description="Search query that produced this result set")
 
 
 class SerpAPIIngestionJob(IngestionJob):
@@ -38,6 +45,10 @@ class SerpAPIIngestionJob(IngestionJob):
                 source_ref=query,
                 last_modified=datetime.now(UTC),
             )
+
+    def get_extra_metadata(self, item: IngestionItem, _content: str, _metadata: dict[str, Any]) -> dict[str, Any]:
+        """Return SerpAPI-specific metadata fields."""
+        return SerpAPIMetadataSchema(query=str(item.source_ref)).model_dump()
 
     def get_raw_content(self, item: IngestionItem) -> str:
         query: str = item.source_ref
