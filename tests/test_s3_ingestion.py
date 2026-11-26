@@ -7,7 +7,8 @@ from unittest.mock import Mock, patch
 import pytest
 
 from tasks.helper_classes.ingestion_item import IngestionItem
-from tasks.s3_ingestion import S3IngestionJob
+from tasks.s3_ingestion import S3IngestionJob, S3MetadataSchema
+from tasks.schemas import BaseMetadataSchema
 
 
 class TestS3IngestionJob:
@@ -45,6 +46,29 @@ class TestS3IngestionJob:
         key = "a" * 300
         item = IngestionItem(id="s3://bucket-a/x", source_ref=("bucket-a", key))
         assert job.get_item_name(item) == "a" * 255
+
+    def test_get_extra_metadata_returns_object_fields(self):
+        job = S3IngestionJob(self.config)
+        item = IngestionItem(id="s3://bucket-a/docs/file.txt", source_ref=("bucket-a", "docs/file.txt"))
+        meta = job.get_extra_metadata(item, "", {})
+        assert meta == {"bucket": "bucket-a", "object_key": "docs/file.txt", "file_extension": ".txt"}
+
+    def test_get_extra_metadata_no_extension(self):
+        job = S3IngestionJob(self.config)
+        item = IngestionItem(id="s3://bucket-a/README", source_ref=("bucket-a", "README"))
+        meta = job.get_extra_metadata(item, "", {})
+        assert meta["file_extension"] == ""
+
+    def test_get_extra_metadata_conforms_to_schema(self):
+        """Extra metadata must validate against S3MetadataSchema."""
+        job = S3IngestionJob(self.config)
+        item = IngestionItem(id="s3://bucket-a/x/report.pdf", source_ref=("bucket-a", "x/report.pdf"))
+        meta = job.get_extra_metadata(item, "", {})
+
+        validated = S3MetadataSchema(**meta)
+        assert validated.bucket == "bucket-a"
+        assert validated.object_key == "x/report.pdf"
+        assert set(S3MetadataSchema.model_fields).isdisjoint(BaseMetadataSchema.model_fields)
 
     def test_list_items_pagination_and_filters(self):
         last_modified_1 = datetime(2024, 1, 1)
