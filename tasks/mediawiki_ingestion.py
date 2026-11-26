@@ -8,6 +8,7 @@ import mwclient
 import requests
 from llama_index.readers.mediawiki import MediaWikiReader
 from mwclient.client import USER_AGENT
+from pydantic import BaseModel, Field
 from requests.adapters import HTTPAdapter
 
 from tasks.base import IngestionJob
@@ -45,6 +46,13 @@ class HostOverrideAdapter(HTTPAdapter):
         new_netloc = parsed.netloc.replace(parsed.hostname, self._dest_ip)
         request.url = parsed._replace(netloc=new_netloc).geturl()
         return super().send(request, **kwargs)
+
+
+class MediaWikiMetadataSchema(BaseModel):
+    title: str = Field(description="Page title")
+    page_id: int = Field(description="Numeric MediaWiki page ID")
+    namespace: int = Field(description="Namespace ID of the page")
+    url: str | None = Field(default=None, description="Full URL of the wiki page; omitted when unavailable")
 
 
 class MediaWikiIngestionJob(IngestionJob):
@@ -432,11 +440,14 @@ class MediaWikiIngestionJob(IngestionJob):
         extra: dict[str, Any] = {}
         if self.load_semantics:
             extra.update(self._load_semantic_properties(page_record.title, page_record.namespace))
-        extra["title"] = page_record.title
-        extra["page_id"] = page_record.pageid
-        extra["namespace"] = page_record.namespace
-        if page_record.url:
-            extra["url"] = page_record.url
-        else:
+        extra.update(
+            MediaWikiMetadataSchema(
+                title=page_record.title,
+                page_id=page_record.pageid,
+                namespace=page_record.namespace,
+                url=page_record.url or None,
+            ).model_dump(exclude_none=True)
+        )
+        if not page_record.url:
             logger.warning(f"URL not found for page: {page_record.title}")
         return extra
