@@ -372,6 +372,11 @@ links and code blocks keep their structure. If pyadf rejects a document (for exa
 `decisionList` node), the connector logs a warning and indexes its plain text instead. Jira Server / Data
 Center has no v3 API: set `rest_api_version: "2"` for those instances.
 
+**Getting an API token (Jira Cloud):** log in to Atlassian as the account the connector
+should run as, then go to Account Settings → Security → API tokens → Create token. Give
+the token a descriptive name that identifies its use, and store it as the connector's
+`api_token` (with that account's email address as `email` when using `auth_type: basic`).
+
 ```yaml
 # config.yaml
 
@@ -594,7 +599,8 @@ BOX2_SCHEDULES=3600
 The Slack connector ingests messages from Slack channels. Each message and each thread reply is
 ingested as an individual item. Channels can be specified by ID or resolved via name/regex patterns.
 
-Authentication requires a Slack bot token with the following scopes: `channels:history`, `groups:history`, `channels:read`, `groups:read`, `users:read`. Invite the bot to each target channel (`/invite @YourBot`).
+Create (or reuse) a Slack app in the target workspace and issue a bot token (`xoxb-...`)
+for it. Authentication requires a Slack bot token with the following scopes: `channels:history`, `groups:history`, `channels:read`, `groups:read`, `users:read`. Invite the bot to each target channel (`/invite @YourBot`) — the bot can only read channels it has joined.
 
 ```yaml
 # config.yaml
@@ -1218,6 +1224,14 @@ The following parameters are supported by all connector types:
 
 > Environment variables (`${...}`) in the config file are evaluated at runtime.
 
+Each source is registered as a Celery task named `{type}_ingest_{name}` (for example,
+`jira_ingest_jira1` for a source with `type: "jira"` and `name: "jira1"`). Tasks and Beat
+schedules are registered when the Celery worker and Beat processes start, from the sources
+defined in the config file at that time; sources with `enabled: false` are skipped. After
+adding, removing, or changing a source, restart the Celery worker and Beat processes so the
+change takes effect — updating the config file alone does not register or unregister tasks
+in already-running processes.
+
 ```yaml
 sources: # holds the list of sources to ingest from (Connectors)
 
@@ -1545,3 +1559,4 @@ Contributions, suggestions, bug reports, and fixes are welcome!
    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=wikiteq/rag-of-all-trades&type=date&legend=top-left" />
  </picture>
 </a>
+
